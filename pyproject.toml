@@ -8,7 +8,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Hussein Eltarras" }]
 requires-python = ">=3.10"
 dependencies = []
-keywords = ["llm", "ai", "claude", "typed", "structured-output", "prompt"]
+keywords = ["llm", "ai", "claude", "typed", "openai", "structured-output", "prompt"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -23,7 +23,8 @@ Repository = "https://github.com/Eltarras/thunc"
 Issues = "https://github.com/Eltarras/thunc/issues"
 
 [project.optional-dependencies]
-anthropic = ["anthropic"]   # only for the API-key backend
+anthropic = ["anthropic"]   # only for the Claude API backend
+openai = ["openai"]         # only for the OpenAI API backend
 dev = ["pytest", "mypy", "ruff", "basedpyright"]
 
 [build-system]

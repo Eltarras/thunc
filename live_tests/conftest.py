@@ -3,6 +3,7 @@
 pytest live_tests                          # through your local Claude Code login
 THUNC_BACKEND=codex pytest live_tests
 THUNC_BACKEND=anthropic pytest live_tests  # needs ANTHROPIC_API_KEY and `pip install anthropic`
+THUNC_BACKEND=openai pytest live_tests     # needs OPENAI_API_KEY and `pip install openai`
 """
 
 import os
@@ -22,4 +23,6 @@ def live_backend():
         pytest.skip(f"the `{CLI[BACKEND]}` CLI is not installed")
     if BACKEND == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("ANTHROPIC_API_KEY is not set")
+    if BACKEND == "openai" and not os.environ.get("OPENAI_API_KEY"):
+        pytest.skip("OPENAI_API_KEY is not set")
     thunc.configure(backend=BACKEND)

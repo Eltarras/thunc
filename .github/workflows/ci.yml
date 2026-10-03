@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[anthropic,dev]"
+      - run: pip install -e ".[anthropic,openai,dev]"
       - run: pytest            # offline tests only; live_tests need a model and are not run in CI
       - run: ruff check .
       - run: ruff format --check .
