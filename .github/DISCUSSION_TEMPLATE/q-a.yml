@@ -1,0 +1,40 @@
+title: "[Q&A] "
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: What you expected to happen, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: Code
+      description: The smallest snippet that shows it.
+      render: python
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - anthropic
+        - claude-code
+        - codex
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: thunc and Python versions
+      placeholder: thunc 0.1.0, Python 3.12
+    validations:
+      required: true
+  - type: textarea
+    id: trace
+    attributes:
+      label: Trace (optional)
+      description: The relevant lines from `thunc.configure(trace="calls.jsonl")`, if you have them.
+      render: json

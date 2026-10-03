@@ -1,0 +1,20 @@
+title: "[Idea] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do that thunc makes hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to look like?
+      description: A sketch of the code you'd want to write is the most useful thing here.
+      render: python
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd be willing to open a PR for this
