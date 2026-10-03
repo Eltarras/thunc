@@ -251,6 +251,13 @@ def test_async_function(fake):
     assert asyncio.run(is_spam("hello")) is False
 
 
+def test_string_inside_a_generic_return_annotation(fake):
+    from future_types import Item, extract
+
+    fake.replies = ['[{"sku": "A"}]']
+    assert thunc.function(extract)("A") == [Item("A")]
+
+
 # --- thunc.map and tracing -----------------------------------------------------------------
 
 

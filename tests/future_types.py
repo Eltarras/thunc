@@ -23,3 +23,8 @@ class Scaled:
 
     def __post_init__(self, scale: int) -> None:
         self.a *= scale
+
+
+def extract(text: str) -> list["Item"]:  # noqa: UP037  # a string inside a builtin generic return type
+    """Extract the items."""
+    ...

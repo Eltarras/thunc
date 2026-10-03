@@ -334,10 +334,10 @@ def _hints(tp: type) -> dict[str, Any]:
         hints = {}
         for cls in reversed(tp.__mro__):
             hints.update(cls.__dict__.get("__annotations__", {}))
-    return {name: _resolve(hint, namespace) for name, hint in hints.items()}
+    return {name: resolve_strings(hint, namespace) for name, hint in hints.items()}
 
 
-def _resolve(tp: Any, namespace: dict[str, Any]) -> Any:
+def resolve_strings(tp: Any, namespace: dict[str, Any]) -> Any:
     """A type with any string (or ForwardRef) inside it evaluated, or as it is if one can't be."""
     try:
         if isinstance(tp, typing.ForwardRef):
@@ -349,7 +349,7 @@ def _resolve(tp: Any, namespace: dict[str, Any]) -> Any:
     origin, args = typing.get_origin(tp), typing.get_args(tp)
     if origin is Literal or not args:
         return tp
-    resolved = tuple(_resolve(a, namespace) for a in args)
+    resolved = tuple(resolve_strings(a, namespace) for a in args)
     if resolved == args:
         return tp
     if origin in (Union, types.UnionType):
