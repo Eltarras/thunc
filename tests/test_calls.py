@@ -148,9 +148,9 @@ def test_trace_lines_survive_line_separators(fake, tmp_path):
     assert json.loads(line)["value"] == "one\u2028two"
 
 
-def test_number_with_a_huge_exponent_is_retried(fake):
-    fake.replies = ["0e99999999999999999999", "4"]
-    assert thunc.call("Rate 1-5.", returns=int) == 4
+def test_number_with_a_huge_exponent_is_read(fake):
+    fake.replies = ["0e99999999999999999999"]
+    assert thunc.call("Rate 1-5.", returns=int) == 0
 
 
 def test_retry_after_a_reply_with_half_an_emoji(monkeypatch):

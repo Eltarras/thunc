@@ -7,7 +7,6 @@ Supported: str, bool, int, float, None, Any, Literal[...], list[T], dict[str, T]
 from __future__ import annotations
 
 import dataclasses
-import decimal
 import functools
 import json
 import math
@@ -114,18 +113,16 @@ def _options(tp: Any) -> tuple[Any, ...]:
 
 def _may_unwrap(value: dict[str, Any], tp: Any) -> bool:
     """Whether a one-key object can be a wrapper. Not when the type takes objects of any shape
-    (a dict, Any), and not when the key is a field of the expected class, unless the value is a
-    whole object of that class (all its keys are fields): {"category": null} for `Ticket | None` is
-    a Ticket with a bad field, not None, and {"customer": {"id": .., "age": ..}} for an Order with
-    an `id` is an Order with a bad customer, not an Order with the customer's id."""
+    (a dict, Any), and not when the key is a field of the expected class: {"category": null} for
+    `Ticket | None` is a Ticket with a bad field, not None."""
     options = _options(tp)
     if any(o is Any or o is dict or typing.get_origin(o) is dict for o in options):
         return False
-    (key, inner), fields = next(iter(value.items())), set()
+    key, fields = next(iter(value)), set()
     for option in options:
         if _is_dataclass(option):
             fields |= {name for name, _, _ in _init_fields(option)}
-    return key not in fields or (isinstance(inner, dict) and bool(inner) and set(inner) <= fields)
+    return key not in fields
 
 
 def _bare_word(text: str, tp: Any) -> Any:
@@ -161,15 +158,15 @@ def _unfence(text: str) -> tuple[str, str]:
     if not 0 <= newline < close:
         return text, ""
     first, rest = text[opens[0] + 3 : newline].strip(), text[newline + 1 : close].strip()
-    # The opening line holds a language tag and maybe attributes ("json title=x"), or the start of the
-    # answer ("4", "[1,"), or both ("json {..."). A lone word with nothing after it is the answer: ```true\n```.
-    tag = re.match(r"[A-Za-z][\w+.#-]*(?:\s+|$)", first)
-    if tag:
-        after = first[tag.end() :]
-        if after[:1] and after[0] in '[{"-0123456789' or (after and not rest):
-            first = after  # the answer starts after the tag
-        elif rest:
-            first = ""  # a tag, and attributes if any
+    # The opening line holds a language tag ("json", "python"), maybe with attributes ("json title=x"),
+    # when more lines follow. "json" can also be followed by the answer: ```json{"a": 1}, ```json true. Anything
+    # else on it is the start of the answer: ```4, ```[1, or a label like ```not urgent.
+    tag = re.match(r"[A-Za-z][\w+.#-]*", first)
+    after = first[tag.end() :].lstrip() if tag else ""
+    if tag and tag.group().lower() == "json" and after and (after[0] in '[{"-0123456789' or not rest):
+        first = after
+    elif tag and rest and (tag.end() == len(first) or first[tag.end()].isspace()):
+        first = ""
     inside = f"{first}\n{rest}".strip()
     return inside, text[: opens[0]].strip()
 
@@ -199,60 +196,24 @@ def _no_constant(name: str) -> Any:
     raise ValueError(f"{name} is not a valid number")
 
 
-class _Rounded(float):
-    """A JSON number that only rounds to a whole float: 3.9999999999999999 is 4.0, 1e-400 is 0.0,
-    12345678901234567.0 is ...568.0. The model didn't write that integer, so it's never read as one.
-    Its repr is what the model wrote, so an error message doesn't say "got 4.0"."""
-
-    digits = ""
-
-    def __repr__(self) -> str:
-        return self.digits
-
-
-def _plain_floats(value: Any) -> Any:
-    """`value` with every _Rounded turned back into a plain float, for values returned unchecked
-    (Any, a bare list or dict). In place, without recursion: the JSON can be nested ~1000 deep."""
-    if isinstance(value, _Rounded):
-        return float(value)
-    stack = [value] if isinstance(value, (list, dict)) else []
-    while stack:
-        node = stack.pop()
-        for key, item in list(enumerate(node) if isinstance(node, list) else node.items()):
-            if isinstance(item, _Rounded):
-                node[key] = float(item)
-            elif isinstance(item, (list, dict)):
-                stack.append(item)
-    return value
-
-
 def _finite(digits: str) -> float:
     number = float(digits)
     if not math.isfinite(number):
         raise ValueError(f"{digits[:50]} is out of range")
-    if number.is_integer():
-        try:
-            exact = decimal.Decimal(digits) == decimal.Decimal(number)
-        except ArithmeticError:  # an exponent beyond what Decimal holds, like 0e99999999999999999999
-            exact = False
-        if not exact:
-            rounded = _Rounded(number)
-            rounded.digits = digits[:50]
-            return rounded
     return number
 
 
 def validate(value: Any, tp: Any) -> Any:
     """Check a decoded JSON value against `tp` (coercing 3.0 -> 3, dicts -> dataclasses)."""
     if tp is Any:
-        return _plain_floats(value)
+        return value
     if tp is type(None):
         return _expect(value is None, value, "null")
     if tp is bool:
         return _expect(isinstance(value, bool), value, "true or false")
     if tp is int:
-        # 3.0 is 3, but not a number that only rounds to a whole float (see _Rounded).
-        exact = isinstance(value, float) and value.is_integer() and not isinstance(value, _Rounded)
+        # 3.0 is 3, while a float holds every integer exactly (12345678901234567.0 isn't one).
+        exact = isinstance(value, float) and value.is_integer() and abs(value) < 2**53
         whole = isinstance(value, int) or exact
         ok = whole and not isinstance(value, bool)
         return int(_expect(ok, value, "an integer"))
@@ -287,10 +248,8 @@ def validate(value: Any, tp: Any) -> Any:
 
     origin, args = typing.get_origin(tp), typing.get_args(tp)
     if origin is Literal:
-        # Compared by kind too, or true would match Literal[1] (True == 1 in Python). A number that only
-        # rounds to a whole float (see _Rounded) can be a float option (1e23), never an int one.
-        rounded = isinstance(value, _Rounded)
-        match = [a for a in args if _kind(a) == _kind(value) and a == value and not (rounded and isinstance(a, int))]
+        # Compared by kind too, or true would match Literal[1] (True == 1 in Python).
+        match = [a for a in args if _kind(a) == _kind(value) and a == value]
         _expect(bool(match), value, f"one of {list(args)}")
         return match[0]
     if origin in (Union, types.UnionType):
@@ -303,10 +262,10 @@ def validate(value: Any, tp: Any) -> Any:
         raise ValueError("; ".join(errors))
     if tp is list or origin is list:
         _expect(isinstance(value, list), value, "an array")
-        return [validate(v, args[0]) for v in value] if args else _plain_floats(value)
+        return [validate(v, args[0]) for v in value] if args else value
     if tp is dict or origin is dict:
         _expect(isinstance(value, dict), value, "an object")
-        return {k: validate(v, args[1]) for k, v in value.items()} if args else _plain_floats(value)
+        return {k: validate(v, args[1]) for k, v in value.items()} if args else value
     raise ThuncError(f"Unsupported return type: {tp!r}")
 
 

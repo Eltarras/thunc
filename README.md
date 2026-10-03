@@ -85,8 +85,10 @@ Anything from users, files or the web goes in the inputs:
 
 **Near-misses are read, not retried:** a code fence (any language tag, even after a line of
 prose), a leading `<think>...</think>` block, or an answer wrapped in a one-key object like
-`{"rating": 5}` for an `int`. Anything ambiguous is retried instead: two answers, `NaN`, a
-duplicate key, `true` for `Literal[1, 2]`, or an empty reply for `str`.
+`{"rating": 5}` for an `int` (not when the key is one of the dataclass's fields, or the type is a
+`dict`). Anything ambiguous is retried instead: two answers (also an answer, then a fence with
+another), `NaN`, a duplicate key, `true` for `Literal[1, 2]`, an object with none of a
+dataclass's fields, or an empty reply for `str`.
 
 **`ensure=`** adds your own check, for example `ensure=lambda n: 1 <= n <= 5`. A failed check is
 sent back to the model and retried, and so is a check that raises (`1 <= None` when the model
