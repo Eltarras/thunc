@@ -16,7 +16,7 @@ Thanks for helping. thunc is in beta, so feedback on the API is as useful as cod
 
 ```bash
 git clone https://github.com/Eltarras/thunc && cd thunc
-python3 -m venv .venv && .venv/bin/pip install -e ".[anthropic,dev]"
+python3 -m venv .venv && .venv/bin/pip install -e ".[anthropic,openai,dev]"
 ```
 
 The README's [Development](README.md#development) section lists the commands for tests and checks.

@@ -19,4 +19,4 @@ from .decorator import function
 from .errors import ThuncError
 
 __all__ = ["ThuncError", "call", "configure", "function", "map"]
-__version__ = "0.1.0"
+__version__ = "0.1.1"
