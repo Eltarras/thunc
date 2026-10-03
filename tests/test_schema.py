@@ -1,7 +1,9 @@
 """Return types: parsing model text into checked values."""
 
-from dataclasses import dataclass
-from typing import Literal
+import time
+from dataclasses import InitVar, dataclass, field
+from enum import Enum, IntEnum
+from typing import Any, ClassVar, Literal
 
 import pytest
 
@@ -36,6 +38,266 @@ def test_accepts(text, tp, expected):
     assert parse(text, tp) == expected
 
 
+@dataclass
+class Ticket:
+    category: str
+    urgency: int
+
+
+@dataclass
+class Slugged:
+    name: str
+    slug: str = field(init=False, default="")
+
+
+@dataclass
+class Positive:
+    n: int
+
+    def __post_init__(self):
+        assert self.n > 0, "n must be positive"
+
+
+@dataclass
+class Filters:  # every field has a default
+    city: str | None = None
+    max_price: float | None = None
+
+
+@dataclass
+class Scaled:
+    name: str
+    scale: InitVar[int]
+
+    def __post_init__(self, scale):
+        self.size = len(self.name) * scale
+
+
+class Color(str, Enum):
+    RED = "red"
+    BLUE = "blue"
+
+
+class Level(IntEnum):
+    ZERO = 0
+    ONE = 1
+
+
+COLOR = Literal[Color.RED, Color.BLUE]
+
+
+@pytest.mark.parametrize(
+    "text, tp, expected",
+    [
+        ('["red", "blue"]', list[COLOR], [Color.RED, Color.BLUE]),
+        ('"blue"', COLOR, Color.BLUE),
+        ("red", COLOR, Color.RED),
+        ("1", Literal[Level.ZERO, Level.ONE], Level.ONE),
+    ],
+)
+def test_enum_members_as_literal_options_come_back_as_members(text, tp, expected):
+    value = parse(text, tp)
+    assert value == expected and repr(value) == repr(expected)
+
+
+@pytest.mark.parametrize(
+    "text, tp, expected",
+    [
+        # A leading reasoning block, as local models emit
+        ("<think>charged twice, so urgent</think>\n4", int, 4),
+        ("<THINKING>\nhmm\n</THINKING>\n\ntrue", bool, True),
+        ("<think>translate it</think>Bonjour", str, "Bonjour"),
+        # Code fences: any language tag, any case, after a line of prose
+        ("```JSON\n4\n```", int, 4),
+        ("```python\n[1, 2]\n```", list[int], [1, 2]),
+        ("```json [1, 2]```", list[int], [1, 2]),
+        ("```4```", int, 4),
+        ('Here you go:\n```json\n{"category": "bug", "urgency": 4}\n```', Ticket, Ticket("bug", 4)),
+        # Invisible characters around the answer
+        ("\ufeff4", int, 4),
+        ("\u200btrue\u200b", bool, True),
+        # An answer wrapped in a one-key object
+        ('{"rating": 4}', int, 4),
+        ('{"answer": true}', bool, True),
+        ('{"category": "bug"}', Literal["bug", "billing"], "bug"),
+        ('{"items": ["a", "b"]}', list[str], ["a", "b"]),
+        ('{"ticket": {"category": "bug", "urgency": 4}}', Ticket, Ticket("bug", 4)),
+        # Literal options keep their own type
+        ("3.0", Literal[1, 2, 3], 3),
+        ("'bug'", Literal["bug", "billing"], "bug"),
+        # A union takes the first option that accepts the value, in the order written
+        ("3", float | int, 3.0),
+        ("3.5", int | float, 3.5),
+        # Fields the class sets itself (init=False) are ignored, not passed to __init__
+        ('{"name": "A", "slug": "a"}', Slugged, Slugged("A")),
+        # A wrapped object for a class whose fields all have defaults isn't read as empty
+        ('{"filters": {"city": "Paris", "max_price": 100}}', Filters, Filters("Paris", 100.0)),
+        # Labels that happen to be valid JSON, and near-misses inside an Optional
+        ("2", Literal["1", "2", "3"], "2"),
+        ("bug", Literal["bug", "billing"] | None, "bug"),
+        ("yes", bool | None, True),
+        # Invisible characters after a reasoning block
+        ("<think>easy</think>\n\u200b4", int, 4),
+        # The same wrapper inside an Optional, and an exact label before yes/no
+        ('{"filters": {"city": "Paris"}}', Filters | None, Filters("Paris")),
+        ("no", Literal["no", "partial"] | bool, "no"),
+        # One fence whose JSON mentions a fence mid-line; CRLF line endings; a closing fence mid-line
+        ('```json\n{"md": "Run:\\n```bash\\nls\\n```"}\n```', dict[str, str], {"md": "Run:\n```bash\nls\n```"}),
+        ("```json\r\n[1]\r\n```", list[int], [1]),
+        ("```json\n4```", int, 4),
+        # The answer on the opening line of a fence, alone or after a tag; a tag with attributes
+        ("```4\n```", int, 4),
+        ("```[1,\n2]\n```", list[int], [1, 2]),
+        ('```json {"order_id": "A-1"}\n```', Order, Order("A-1")),
+        ("```true\n```", bool, True),
+        ("```json title=answer.json\n[1]\n```", list[int], [1]),
+        # A label of several words on the opening line is the label, not a tag and the rest of it
+        ("```not urgent\n```", Literal["urgent", "not urgent"], "not urgent"),
+        ("```top 10\n```", Literal["top 10", "top 5"], "top 10"),
+        # "json" running straight into the answer, as main read it
+        ('```json{"a": 1}\n```', dict[str, int], {"a": 1}),
+        ('```json"bug"\n```', Literal["bug", "billing"], "bug"),
+        # A label that looks like a JSON constant; direction marks around the reply
+        ("NaN", Literal["NaN", "ok"], "NaN"),
+        ("\u200e4\u200f", int, 4),
+        ("1e2", int, 100),
+        # A float option that no integer text equals exactly, asked for as describe() writes it
+        ("1e+23", Literal[1e23, "none"], 1e23),
+        # Direction marks, embeddings and isolates around the reply
+        ("\u20664\u2069", int, 4),
+        ("\u202a4\u202c", int, 4),
+        ("\u061c4\u061c", int, 4),
+        # A label that has quotes of its own, sent exactly
+        ("'quoted'", Literal["'quoted'", "other"], "'quoted'"),
+        ('"x"', Literal['"x"', "other"], '"x"'),
+        # Exponents beyond what Decimal holds are still numbers
+        ("0e99999999999999999999", float, 0.0),
+        ("[1e-99999999999999999999]", list[float], [0.0]),
+    ],
+)
+def test_recovers_near_misses(text, tp, expected):
+    value = parse(text, tp)
+    assert value == expected and type(value) is type(expected)
+
+
+@pytest.mark.parametrize(
+    "text, tp, reason",
+    [
+        ("true", Literal[1, 2, 3], "one of"),  # True == 1 in Python, but not here
+        ("false", Literal[0, 1], "one of"),
+        ("[1, true]", list[Literal[1, 2]], "one of"),
+        ("1", Literal[True, False], "one of"),
+        ("NaN", float, "NaN"),
+        ("-Infinity", float, "Infinity"),
+        ("1e999", float, "out of range"),
+        ("[1.5, NaN]", list[float], "NaN"),
+        ('{"a": 1, "a": 2}', dict[str, int], "more than once"),
+        ('{"category": "bug", "urgency": 1, "urgency": 5}', Ticket, "more than once"),
+        ('"bug', Literal["bug", "billing"], "not valid JSON"),  # an unbalanced quote
+        ("", str, "empty"),
+        ("  \n\u200b ", str, "empty"),
+        ("<think>still thinking</think>", str, "empty"),
+        ('{"n": -1}', Positive, "AssertionError"),  # __post_init__ raising anything is a retry
+        ('{"rating": "4"}', int, "expected an integer"),  # unwrapped, but still the wrong type
+        ('{"a": 4, "b": 5}', int, "expected an integer"),  # two keys: not a wrapper
+        ("```json\n1\n```\n```json\n2\n```", int, "not valid JSON"),  # two fences: no guessing
+        ("```json\n4\n```\n5", int, "not valid JSON"),  # a second answer after the fence
+        pytest.param("1" + "0" * 400, float, "finite number", id="huge-int-for-float"),
+        pytest.param('{"order_id": "A", "amount": 1' + "0" * 400 + "}", Order, "finite number", id="huge-field"),
+        ('{"filters": "Paris"}', Filters, "expected an object"),  # not silently Filters()
+        ('{"confidence": 0.9}', Filters, "expected an object with the fields"),
+        ("12345678901234567.0", int, "expected an integer"),  # not ...568, which is what a float holds
+        (".yes", bool, "not valid JSON"),
+        # An answer, then a fence with another answer: two answers
+        ("4\n```json\n5\n```", int, "two answers"),
+        ("true\n```json\nfalse\n```", bool, "two answers"),
+        ("bug\n```\nbilling\n```", Literal["bug", "billing"], "two answers"),
+        ('{"category": null}', Ticket | None, "field 'category'"),  # a Ticket with a bad field, not None
+        ('{"alice": null}', dict[str, int] | None, "expected an integer"),  # a dict can't be a wrapper
+    ],
+)
+def test_rejects_with_a_reason(text, tp, reason):
+    with pytest.raises(ValueError, match=reason):
+        parse(text, tp)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["4" + "\n" * 200_000 + ".", "```\n" * 50_000 + "done", "```json\n" + "[\n" * 50_000, "<think>" + "x" * 500_000],
+    ids=["blank-lines", "fence-lines", "open-fence", "unclosed-think"],
+)
+def test_long_replies_are_handled_in_linear_time(text):
+    started = time.monotonic()
+    with pytest.raises(ValueError):
+        parse(text, int)
+    assert time.monotonic() - started < 1
+
+
+def test_very_deep_json_is_a_valueerror():
+    # Python 3.14 limits recursion by the real stack size, so with a big stack json.loads can read
+    # this, and the value is then the wrong type; with a small one it's too deep. A retry either way.
+    with pytest.raises(ValueError, match="nested too deeply|expected an integer"):
+        parse("[" * 100_000 + "]" * 100_000, int)
+
+
+@pytest.mark.parametrize("tp", [int, list[int], dict[str, int], int | None, Literal["a"]])
+def test_json_just_under_the_depth_limit_is_a_valueerror(tp):
+    # Somewhere below json's own depth limit (where exactly depends on the stack in use), json.loads
+    # still works but checking the value, or showing it in the error, is too deep.
+    for depth in range(2, 1001):  # "[]" is a valid list[int]
+        with pytest.raises(ValueError):
+            parse("[" * depth + "]" * depth, tp)
+
+
+def test_deep_answer_before_a_fence_is_still_a_second_answer():
+    for depth in range(2, 1001):
+        before = "[" * depth + "]" * depth
+        try:
+            parse(before, Any)
+        except ValueError:
+            continue  # too deep to be an answer on its own
+        with pytest.raises(ValueError, match="two answers"):
+            parse(before + "\n```json\n4\n```", Any)
+
+
+@dataclass
+class Customer:
+    id: str
+    age: int
+
+
+@dataclass
+class Purchase:
+    id: str = ""
+    customer: Customer | None = None
+
+
+@pytest.mark.parametrize("text", ['{"customer": {"id": "c1", "age": "old"}}', '{"customer": {"id": "c1"}}'])
+def test_a_bad_nested_object_is_not_read_as_the_outer_class(text):
+    # {"customer": {...}} is a Purchase with a bad customer, not a wrapper around a Purchase with id "c1".
+    with pytest.raises(ValueError, match="field 'customer'"):
+        parse(text, Purchase)
+
+
+def test_a_union_tries_its_options_in_order():
+    assert parse('{"order_id": "A-1", "amount": 3}', Order | dict) == Order("A-1", 3.0)
+    assert parse('[{"order_id": "A-1"}]', list[Order] | list) == [Order("A-1")]
+
+
+@pytest.mark.parametrize("tp", [Any, list, dict[str, Any], list[Any]])
+def test_unchecked_values_hold_plain_floats(tp):
+    text = '{"x": [1e23, 3.9999999999999999]}' if tp in (Any, dict[str, Any]) else "[[1e23, 3.9999999999999999]]"
+    value = parse(text, tp)
+    numbers = value["x"] if isinstance(value, dict) else value[0]
+    assert [type(n) for n in numbers] == [float, float] and repr(numbers) == "[1e+23, 4.0]"
+
+
+def test_error_message_shortens_a_huge_answer():
+    with pytest.raises(ValueError) as caught:
+        parse(str(list(range(10_000))), dict[str, int])
+    assert len(str(caught.value)) < 300
+
+
 @pytest.mark.parametrize(
     "text, tp",
     [
@@ -51,6 +313,38 @@ def test_accepts(text, tp, expected):
 def test_rejects(text, tp):
     with pytest.raises(ValueError):
         parse(text, tp)
+
+
+def test_initvar_is_asked_for_and_passed_to_post_init():
+    assert describe(Scaled) == 'a JSON object with these fields: {"name": a JSON string, "scale": a JSON integer}'
+    assert parse('{"name": "ab", "scale": 3}', Scaled).size == 6
+
+
+@dataclass
+class Counter:
+    n: int
+    registry: ClassVar = {}  # a bare ClassVar
+
+
+def test_classvars_are_not_asked_for_nor_read():
+    assert describe(Counter) == 'a JSON object with these fields: {"n": a JSON integer}'
+    assert parse('{"n": 3, "registry": 5}', Counter) == Counter(3)
+
+
+def test_string_annotations_in_a_future_annotations_module():
+    from future_types import Holder, Item, Scaled
+
+    assert (
+        describe(Scaled) == 'a JSON object with these fields: {"a": a JSON integer, "scale": a JSON integer (optional)}'
+    )
+    assert parse('{"a": 2, "scale": 3}', Scaled).a == 6
+    assert parse('{"items": [{"sku": "A"}], "table": {"b": {"sku": "B"}}}', Holder) == Holder(
+        [Item("A")], {"b": Item("B")}
+    )
+
+
+def test_describe_leaves_out_fields_the_class_sets_itself():
+    assert describe(Slugged) == 'a JSON object with these fields: {"name": a JSON string}'
 
 
 def test_describe_dataclass_marks_optional_fields():

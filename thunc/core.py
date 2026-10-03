@@ -16,7 +16,7 @@ from .cache import get as cache_get
 from .cache import put as cache_put
 from .config import resolve_backend, setting, trace_path
 from .errors import ThuncError
-from .schema import describe, parse
+from .schema import describe, parse, short_repr, shorten
 
 T = TypeVar("T")
 A = TypeVar("A")
@@ -150,16 +150,19 @@ def _call(
             except ValueError as problem:
                 result["error"] = problem
                 text = (
-                    f"{request}\n\nYour previous reply was:\n{answer.strip()[:1000]}\n"
-                    f"That is invalid ({problem}). Reply again with only {describe(returns)}."
+                    f"{request}\n\nYour previous reply was:\n{_sendable(answer.strip()[:1000])}\n"
+                    f"That is invalid ({_sendable(shorten(str(problem), 1000))}). "
+                    f"Reply again with only {describe(returns)}."
                 )
                 continue
             if where is not None:
                 cache_put(where, answer)
             result.update(value=value, error=None)
             return value
-        raise ThuncError(f"No valid {describe(returns)} after {retries + 1} attempt(s); last error: {result['error']}")
-    except Exception as exc:
+        raise ThuncError(
+            f"No valid {describe(returns)} after {retries + 1} attempt(s); last error: {result['error']}"
+        ) from result["error"]
+    except BaseException as exc:  # Ctrl-C too, so the trace doesn't record it as a success
         result["error"] = exc
         raise
     finally:
@@ -172,17 +175,34 @@ def map(func: Callable[[A], T], items: Iterable[A], *, workers: int = 8) -> list
         return list(pool.map(func, items))
 
 
+def _sendable(text: str) -> str:
+    """Text a backend can encode: a lone surrogate from the model's reply (half an emoji, which JSON
+    can carry as "\\ud83d") becomes that escape again instead of failing the next request."""
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
 def _check(answer: str, returns: Any, ensure: Callable[[Any], bool] | None) -> Any:
     value = parse(answer, returns)
-    if ensure is not None and not ensure(value):
-        raise ValueError(f"the value {value!r} was rejected by the program's validation check")
+    if ensure is None:
+        return value
+    try:
+        ok = ensure(value)
+    except Exception as exc:  # e.g. `1 <= n` when the answer was null: the answer failed the check
+        problem = f"{type(exc).__name__}: {shorten(str(exc))}"
+        raise ValueError(f"the value {short_repr(value)} failed the program's validation check ({problem})") from exc
+    if not ok:
+        raise ValueError(f"the value {short_repr(value)} was rejected by the program's validation check")
     return value
 
 
 def _send(text: str, system: str, backend: str | None, model: str | None) -> str:
-    return BACKENDS[resolve_backend(backend)](
+    name = resolve_backend(backend)
+    answer = BACKENDS[name](
         text, system=system, model=model or setting("model"), api_key=setting("api_key"), timeout=setting("timeout")
     )
+    if not isinstance(answer, str):
+        raise ThuncError(f"The {name} backend returned {type(answer).__name__}, not text.")
+    return answer
 
 
 def _build_prompt(instructions: str, inputs: dict[str, Any], returns: Any) -> str:
@@ -205,6 +225,11 @@ def _plain(value: Any) -> Any:
     return dataclasses.asdict(value) if dataclasses.is_dataclass(value) and not isinstance(value, type) else value
 
 
+def _traceable(value: Any) -> Any:
+    """json.dumps fallback for the trace: dataclasses at any depth as objects, the rest as str()."""
+    return _plain(value) if dataclasses.is_dataclass(value) and not isinstance(value, type) else str(value)
+
+
 def _cache_identity(
     request: str, system: str, backend: str | None, model: str | None, name: str | None, module: str | None
 ) -> dict[str, Any]:
@@ -221,7 +246,7 @@ def _cache_identity(
         ensure_ascii=False,
         sort_keys=True,
     )
-    key = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    key = hashlib.sha256(blob.encode("utf-8", "surrogatepass")).hexdigest()
     return {"key": key, "function": name, "module": module, "backend": backend_name, "model": model, "request": request}
 
 
@@ -255,15 +280,22 @@ def _trace(
         "model": model or setting("model"),
         "system": system,
         "instructions": instructions,
-        "inputs": {k: _plain(v) for k, v in inputs.items()},
+        "inputs": inputs,
         "returns": getattr(returns, "__name__", None) or repr(returns),
         "answers": answers,  # raw model replies, one per attempt
         "attempts": len(answers),
         "cached": result["cached"],  # answered from the cache, without asking the model
         "ok": result["error"] is None,
-        "value": _plain(result["value"]),
-        "error": None if result["error"] is None else str(result["error"]),
+        "value": result["value"],
+        "error": None if result["error"] is None else str(result["error"]) or type(result["error"]).__name__,
         "seconds": round(time.monotonic() - started, 3),
     }
-    with _trace_lock, open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    with _trace_lock, open(path, "a", encoding="utf-8", errors="backslashreplace") as f:
+        try:
+            line = json.dumps(entry, ensure_ascii=False, default=_traceable)
+        except (RecursionError, TypeError, ValueError):  # very deep, circular, or tuple keys: shortened
+            line = json.dumps({**entry, "inputs": short_repr(inputs), "value": short_repr(result["value"])})
+        # U+0085/2028/2029 are valid in JSON but split lines for str.splitlines(): escape them (only in strings).
+        for separator in "\x85\u2028\u2029":
+            line = line.replace(separator, f"\\u{ord(separator):04x}")
+        f.write(line + "\n")

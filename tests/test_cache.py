@@ -74,6 +74,14 @@ def test_unreadable_entry_is_a_miss(fake, cache):
     assert thunc.call("Rate 1-5.", returns=int, cache=True) == 5
 
 
+def test_deeply_nested_entry_is_a_miss(fake, cache):
+    fake.replies = ["4", "5"]
+    thunc.call("Rate 1-5.", returns=int, cache=True)
+    (path,) = cache.glob("*.json")
+    path.write_text("[" * 100_000 + "]" * 100_000)
+    assert thunc.call("Rate 1-5.", returns=int, cache=True) == 5
+
+
 def test_function_and_async_function(fake, cache):
     @thunc.function(cache=True)
     def category(ticket: str) -> Literal["bug", "billing"]:

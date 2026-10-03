@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import Any, ParamSpec, TypeVar, overload
 
 from .core import _call
-from .schema import describe
+from .schema import describe, resolve_strings
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -89,7 +89,8 @@ def _build(func: Callable[..., Any], instructions: str | None, options: dict[str
     sig = inspect.signature(func)
     first = next(iter(sig.parameters), None)
     skip = first if first in ("self", "cls") else None
-    returns = typing.get_type_hints(func).get("return", str)
+    # resolve_strings: Python 3.10's get_type_hints leaves "Ticket" inside `-> list["Ticket"]`.
+    returns = resolve_strings(typing.get_type_hints(func).get("return", str), func.__globals__)
     describe(returns)  # unsupported return types fail here, not at the first call
 
     def run(*args: Any, **kwargs: Any) -> Any:

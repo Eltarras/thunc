@@ -61,7 +61,7 @@ def get(key: str) -> str | None:
     try:
         with open(os.path.join(cache_dir(), f"{key}.json"), encoding="utf-8") as f:
             answer = json.load(f)["answer"]
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return None
     return answer if isinstance(answer, str) else None
 
@@ -76,7 +76,8 @@ def put(where: dict[str, Any], answer: str) -> None:
     try:
         os.makedirs(folder, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=folder, prefix="tmp", suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        # backslashreplace: a lone surrogate (half an emoji, "\ud83d") is written as the JSON escape it came from.
+        with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as f:
             json.dump(entry, f, ensure_ascii=False, indent=2)
         os.replace(tmp, os.path.join(folder, f"{where['key']}.json"))
     except OSError as exc:
@@ -165,7 +166,7 @@ def _read_owner(entry: _Entry) -> _Entry:
         with open(entry.path, encoding="utf-8") as f:
             data = json.load(f)
         function, module = data.get("function"), data.get("module")
-    except (OSError, ValueError, AttributeError):
+    except (OSError, ValueError, AttributeError, RecursionError):
         return dataclasses.replace(entry, readable=False)
     if not all(value is None or isinstance(value, str) for value in (function, module)):
         return dataclasses.replace(entry, readable=False)
