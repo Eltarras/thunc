@@ -108,6 +108,12 @@ class Filters:  # every field has a default
         ('```json\n{"md": "Run:\\n```bash\\nls\\n```"}\n```', dict[str, str], {"md": "Run:\n```bash\nls\n```"}),
         ("```json\r\n[1]\r\n```", list[int], [1]),
         ("```json\n4```", int, 4),
+        # A label that looks like a JSON constant; direction marks around the reply
+        ("NaN", Literal["NaN", "ok"], "NaN"),
+        ("\u200e4\u200f", int, 4),
+        # Whole numbers keep their exact value
+        ("9007199254740994.0", int, 9007199254740994),
+        ("1e2", int, 100),
     ],
 )
 def test_recovers_near_misses(text, tp, expected):
@@ -143,6 +149,11 @@ def test_recovers_near_misses(text, tp, expected):
         ('{"filters": "Paris"}', Filters, "expected an object"),  # not silently Filters()
         ('{"confidence": 0.9}', Filters, "expected an object with the fields"),
         ("12345678901234567.0", int, "expected an integer"),  # not ...568, which is what a float holds
+        ("3.9999999999999999", int, "expected an integer"),  # not 4: it only rounds to a whole float
+        ("1e-400", int, "expected an integer"),  # not 0
+        ("0.99999999999999999", Literal[0, 1], "one of"),
+        ('{"category": null}', Ticket | None, "field 'category'"),  # a Ticket with a bad field, not None
+        ('{"alice": null}', dict[str, int] | None, "expected an integer"),  # a dict can't be a wrapper
     ],
 )
 def test_rejects_with_a_reason(text, tp, reason):
@@ -183,6 +194,10 @@ def test_error_message_shortens_a_huge_answer():
 def test_rejects(text, tp):
     with pytest.raises(ValueError):
         parse(text, tp)
+
+
+def test_describe_leaves_out_fields_the_class_sets_itself():
+    assert describe(Slugged) == 'a JSON object with these fields: {"name": a JSON string}'
 
 
 def test_describe_dataclass_marks_optional_fields():

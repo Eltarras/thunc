@@ -197,7 +197,7 @@ def _cache_get(key: str) -> str | None:
     try:
         with open(os.path.join(cache_dir(), f"{key}.json"), encoding="utf-8") as f:
             answer = json.load(f)["answer"]
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return None
     return answer if isinstance(answer, str) else None
 
@@ -263,4 +263,5 @@ def _trace(
             line = json.dumps(entry, ensure_ascii=False, default=_traceable)
         except (RecursionError, TypeError, ValueError):  # very deep, circular, or tuple keys: shortened
             line = json.dumps({**entry, "inputs": short_repr(inputs), "value": short_repr(result["value"])})
-        f.write(line + "\n")
+        # U+2028/2029 are valid in JSON but split lines for str.splitlines(): escape them (only in strings).
+        f.write(line.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029") + "\n")

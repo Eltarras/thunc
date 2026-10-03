@@ -7,6 +7,7 @@ Supported: str, bool, int, float, None, Any, Literal[...], list[T], dict[str, T]
 from __future__ import annotations
 
 import dataclasses
+import decimal
 import json
 import math
 import re
@@ -35,6 +36,7 @@ def describe(tp: Any, nested: bool = False) -> str:
         fields = [
             f'"{f.name}": {describe(hints[f.name], True)}{"" if _required(f) else " (optional)"}'
             for f in dataclasses.fields(tp)
+            if f.init  # the class sets the others itself, and parse() ignores them
         ]
         return "a JSON object with these fields: {" + ", ".join(fields) + "}"
     origin, args = typing.get_origin(tp), typing.get_args(tp)
@@ -61,11 +63,13 @@ def parse(text: str, tp: Any) -> Any:
         value = json.loads(cleaned, object_pairs_hook=_no_duplicates, parse_constant=_no_constant, parse_float=_finite)
     except RecursionError:
         raise ValueError("the JSON is nested too deeply") from None
-    except json.JSONDecodeError:
-        word = _bare_word(cleaned, tp)
+    except ValueError as problem:  # not JSON, or JSON thunc refuses (NaN, a duplicate key, ...)
+        word = _bare_word(cleaned, tp)  # like NaN for Literal["NaN", "ok"]
         if word is not _NO_WORD:
             return word
-        raise ValueError(f"not valid JSON: {cleaned[:200]!r}") from None
+        if isinstance(problem, json.JSONDecodeError):
+            raise ValueError(f"not valid JSON: {cleaned[:200]!r}") from None
+        raise
     try:
         return validate(value, tp)
     except ValueError:
@@ -74,7 +78,7 @@ def parse(text: str, tp: Any) -> Any:
         if word is not _NO_WORD:
             return word
         # An answer wrapped in a one-key object, like {"rating": 4} for an int: unwrap it, once.
-        if isinstance(value, dict) and len(value) == 1:
+        if isinstance(value, dict) and len(value) == 1 and _may_unwrap(value, tp):
             try:
                 return validate(next(iter(value.values())), tp)
             except ValueError:
@@ -84,9 +88,9 @@ def parse(text: str, tp: Any) -> Any:
 
 # A leading reasoning block, as some local models emit: <think>...</think>
 _THINK = re.compile(r"\A<(think|thinking)>.*?</\1>", re.DOTALL | re.IGNORECASE)
-# Whitespace (all of it is below U+3001), a byte-order mark and zero-width characters, which
+# Whitespace (all of it is below U+3001), a byte-order mark, zero-width and direction marks, which
 # str.strip() keeps. Stripped with str.strip(chars): a regex here is quadratic on long blank runs.
-_EDGES = "".join(c for c in map(chr, range(0x3001)) if c.isspace()) + "\ufeff\u200b\u200c\u200d\u2060"
+_EDGES = "".join(c for c in map(chr, range(0x3001)) if c.isspace()) + "\ufeff\u200b\u200c\u200d\u200e\u200f\u2060"
 _NO_WORD = object()
 
 
@@ -94,10 +98,28 @@ def _trim(text: str) -> str:
     return text.strip(_EDGES)
 
 
+def _options(tp: Any) -> tuple[Any, ...]:
+    return typing.get_args(tp) if typing.get_origin(tp) in (Union, types.UnionType) else (tp,)
+
+
+def _may_unwrap(value: dict[str, Any], tp: Any) -> bool:
+    """Whether a one-key object can be a wrapper. Not when the type takes objects of any shape
+    (a dict, Any), and not when the key is a field of the expected class and the value isn't a
+    whole object: {"category": null} for `Ticket | None` is a Ticket with a bad field, not None."""
+    options = _options(tp)
+    if any(o is Any or o is dict or typing.get_origin(o) is dict for o in options):
+        return False
+    (key, inner), fields = next(iter(value.items())), set()
+    for option in options:
+        if _is_dataclass(option):
+            fields |= {f.name for f in dataclasses.fields(option)}
+    return key not in fields or isinstance(inner, dict)
+
+
 def _bare_word(text: str, tp: Any) -> Any:
     """The usual near-misses that aren't JSON of the right kind: yes/no for a bool, an unquoted
     (or single-quoted) label for a string Literal. Also inside an Optional. _NO_WORD if neither."""
-    options = typing.get_args(tp) if typing.get_origin(tp) in (Union, types.UnionType) else (tp,)
+    options = _options(tp)
     label = text[1:-1] if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"" else text
     literals = [typing.get_args(o) for o in options if typing.get_origin(o) is Literal]
     if any(label in labels for labels in literals):  # a str only equals a str option
@@ -140,10 +162,17 @@ def _no_constant(name: str) -> Any:
     raise ValueError(f"{name} is not a valid number")
 
 
+class _Rounded(float):
+    """A JSON number that only rounds to a whole float: 3.9999999999999999 is 4.0, 1e-400 is 0.0,
+    12345678901234567.0 is ...568.0. The model didn't write that integer, so it's never read as one."""
+
+
 def _finite(digits: str) -> float:
     number = float(digits)
     if not math.isfinite(number):
         raise ValueError(f"{digits[:50]} is out of range")
+    if number.is_integer() and decimal.Decimal(digits) != decimal.Decimal(number):
+        return _Rounded(number)
     return number
 
 
@@ -156,8 +185,9 @@ def validate(value: Any, tp: Any) -> Any:
     if tp is bool:
         return _expect(isinstance(value, bool), value, "true or false")
     if tp is int:
-        # 3.0 is 3, but only while a float holds the integer exactly (12345678901234567.0 doesn't).
-        whole = isinstance(value, int) or (isinstance(value, float) and value.is_integer() and abs(value) < 2**53)
+        # 3.0 is 3, but not a number that only rounds to a whole float (see _Rounded).
+        exact = isinstance(value, float) and value.is_integer() and not isinstance(value, _Rounded)
+        whole = isinstance(value, int) or exact
         ok = whole and not isinstance(value, bool)
         return int(_expect(ok, value, "an integer"))
     if tp is float:
@@ -235,6 +265,8 @@ def _kind(value: Any) -> str:
     """bool, number, string, ...: the JSON kind of a value, for comparing Literal options."""
     if isinstance(value, bool):
         return "bool"
+    if isinstance(value, _Rounded):
+        return "rounded"  # matches no option: 0.99999999999999999 isn't Literal[1]
     if isinstance(value, (int, float)):
         return "number"
     return type(value).__name__

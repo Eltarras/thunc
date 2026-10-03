@@ -140,6 +140,14 @@ def test_interrupted_call_is_traced_as_failed(monkeypatch, tmp_path, interrupt):
     assert not entry["ok"] and entry["error"] == interrupt.__name__
 
 
+def test_trace_lines_survive_line_separators(fake, tmp_path):
+    thunc.configure(trace=str(tmp_path / "calls.jsonl"))
+    fake.replies = ["one\u2028two"]
+    thunc.call("Say it.")
+    (line,) = (tmp_path / "calls.jsonl").read_text().splitlines()
+    assert json.loads(line)["value"] == "one\u2028two"
+
+
 # --- @thunc.function (docstring prompts) ---------------------------------------------------
 
 
