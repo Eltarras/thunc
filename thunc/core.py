@@ -109,8 +109,9 @@ def call(
             except ValueError as problem:
                 result["error"] = problem
                 text = (
-                    f"{request}\n\nYour previous reply was:\n{answer.strip()[:1000]}\n"
-                    f"That is invalid ({shorten(str(problem), 1000)}). Reply again with only {describe(returns)}."
+                    f"{request}\n\nYour previous reply was:\n{_sendable(answer.strip()[:1000])}\n"
+                    f"That is invalid ({_sendable(shorten(str(problem), 1000))}). "
+                    f"Reply again with only {describe(returns)}."
                 )
                 continue
             if where is not None:
@@ -131,6 +132,12 @@ def map(func: Callable[[A], T], items: Iterable[A], *, workers: int = 8) -> list
     """Like the built-in map, but up to `workers` calls run at once. Results keep input order."""
     with ThreadPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(func, items))
+
+
+def _sendable(text: str) -> str:
+    """Text a backend can encode: a lone surrogate from the model's reply (half an emoji, which JSON
+    can carry as "\\ud83d") becomes that escape again instead of failing the next request."""
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 def _check(answer: str, returns: Any, ensure: Callable[[Any], bool] | None) -> Any:
@@ -263,5 +270,7 @@ def _trace(
             line = json.dumps(entry, ensure_ascii=False, default=_traceable)
         except (RecursionError, TypeError, ValueError):  # very deep, circular, or tuple keys: shortened
             line = json.dumps({**entry, "inputs": short_repr(inputs), "value": short_repr(result["value"])})
-        # U+2028/2029 are valid in JSON but split lines for str.splitlines(): escape them (only in strings).
-        f.write(line.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029") + "\n")
+        # U+0085/2028/2029 are valid in JSON but split lines for str.splitlines(): escape them (only in strings).
+        for separator in "\x85\u2028\u2029":
+            line = line.replace(separator, f"\\u{ord(separator):04x}")
+        f.write(line + "\n")

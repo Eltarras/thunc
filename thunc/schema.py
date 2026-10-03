@@ -54,6 +54,13 @@ def describe(tp: Any, nested: bool = False) -> str:
 
 def parse(text: str, tp: Any) -> Any:
     """Model text -> value of type `tp`. Raises ValueError (with a reason the model can act on)."""
+    try:
+        return _parse(text, tp)
+    except RecursionError:  # JSON just under json's depth limit can still be too deep to check
+        raise ValueError("the JSON is nested too deeply") from None
+
+
+def _parse(text: str, tp: Any) -> Any:
     cleaned = _trim(_THINK.sub("", _trim(text), count=1))
     if tp is str:
         if not cleaned:
@@ -64,8 +71,6 @@ def parse(text: str, tp: Any) -> Any:
         raise ValueError("two answers: one before the code fence and one inside it")
     try:
         value = json.loads(cleaned, object_pairs_hook=_no_duplicates, parse_constant=_no_constant, parse_float=_finite)
-    except RecursionError:
-        raise ValueError("the JSON is nested too deeply") from None
     except ValueError as problem:  # not JSON, or JSON thunc refuses (NaN, a duplicate key, ...)
         word = _bare_word(cleaned, tp)  # like NaN for Literal["NaN", "ok"]
         if word is not _NO_WORD:
@@ -279,7 +284,10 @@ def _expect(ok: bool, value: Any, wanted: str) -> Any:
 
 def short_repr(value: Any, limit: int = 200) -> str:
     """repr() cut to `limit` characters, so a huge wrong answer doesn't flood the retry prompt."""
-    return shorten(repr(value), limit)
+    try:
+        return shorten(repr(value), limit)
+    except RecursionError:
+        return f"<{type(value).__name__} nested too deeply to show>"
 
 
 def shorten(text: str, limit: int = 200) -> str:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -100,13 +101,21 @@ def openai_api(text: str, *, system: str, model: str | None, api_key: str | None
 
 
 def _run_cli(args: list[str], text: str, timeout: float) -> subprocess.CompletedProcess[str]:
+    """Run a CLI with `text` on stdin. Output bytes that aren't UTF-8 come back as lone surrogates
+    (surrogateescape) rather than failing here: see _not_utf8."""
     exe = args[0]
     if shutil.which(exe) is None:
         raise ThuncError(f"`{exe}` was not found on PATH.")
     try:
         # A neutral cwd keeps the CLI from picking up project files (CLAUDE.md, AGENTS.md, ...).
         return subprocess.run(
-            args, input=text, capture_output=True, text=True, timeout=timeout, cwd=tempfile.gettempdir()
+            args,
+            input=text.encode("utf-8", "backslashreplace").decode("utf-8"),  # no lone surrogates on stdin
+            capture_output=True,
+            encoding="utf-8",
+            errors="surrogateescape",
+            timeout=timeout,
+            cwd=tempfile.gettempdir(),
         )
     except subprocess.TimeoutExpired as exc:
         raise ThuncError(f"`{exe}` timed out after {timeout:.0f}s.") from exc
@@ -128,14 +137,16 @@ def claude_code(text: str, *, system: str, model: str | None, api_key: str | Non
     if model:
         args += ["--model", model]
     proc = _run_cli(args, text, timeout)
+    if _not_utf8(proc.stdout):
+        raise ThuncError(f"claude printed output that isn't UTF-8: {_printable(proc.stdout)[-500:]}")
     try:
         data = json.loads(proc.stdout)
     except (ValueError, RecursionError):
         data = None
     if not isinstance(data, dict):  # not the JSON object `--output-format json` prints
-        raise ThuncError(f"claude exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()[-500:]}")
+        raise ThuncError(f"claude exited {proc.returncode}: {_printable(proc.stderr or proc.stdout).strip()[-500:]}")
     if data.get("is_error") or proc.returncode != 0:
-        raise ThuncError(f"claude error: {data.get('result') or proc.stderr.strip()[-500:]}")
+        raise ThuncError(f"claude error: {data.get('result') or _printable(proc.stderr).strip()[-500:]}")
     if not isinstance(data.get("result"), str):
         raise ThuncError(f"claude returned no text: {proc.stdout.strip()[-500:]}")
     return str(data["result"])
@@ -164,7 +175,7 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
         args.append("-")  # read the prompt from stdin
         proc = _run_cli(args, full_prompt, timeout)
         if proc.returncode != 0:
-            raise ThuncError(f"codex exited {proc.returncode}: {proc.stderr.strip()[-500:]}")
+            raise ThuncError(f"codex exited {proc.returncode}: {_printable(proc.stderr).strip()[-500:]}")
         try:
             with open(out_path, encoding="utf-8") as f:
                 return f.read().strip()
@@ -173,6 +184,16 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(out_path)
+
+
+def _not_utf8(output: str) -> bool:
+    """Whether CLI output had bytes that aren't UTF-8 (surrogateescape turns them into U+DC80-DCFF).
+    A surrogate the CLI wrote as a JSON escape ("\\ud83d") is plain ASCII here, so it doesn't count."""
+    return re.search("[\udc80-\udcff]", output) is not None
+
+
+def _printable(output: str) -> str:
+    return output.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 BACKENDS: dict[str, Callable[..., str]] = {

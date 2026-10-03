@@ -198,6 +198,15 @@ def test_long_replies_are_handled_in_linear_time(text):
     assert time.monotonic() - started < 1
 
 
+@pytest.mark.parametrize("tp", [int, list[int], dict[str, int], int | None, Literal["a"]])
+def test_json_just_under_the_depth_limit_is_a_valueerror(tp):
+    # Somewhere below json's own depth limit (where exactly depends on the stack in use), json.loads
+    # still works but checking the value, or showing it in the error, is too deep.
+    for depth in range(2, 1001):  # "[]" is a valid list[int]
+        with pytest.raises(ValueError):
+            parse("[" * depth + "]" * depth, tp)
+
+
 def test_error_message_shortens_a_huge_answer():
     with pytest.raises(ValueError) as caught:
         parse(str(list(range(10_000))), dict[str, int])

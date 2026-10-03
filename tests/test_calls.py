@@ -153,6 +153,27 @@ def test_number_with_a_huge_exponent_is_retried(fake):
     assert thunc.call("Rate 1-5.", returns=int) == 4
 
 
+def test_retry_after_a_reply_with_half_an_emoji(monkeypatch):
+    # A lone surrogate is valid in a JSON reply, but a backend can't send it back in the retry prompt.
+    prompts, replies = [], ["\ud83d", "4"]
+
+    def backend(text, **kw):
+        prompts.append(text.encode("utf-8"))  # what any real backend does with the prompt
+        return replies.pop(0)
+
+    monkeypatch.setitem(thunc.backends.BACKENDS, "strict", backend)
+    assert thunc.call("Rate 1-5.", returns=int, backend="strict") == 4
+    assert b"\\ud83d" in prompts[1]
+
+
+def test_trace_lines_survive_a_next_line_character(fake, tmp_path):
+    thunc.configure(trace=str(tmp_path / "calls.jsonl"))
+    fake.replies = ["one\x85two"]
+    thunc.call("Say it.")
+    (line,) = (tmp_path / "calls.jsonl").read_text().splitlines()
+    assert json.loads(line)["value"] == "one\x85two"
+
+
 # --- @thunc.function (docstring prompts) ---------------------------------------------------
 
 

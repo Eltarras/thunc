@@ -93,6 +93,41 @@ def test_claude_code_output_that_is_not_its_json_object(monkeypatch, stdout):
         thunc.call("ping", returns=int)
 
 
+def test_claude_code_stdout_that_is_not_utf8(monkeypatch):
+    stub_cli(monkeypatch, '{"is_error": false, "result": "caf\udce9"}')  # \xe9 as surrogateescape decodes it
+    thunc.configure(backend="claude-code")
+    with pytest.raises(thunc.ThuncError, match="isn't UTF-8"):
+        thunc.call("ping")
+
+
+def test_claude_code_result_with_an_escaped_lone_surrogate_is_text(monkeypatch):
+    stub_cli(monkeypatch, '{"is_error": false, "result": "\\ud83d"}')  # the model's half emoji, as JSON
+    thunc.configure(backend="claude-code")
+    assert thunc.call("ping") == "\ud83d"
+
+
+def test_codex_noise_that_is_not_utf8_does_not_matter(monkeypatch):
+    def run(args, **kwargs):
+        with open(args[args.index("--output-last-message") + 1], "w") as f:
+            f.write("4")
+        return subprocess.CompletedProcess(args, 0, stdout="\udcff", stderr="\udce9")
+
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(backends.subprocess, "run", run)
+    thunc.configure(backend="codex")
+    assert thunc.call("ping", returns=int) == 4
+
+
+def test_cli_is_run_so_undecodable_output_cannot_raise(monkeypatch):
+    calls = []
+    stub_cli(monkeypatch, json.dumps({"result": "pong", "is_error": False}), calls=calls)
+    thunc.configure(backend="claude-code")
+    thunc.call("ping \ud83d")  # a lone surrogate in the prompt is sent escaped, not refused
+    kwargs = calls[0][1]
+    assert kwargs["errors"] == "surrogateescape" and kwargs["encoding"] == "utf-8"
+    assert "\\ud83d" in kwargs["input"]
+
+
 def test_codex_output_that_is_not_utf8(monkeypatch, tmp_path):
     def run(args, **kwargs):
         with open(args[args.index("--output-last-message") + 1], "wb") as f:
