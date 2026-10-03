@@ -4,6 +4,9 @@
 - openai:      OpenAI Responses API via the official SDK and an API key.
 - claude-code: headless `claude -p` using the local Claude Code login (cheap testing).
 - codex:       headless `codex exec` using the local Codex login (cheap testing).
+
+The API backends send `system` as the API's system prompt. The CLIs replace their own built-in
+prompt with it: `claude -p --system-prompt`, and Codex's `model_instructions_file` setting.
 """
 
 from __future__ import annotations
@@ -153,8 +156,11 @@ def claude_code(text: str, *, system: str, model: str | None, api_key: str | Non
 
 
 def codex(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
-    # codex exec has no system-prompt flag, so the instructions go in front of the prompt.
-    full_prompt = f"{system}\n\n{text}"
+    # codex exec has no system-prompt flag; the model_instructions_file setting replaces Codex's
+    # built-in instructions with the file's text. The path is absolute because the CLI runs in a temp dir.
+    fd, system_path = tempfile.mkstemp(suffix=".md")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(system)
     fd, out_path = tempfile.mkstemp(suffix=".txt")
     os.close(fd)
     try:
@@ -169,11 +175,13 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
             "never",
             "--output-last-message",
             out_path,
+            "--config",
+            f"model_instructions_file={json.dumps(system_path)}",  # a TOML string (JSON escapes are valid TOML)
         ]
         if model:
             args += ["--model", model]
         args.append("-")  # read the prompt from stdin
-        proc = _run_cli(args, full_prompt, timeout)
+        proc = _run_cli(args, text, timeout)
         if proc.returncode != 0:
             raise ThuncError(f"codex exited {proc.returncode}: {_printable(proc.stderr).strip()[-500:]}")
         try:
@@ -182,8 +190,9 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
         except (OSError, UnicodeDecodeError) as exc:
             raise ThuncError(f"Could not read codex's answer: {exc}") from exc
     finally:
-        with contextlib.suppress(OSError):  # gone, or not a file any more: nothing to clean up
-            os.unlink(out_path)
+        for path in (out_path, system_path):
+            with contextlib.suppress(OSError):  # gone, or not a file any more: nothing to clean up
+                os.unlink(path)
 
 
 def _not_utf8(output: str) -> bool:
