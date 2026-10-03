@@ -115,7 +115,6 @@ examples/
 ## Limitations
 
 - **There's no caching and no record/replay yet**, so repeated calls cost again.
-- **The API-key backend hasn't been run live yet.** It's only checked against the SDK's types.
 - **`Literal` results from `thunc.call` are typed as `Any`.** `@thunc.function` has no such gap.
 - **Docstrings disappear under `python -OO`.** Use `instructions=` there.
 
@@ -125,6 +124,7 @@ examples/
 python3 -m venv .venv && .venv/bin/pip install -e ".[anthropic,dev]"
 .venv/bin/pytest                    # offline tests (these run in CI)
 .venv/bin/pytest live_tests         # real model calls through your Claude Code login; costs quota
+THUNC_BACKEND=anthropic .venv/bin/pytest live_tests   # the same, through the Claude API (needs ANTHROPIC_API_KEY)
 .venv/bin/ruff check . && .venv/bin/mypy --strict thunc
 ```
 
