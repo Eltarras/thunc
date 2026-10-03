@@ -25,6 +25,9 @@ The answer is parsed into the declared type. If it doesn't fit, the model is ask
 after that `thunc.ThuncError` is raised. The library uses the standard library only and needs
 Python 3.10+.
 
+It runs on the Claude API, the OpenAI API, a local model (LM Studio, or any server that speaks the
+OpenAI API), or your Claude Code or Codex login.
+
 ## Install
 
 ```bash
@@ -44,6 +47,9 @@ python3 -m examples.hello
 python3 -m examples.support_inbox
 THUNC_BACKEND=codex python3 -m examples.log_triage
 ```
+
+With an API key instead, install the SDK and pick the backend: `THUNC_BACKEND=openai` with
+`OPENAI_API_KEY`, or `THUNC_BACKEND=anthropic` with `ANTHROPIC_API_KEY`.
 
 ## Two ways to write a prompt
 
@@ -85,6 +91,17 @@ sent back to the model and retried.
   `pip install "thunc[openai]"`. The default model is `gpt-5.5`. `OPENAI_BASE_URL` points it at
   any server that speaks the OpenAI Responses API.
 - `claude-code` and `codex` call your local CLI login, and are meant for cheap testing.
+
+**Local models:** the `openai` backend works with a local server through `OPENAI_BASE_URL`. This
+has been tested with [LM Studio](https://lmstudio.ai) running `openai/gpt-oss-20b`:
+
+```python
+# OPENAI_BASE_URL=http://localhost:1234/v1  OPENAI_API_KEY=lm-studio  (any non-empty key works)
+thunc.configure(backend="openai", model="openai/gpt-oss-20b")
+```
+
+Small models sometimes wrap an answer, like `{"rating": 5}` for an `int`, and need the retry more
+often.
 
 The backend can also be set with `THUNC_BACKEND`. With none set, `ANTHROPIC_API_KEY` (or a
 `configure(api_key=...)` alone) selects `anthropic`, and otherwise `OPENAI_API_KEY` selects `openai`.
