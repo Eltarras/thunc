@@ -19,6 +19,7 @@ classifiers = [
 ]
 
 [project.urls]
+Homepage = "https://eltarras.github.io/thunc/"
 Repository = "https://github.com/Eltarras/thunc"
 Issues = "https://github.com/Eltarras/thunc/issues"
 
