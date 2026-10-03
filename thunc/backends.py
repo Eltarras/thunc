@@ -1,6 +1,7 @@
 """Backends: each takes (text, *, system, model, api_key, timeout) and returns the answer text.
 
 - anthropic:   Claude API via the official SDK and an API key (production path).
+- openai:      OpenAI Responses API via the official SDK and an API key.
 - claude-code: headless `claude -p` using the local Claude Code login (cheap testing).
 - codex:       headless `codex exec` using the local Codex login (cheap testing).
 """
@@ -17,6 +18,7 @@ from collections.abc import Callable
 from .errors import ThuncError
 
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
+DEFAULT_OPENAI_MODEL = "gpt-5.5"
 # Models that accept the server-side refusal fallback (`fallbacks: "default"`).
 _FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"}
 
@@ -57,6 +59,37 @@ def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | N
     if response.stop_reason == "max_tokens":
         raise ThuncError("The answer was cut off at max_tokens.")
     return "".join(block.text for block in response.content if block.type == "text")
+
+
+def openai_api(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
+    try:
+        import openai
+    except ImportError as exc:
+        raise ThuncError("The openai backend needs the SDK: pip install 'thunc[openai]'") from exc
+
+    # api_key=None lets the SDK resolve OPENAI_API_KEY (and OPENAI_BASE_URL for compatible servers).
+    client = openai.OpenAI(api_key=api_key, timeout=timeout)
+    try:
+        response = client.responses.create(
+            model=model or DEFAULT_OPENAI_MODEL,
+            instructions=system,
+            input=text,
+            store=False,
+        )
+    except openai.APIConnectionError as exc:
+        raise ThuncError(f"Could not reach the OpenAI API: {exc}") from exc
+    except openai.APIStatusError as exc:
+        raise ThuncError(f"OpenAI API error {exc.status_code}: {exc.message}") from exc
+
+    if response.status == "incomplete":
+        reason = response.incomplete_details.reason if response.incomplete_details else None
+        if reason == "max_output_tokens":
+            raise ThuncError("The answer was cut off at max_output_tokens.")
+        raise ThuncError(f"The OpenAI response is incomplete ({reason or 'no reason given'}).")
+    for item in response.output:
+        if item.type == "message" and any(part.type == "refusal" for part in item.content):
+            raise ThuncError("The model declined this request.")
+    return response.output_text
 
 
 def _run_cli(args: list[str], text: str, timeout: float) -> subprocess.CompletedProcess[str]:
@@ -129,6 +162,7 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
 
 BACKENDS: dict[str, Callable[..., str]] = {
     "anthropic": anthropic_api,
+    "openai": openai_api,
     "claude-code": claude_code,
     "codex": codex,
 }

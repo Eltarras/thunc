@@ -22,8 +22,9 @@ def configure(
 ) -> None:
     """Set defaults for every call. Arguments left as None keep their current value.
 
-    backend: "anthropic" (Claude API; needs api_key or ANTHROPIC_API_KEY), or "claude-code" /
-             "codex" (your local CLI login; for cheap testing).
+    backend: "anthropic" (Claude API; needs api_key or ANTHROPIC_API_KEY), "openai" (OpenAI API;
+             needs api_key or OPENAI_API_KEY), or "claude-code" / "codex" (your local CLI login;
+             for cheap testing). An api_key with no backend means "anthropic".
     trace:   path of a JSONL file that records every call (or set THUNC_TRACE).
     """
     if backend is not None:
@@ -41,13 +42,15 @@ def trace_path() -> str | None:
 
 
 def resolve_backend(override: str | None = None) -> str:
-    """The backend for a call: the per-call override, configure(), THUNC_BACKEND, or the API if a key exists."""
+    """The backend for a call: the per-call override, configure(), THUNC_BACKEND, or the API whose key exists."""
     name = override or _settings["backend"] or os.environ.get("THUNC_BACKEND")
     if name:
         _check_backend(name)
         return str(name)
     if _settings["api_key"] or os.environ.get("ANTHROPIC_API_KEY"):
         return "anthropic"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
     raise ThuncError("No backend configured: call thunc.configure(backend=...) or set THUNC_BACKEND.")
 
 

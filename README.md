@@ -30,6 +30,7 @@ Python 3.10+.
 ```bash
 pip install thunc               # standard library only
 pip install "thunc[anthropic]"  # adds the Claude API backend
+pip install "thunc[openai]"     # adds the OpenAI API backend
 ```
 
 ## Try it
@@ -80,9 +81,13 @@ sent back to the model and retried.
 **Backends:**
 - `anthropic` is the Claude API: `configure(api_key=...)` or `ANTHROPIC_API_KEY`, plus
   `pip install "thunc[anthropic]"`.
+- `openai` is the OpenAI API: `configure(backend="openai", api_key=...)` or `OPENAI_API_KEY`, plus
+  `pip install "thunc[openai]"`. The default model is `gpt-5.5`. `OPENAI_BASE_URL` points it at
+  any server that speaks the OpenAI Responses API.
 - `claude-code` and `codex` call your local CLI login, and are meant for cheap testing.
 
-The backend can also be set with `THUNC_BACKEND`.
+The backend can also be set with `THUNC_BACKEND`. With none set, `ANTHROPIC_API_KEY` (or a
+`configure(api_key=...)` alone) selects `anthropic`, and otherwise `OPENAI_API_KEY` selects `openai`.
 
 **Type checking:** signatures and return types are visible to mypy and Pyright. mypy reports
 empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
@@ -105,7 +110,7 @@ thunc/
   core.py        thunc.call, thunc.map, tracing
   schema.py      return types: describe, parse, validate
   config.py      settings and backend selection
-  backends.py    anthropic, claude-code, codex
+  backends.py    anthropic, openai, claude-code, codex
   errors.py      ThuncError
 tests/           offline: a fake backend, never a real model
 live_tests/      against a real model: hello, a yes/no decision, messy text to a dict
@@ -121,10 +126,11 @@ examples/
 ## Development
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[anthropic,dev]"
+python3 -m venv .venv && .venv/bin/pip install -e ".[anthropic,openai,dev]"
 .venv/bin/pytest                    # offline tests (these run in CI)
 .venv/bin/pytest live_tests         # real model calls through your Claude Code login; costs quota
 THUNC_BACKEND=anthropic .venv/bin/pytest live_tests   # the same, through the Claude API (needs ANTHROPIC_API_KEY)
+THUNC_BACKEND=openai .venv/bin/pytest live_tests      # the same, through the OpenAI API (needs OPENAI_API_KEY)
 .venv/bin/ruff check . && .venv/bin/mypy --strict thunc
 ```
 
