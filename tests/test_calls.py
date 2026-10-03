@@ -148,6 +148,11 @@ def test_trace_lines_survive_line_separators(fake, tmp_path):
     assert json.loads(line)["value"] == "one\u2028two"
 
 
+def test_number_with_a_huge_exponent_is_retried(fake):
+    fake.replies = ["0e99999999999999999999", "4"]
+    assert thunc.call("Rate 1-5.", returns=int) == 4
+
+
 # --- @thunc.function (docstring prompts) ---------------------------------------------------
 
 

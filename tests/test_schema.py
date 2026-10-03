@@ -1,7 +1,7 @@
 """Return types: parsing model text into checked values."""
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import Literal
 
 import pytest
@@ -63,6 +63,15 @@ class Filters:  # every field has a default
     max_price: float | None = None
 
 
+@dataclass
+class Scaled:
+    name: str
+    scale: InitVar[int]
+
+    def __post_init__(self, scale):
+        self.size = len(self.name) * scale
+
+
 @pytest.mark.parametrize(
     "text, tp, expected",
     [
@@ -114,6 +123,9 @@ class Filters:  # every field has a default
         # Whole numbers keep their exact value
         ("9007199254740994.0", int, 9007199254740994),
         ("1e2", int, 100),
+        # Exponents beyond what Decimal holds are still numbers
+        ("0e99999999999999999999", float, 0.0),
+        ("[1e-99999999999999999999]", list[float], [0.0]),
     ],
 )
 def test_recovers_near_misses(text, tp, expected):
@@ -152,6 +164,8 @@ def test_recovers_near_misses(text, tp, expected):
         ("3.9999999999999999", int, "expected an integer"),  # not 4: it only rounds to a whole float
         ("1e-400", int, "expected an integer"),  # not 0
         ("0.99999999999999999", Literal[0, 1], "one of"),
+        ("1e-99999999999999999999", int, "got 1e-99999999999999999999"),  # what the model wrote, not 0.0
+        (".yes", bool, "not valid JSON"),
         ('{"category": null}', Ticket | None, "field 'category'"),  # a Ticket with a bad field, not None
         ('{"alice": null}', dict[str, int] | None, "expected an integer"),  # a dict can't be a wrapper
     ],
@@ -194,6 +208,11 @@ def test_error_message_shortens_a_huge_answer():
 def test_rejects(text, tp):
     with pytest.raises(ValueError):
         parse(text, tp)
+
+
+def test_initvar_is_asked_for_and_passed_to_post_init():
+    assert describe(Scaled) == 'a JSON object with these fields: {"name": a JSON string, "scale": a JSON integer}'
+    assert parse('{"name": "ab", "scale": 3}', Scaled).size == 6
 
 
 def test_describe_leaves_out_fields_the_class_sets_itself():

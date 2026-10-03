@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import decimal
+import functools
 import json
 import math
 import re
@@ -32,11 +33,9 @@ def describe(tp: Any, nested: bool = False) -> str:
     if tp in simple:
         return simple[tp]
     if _is_dataclass(tp):
-        hints = typing.get_type_hints(tp)
         fields = [
-            f'"{f.name}": {describe(hints[f.name], True)}{"" if _required(f) else " (optional)"}'
-            for f in dataclasses.fields(tp)
-            if f.init  # the class sets the others itself, and parse() ignores them
+            f'"{name}": {describe(hint, True)}{"" if required else " (optional)"}'
+            for name, hint, required in _init_fields(tp)
         ]
         return "a JSON object with these fields: {" + ", ".join(fields) + "}"
     origin, args = typing.get_origin(tp), typing.get_args(tp)
@@ -112,7 +111,7 @@ def _may_unwrap(value: dict[str, Any], tp: Any) -> bool:
     (key, inner), fields = next(iter(value.items())), set()
     for option in options:
         if _is_dataclass(option):
-            fields |= {f.name for f in dataclasses.fields(option)}
+            fields |= {name for name, _, _ in _init_fields(option)}
     return key not in fields or isinstance(inner, dict)
 
 
@@ -124,7 +123,7 @@ def _bare_word(text: str, tp: Any) -> Any:
     literals = [typing.get_args(o) for o in options if typing.get_origin(o) is Literal]
     if any(label in labels for labels in literals):  # a str only equals a str option
         return label  # an exact label first: "no" for Literal["no", "partial"] | bool is the label
-    word = text.lower().strip(".")
+    word = text.lower().rstrip(".")
     if bool in options and str not in options and word in {"true", "yes", "false", "no"}:
         return word in {"true", "yes"}
     return _NO_WORD
@@ -164,15 +163,28 @@ def _no_constant(name: str) -> Any:
 
 class _Rounded(float):
     """A JSON number that only rounds to a whole float: 3.9999999999999999 is 4.0, 1e-400 is 0.0,
-    12345678901234567.0 is ...568.0. The model didn't write that integer, so it's never read as one."""
+    12345678901234567.0 is ...568.0. The model didn't write that integer, so it's never read as one.
+    Its repr is what the model wrote, so an error message doesn't say "got 4.0"."""
+
+    digits = ""
+
+    def __repr__(self) -> str:
+        return self.digits
 
 
 def _finite(digits: str) -> float:
     number = float(digits)
     if not math.isfinite(number):
         raise ValueError(f"{digits[:50]} is out of range")
-    if number.is_integer() and decimal.Decimal(digits) != decimal.Decimal(number):
-        return _Rounded(number)
+    if number.is_integer():
+        try:
+            exact = decimal.Decimal(digits) == decimal.Decimal(number)
+        except ArithmeticError:  # an exponent beyond what Decimal holds, like 0e99999999999999999999
+            exact = False
+        if not exact:
+            rounded = _Rounded(number)
+            rounded.digits = digits[:50]
+            return rounded
     return number
 
 
@@ -201,19 +213,16 @@ def validate(value: Any, tp: Any) -> Any:
         return _expect(isinstance(value, str), value, "a string")
     if _is_dataclass(tp):
         _expect(isinstance(value, dict), value, "an object")
-        hints = typing.get_type_hints(tp)
         kwargs = {}
-        for f in dataclasses.fields(tp):
-            if not f.init:
-                continue  # computed by the class itself, never set from the answer
-            if f.name in value:
+        for name, hint, required in _init_fields(tp):
+            if name in value:
                 try:
-                    kwargs[f.name] = validate(value[f.name], hints[f.name])
+                    kwargs[name] = validate(value[name], hint)
                 except ValueError as exc:
-                    raise ValueError(f"field {f.name!r}: {exc}") from None
-            elif _required(f):
-                raise ValueError(f"missing required field {f.name!r}")
-        names = [f.name for f in dataclasses.fields(tp) if f.init]
+                    raise ValueError(f"field {name!r}: {exc}") from None
+            elif required:
+                raise ValueError(f"missing required field {name!r}")
+        names = [name for name, _, _ in _init_fields(tp)]
         if value and names and not kwargs:
             # Not one known field, like {"filters": {...}} for Filters: not an empty Filters().
             raise ValueError(f"expected an object with the fields {names}, got {short_repr(value)}")
@@ -276,5 +285,19 @@ def _is_dataclass(tp: Any) -> bool:
     return isinstance(tp, type) and dataclasses.is_dataclass(tp)
 
 
-def _required(f: dataclasses.Field[Any]) -> bool:
-    return f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+@functools.lru_cache(maxsize=256)
+def _init_fields(tp: type) -> tuple[tuple[str, Any, bool], ...]:
+    """(name, type, required) for each __init__ argument of a dataclass: its fields, and InitVars
+    (passed to __post_init__, never stored). Not ClassVars, nor fields the class sets itself
+    (init=False). The model is asked for these, and only these are read from its answer."""
+    hints = typing.get_type_hints(tp)
+    result = []
+    for f in tp.__dataclass_fields__.values():  # type: ignore[attr-defined]  # dataclasses.fields() skips InitVars
+        hint = hints[f.name]
+        if not f.init or typing.get_origin(hint) is typing.ClassVar:
+            continue
+        if isinstance(hint, dataclasses.InitVar):
+            hint = hint.type
+        required = f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
+        result.append((f.name, hint, required))
+    return tuple(result)
