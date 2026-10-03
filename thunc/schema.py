@@ -114,8 +114,10 @@ def _options(tp: Any) -> tuple[Any, ...]:
 
 def _may_unwrap(value: dict[str, Any], tp: Any) -> bool:
     """Whether a one-key object can be a wrapper. Not when the type takes objects of any shape
-    (a dict, Any), and not when the key is a field of the expected class and the value isn't a
-    whole object: {"category": null} for `Ticket | None` is a Ticket with a bad field, not None."""
+    (a dict, Any), and not when the key is a field of the expected class, unless the value is a
+    whole object of that class (all its keys are fields): {"category": null} for `Ticket | None` is
+    a Ticket with a bad field, not None, and {"customer": {"id": .., "age": ..}} for an Order with
+    an `id` is an Order with a bad customer, not an Order with the customer's id."""
     options = _options(tp)
     if any(o is Any or o is dict or typing.get_origin(o) is dict for o in options):
         return False
@@ -123,7 +125,7 @@ def _may_unwrap(value: dict[str, Any], tp: Any) -> bool:
     for option in options:
         if _is_dataclass(option):
             fields |= {name for name, _, _ in _init_fields(option)}
-    return key not in fields or isinstance(inner, dict)
+    return key not in fields or (isinstance(inner, dict) and bool(inner) and set(inner) <= fields)
 
 
 def _bare_word(text: str, tp: Any) -> Any:
@@ -155,8 +157,21 @@ def _unfence(text: str) -> tuple[str, str]:
     opens = [m.start() for m in re.finditer(r"^```", text, re.MULTILINE) if m.start() != close]
     if len(opens) != 1:
         return text, ""
-    body = text.find("\n", opens[0]) + 1  # the line after the opening fence and its language tag
-    return (text[body:close].strip(), text[: opens[0]].strip()) if 0 < body <= close else (text, "")
+    newline = text.find("\n", opens[0])
+    if not 0 <= newline < close:
+        return text, ""
+    first, rest = text[opens[0] + 3 : newline].strip(), text[newline + 1 : close].strip()
+    # The opening line holds a language tag and maybe attributes ("json title=x"), or the start of the
+    # answer ("4", "[1,"), or both ("json {..."). A lone word with nothing after it is the answer: ```true\n```.
+    tag = re.match(r"[A-Za-z][\w+.#-]*(?:\s+|$)", first)
+    if tag:
+        after = first[tag.end() :]
+        if after[:1] and after[0] in '[{"-0123456789' or (after and not rest):
+            first = after  # the answer starts after the tag
+        elif rest:
+            first = ""  # a tag, and attributes if any
+    inside = f"{first}\n{rest}".strip()
+    return inside, text[: opens[0]].strip()
 
 
 def _is_answer(text: str, tp: Any) -> bool:
@@ -195,6 +210,22 @@ class _Rounded(float):
         return self.digits
 
 
+def _plain_floats(value: Any) -> Any:
+    """`value` with every _Rounded turned back into a plain float, for values returned unchecked
+    (Any, a bare list or dict). In place, without recursion: the JSON can be nested ~1000 deep."""
+    if isinstance(value, _Rounded):
+        return float(value)
+    stack = [value] if isinstance(value, (list, dict)) else []
+    while stack:
+        node = stack.pop()
+        for key, item in list(enumerate(node) if isinstance(node, list) else node.items()):
+            if isinstance(item, _Rounded):
+                node[key] = float(item)
+            elif isinstance(item, (list, dict)):
+                stack.append(item)
+    return value
+
+
 def _finite(digits: str) -> float:
     number = float(digits)
     if not math.isfinite(number):
@@ -214,7 +245,7 @@ def _finite(digits: str) -> float:
 def validate(value: Any, tp: Any) -> Any:
     """Check a decoded JSON value against `tp` (coercing 3.0 -> 3, dicts -> dataclasses)."""
     if tp is Any:
-        return value
+        return _plain_floats(value)
     if tp is type(None):
         return _expect(value is None, value, "null")
     if tp is bool:
@@ -264,8 +295,7 @@ def validate(value: Any, tp: Any) -> Any:
         return match[0]
     if origin in (Union, types.UnionType):
         errors = []
-        # The option of the value's own type first, so 3 for `float | int` stays the int 3.
-        for option in sorted(args, key=lambda option: option is not type(value)):
+        for option in args:
             try:
                 return validate(value, option)
             except ValueError as exc:
@@ -273,10 +303,10 @@ def validate(value: Any, tp: Any) -> Any:
         raise ValueError("; ".join(errors))
     if tp is list or origin is list:
         _expect(isinstance(value, list), value, "an array")
-        return [validate(v, args[0]) for v in value] if args else value
+        return [validate(v, args[0]) for v in value] if args else _plain_floats(value)
     if tp is dict or origin is dict:
         _expect(isinstance(value, dict), value, "an object")
-        return {k: validate(v, args[1]) for k, v in value.items()} if args else value
+        return {k: validate(v, args[1]) for k, v in value.items()} if args else _plain_floats(value)
     raise ThuncError(f"Unsupported return type: {tp!r}")
 
 

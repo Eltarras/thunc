@@ -125,8 +125,8 @@ def test_enum_members_as_literal_options_come_back_as_members(text, tp, expected
         # Literal options keep their own type
         ("3.0", Literal[1, 2, 3], 3),
         ("'bug'", Literal["bug", "billing"], "bug"),
-        # A union keeps the value's own type when it's one of the options
-        ("3", float | int, 3),
+        # A union takes the first option that accepts the value, in the order written
+        ("3", float | int, 3.0),
         ("3.5", int | float, 3.5),
         # Fields the class sets itself (init=False) are ignored, not passed to __init__
         ('{"name": "A", "slug": "a"}', Slugged, Slugged("A")),
@@ -145,6 +145,12 @@ def test_enum_members_as_literal_options_come_back_as_members(text, tp, expected
         ('```json\n{"md": "Run:\\n```bash\\nls\\n```"}\n```', dict[str, str], {"md": "Run:\n```bash\nls\n```"}),
         ("```json\r\n[1]\r\n```", list[int], [1]),
         ("```json\n4```", int, 4),
+        # The answer on the opening line of a fence, alone or after a tag; a tag with attributes
+        ("```4\n```", int, 4),
+        ("```[1,\n2]\n```", list[int], [1, 2]),
+        ('```json {"order_id": "A-1"}\n```', Order, Order("A-1")),
+        ("```true\n```", bool, True),
+        ("```json title=answer.json\n[1]\n```", list[int], [1]),
         # A label that looks like a JSON constant; direction marks around the reply
         ("NaN", Literal["NaN", "ok"], "NaN"),
         ("\u200e4\u200f", int, 4),
@@ -247,6 +253,37 @@ def test_deep_answer_before_a_fence_is_still_a_second_answer():
             continue  # too deep to be an answer on its own
         with pytest.raises(ValueError, match="two answers"):
             parse(before + "\n```json\n4\n```", Any)
+
+
+@dataclass
+class Customer:
+    id: str
+    age: int
+
+
+@dataclass
+class Purchase:
+    id: str = ""
+    customer: Customer | None = None
+
+
+def test_a_bad_nested_object_is_not_read_as_the_outer_class():
+    # {"customer": {...}} is a Purchase with a bad customer, not a wrapper around a Purchase with id "c1".
+    with pytest.raises(ValueError, match="field 'customer'"):
+        parse('{"customer": {"id": "c1", "age": "old"}}', Purchase)
+
+
+def test_a_union_tries_its_options_in_order():
+    assert parse('{"order_id": "A-1", "amount": 3}', Order | dict) == Order("A-1", 3.0)
+    assert parse('[{"order_id": "A-1"}]', list[Order] | list) == [Order("A-1")]
+
+
+@pytest.mark.parametrize("tp", [Any, list, dict[str, Any], list[Any]])
+def test_unchecked_values_hold_plain_floats(tp):
+    text = '{"x": [1e23, 3.9999999999999999]}' if tp in (Any, dict[str, Any]) else "[[1e23, 3.9999999999999999]]"
+    value = parse(text, tp)
+    numbers = value["x"] if isinstance(value, dict) else value[0]
+    assert [type(n) for n in numbers] == [float, float] and repr(numbers) == "[1e+23, 4.0]"
 
 
 def test_error_message_shortens_a_huge_answer():
