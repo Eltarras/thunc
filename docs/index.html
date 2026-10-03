@@ -77,10 +77,16 @@
     border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
   }
   .copy:hover { color: var(--text); border-color: var(--muted); }
-  .links { margin-top: 18px; display: flex; gap: 22px; font-size: 15px; color: var(--muted); flex-wrap: wrap; }
-  .links a { text-decoration: none; }
-  .links a:hover { color: var(--text); }
-  .links .gh { color: var(--accent); font-weight: 600; }
+  .ctas { margin-top: 20px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; min-height: 48px;
+    padding: 0 24px; border-radius: 12px; text-decoration: none; font: 600 16px var(--sans);
+    background: var(--card); border: 2px solid var(--line); color: var(--text);
+    transition: border-color 0.15s, filter 0.15s, transform 0.15s;
+  }
+  .btn:hover { border-color: var(--muted); transform: translateY(-1px); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1306; }
+  .btn.primary:hover { filter: brightness(1.08); border-color: var(--accent); }
 
   .code {
     background: var(--card); border: 2px solid var(--line); border-radius: 20px;
@@ -142,11 +148,9 @@
       <div class="sub"><b>th</b>ink + f<b>unc</b>tion</div>
       <h1>Call an LLM like a <em>typed</em> Python function.</h1>
       <div class="install"><span>pip install thunc</span><button class="copy" data-copy="pip install thunc" type="button">Copy</button></div>
-      <div class="links">
-        <a class="gh" href="https://github.com/Eltarras/thunc">GitHub →</a>
-        <a href="https://pypi.org/project/thunc/">PyPI</a>
-        <a href="https://github.com/Eltarras/thunc#readme">Docs</a>
-        <span>Claude · OpenAI · local models</span>
+      <div class="ctas">
+        <a class="btn primary" href="https://github.com/Eltarras/thunc">View on GitHub</a>
+        <a class="btn" href="https://pypi.org/project/thunc/">PyPI</a>
       </div>
     </div>
     <div class="code">
