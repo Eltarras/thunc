@@ -13,10 +13,11 @@ def urgency(ticket: str) -> int:
 thunc.call(f"Translate into {language}.", {"text": note})
 """
 
+from .cache import CacheGroup, cache_info, clear_cache
 from .config import configure
 from .core import call, map
 from .decorator import function
 from .errors import ThuncError
 
-__all__ = ["ThuncError", "call", "configure", "function", "map"]
+__all__ = ["CacheGroup", "ThuncError", "cache_info", "call", "clear_cache", "configure", "function", "map"]
 __version__ = "0.1.1"

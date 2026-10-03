@@ -18,6 +18,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 
+[project.scripts]
+thunc = "thunc.__main__:main"
+
 [project.urls]
 Homepage = "https://eltarras.github.io/thunc/"
 Repository = "https://github.com/Eltarras/thunc"

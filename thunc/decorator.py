@@ -9,7 +9,7 @@ import typing
 from collections.abc import Callable
 from typing import Any, ParamSpec, TypeVar, overload
 
-from .core import call
+from .core import _call
 from .schema import describe
 
 P = ParamSpec("P")
@@ -51,6 +51,7 @@ def function(
     - Output: the return annotation (none means str); `ensure=` adds a check that triggers a retry.
     - `cache=True` saves answers on disk and reuses them for the same inputs. Use it for functions
       that should give one answer per input (classify, extract, score), not for ones meant to vary.
+      `thunc.clear_cache(func)` deletes this function's saved answers.
     - The body must stay empty; `async def` gives an awaitable.
     """
 
@@ -87,13 +88,14 @@ def _build(func: Callable[..., Any], instructions: str | None, options: dict[str
         bound = sig.bind(*args, **kwargs)
         bound.apply_defaults()
         inputs = {k: v for k, v in bound.arguments.items() if k != skip}
-        return call(instructions, inputs, returns=returns, **options)
+        return _call(instructions, inputs, returns, name=name, module=func.__module__, **options)
 
     async def run_async(*args: Any, **kwargs: Any) -> Any:
         return await asyncio.to_thread(run, *args, **kwargs)
 
     wrapper = functools.wraps(func)(run_async if is_async else run)
     wrapper.__dict__["__thunc_instructions__"] = instructions  # for debugging
+    wrapper.__dict__["__thunc_function__"] = name  # for thunc.clear_cache(func); also the cache key's name
     return wrapper
 
 
