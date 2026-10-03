@@ -178,6 +178,15 @@ def _plain(value: Any) -> Any:
     return dataclasses.asdict(value) if dataclasses.is_dataclass(value) and not isinstance(value, type) else value
 
 
+def _plain_deep(value: Any) -> Any:
+    """_plain all the way down, so a list of dataclasses is traced as objects, not repr strings."""
+    if isinstance(value, (list, tuple)):
+        return [_plain_deep(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _plain_deep(v) for k, v in value.items()}
+    return _plain(value)
+
+
 def _cache_identity(request: str, backend: str | None, model: str | None) -> dict[str, Any]:
     """What makes two calls the same call: the exact text the model sees, and which model sees it.
     Keying on the rendered prompt (not the Python arguments) means a change to the instructions,
@@ -185,7 +194,7 @@ def _cache_identity(request: str, backend: str | None, model: str | None) -> dic
     name = resolve_backend(backend)
     where = {"backend": name, "model": model or setting("model") or DEFAULT_MODELS.get(name), "request": request}
     blob = json.dumps({"format": 1, "system": SYSTEM, **where}, ensure_ascii=False, sort_keys=True)
-    return {"key": hashlib.sha256(blob.encode("utf-8")).hexdigest(), **where}
+    return {"key": hashlib.sha256(blob.encode("utf-8", "surrogatepass")).hexdigest(), **where}
 
 
 def _cache_get(key: str) -> str | None:
@@ -208,7 +217,8 @@ def _cache_put(where: dict[str, Any], answer: str) -> None:
     try:
         os.makedirs(folder, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        # backslashreplace: a lone surrogate (half an emoji, "\ud83d") is written as the JSON escape it came from.
+        with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as f:
             json.dump(entry, f, ensure_ascii=False, indent=2)
         os.replace(tmp, os.path.join(folder, f"{where['key']}.json"))
     except OSError as exc:
@@ -243,15 +253,15 @@ def _trace(
         "backend": backend,
         "model": model or setting("model"),
         "instructions": instructions,
-        "inputs": {k: _plain(v) for k, v in inputs.items()},
+        "inputs": {k: _plain_deep(v) for k, v in inputs.items()},
         "returns": getattr(returns, "__name__", None) or repr(returns),
         "answers": answers,  # raw model replies, one per attempt
         "attempts": len(answers),
         "cached": result["cached"],  # answered from the cache, without asking the model
         "ok": result["error"] is None,
-        "value": _plain(result["value"]),
+        "value": _plain_deep(result["value"]),
         "error": None if result["error"] is None else str(result["error"]),
         "seconds": round(time.monotonic() - started, 3),
     }
-    with _trace_lock, open(path, "a", encoding="utf-8") as f:
+    with _trace_lock, open(path, "a", encoding="utf-8", errors="backslashreplace") as f:
         f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")

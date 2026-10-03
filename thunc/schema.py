@@ -51,7 +51,7 @@ def describe(tp: Any, nested: bool = False) -> str:
 
 def parse(text: str, tp: Any) -> Any:
     """Model text -> value of type `tp`. Raises ValueError (with a reason the model can act on)."""
-    cleaned = _THINK.sub("", text.strip().strip(_INVISIBLE).strip(), count=1).strip()
+    cleaned = _trim(_THINK.sub("", _trim(text), count=1))
     if tp is str:
         if not cleaned:
             raise ValueError("the reply was empty")
@@ -62,18 +62,23 @@ def parse(text: str, tp: Any) -> Any:
     except RecursionError:
         raise ValueError("the JSON is nested too deeply") from None
     except json.JSONDecodeError:
-        # Tolerate the usual near-misses: yes/no for booleans, an unquoted label for Literals.
-        word = cleaned.lower().strip(".")
-        if tp is bool and word in {"true", "yes", "false", "no"}:
-            return word in {"true", "yes"}
-        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in "'\"":
-            cleaned = cleaned[1:-1]
-        if typing.get_origin(tp) is Literal and any(isinstance(a, str) and a == cleaned for a in typing.get_args(tp)):
-            return cleaned
+        word = _bare_word(cleaned, tp)
+        if word is not _NO_WORD:
+            return word
         raise ValueError(f"not valid JSON: {cleaned[:200]!r}") from None
+    if isinstance(value, dict) and len(value) == 1 and _is_dataclass(tp):
+        # {"ticket": {...}} for a Ticket: unwrap it before the unknown key is ignored, or a class
+        # whose fields all have defaults would quietly come back empty.
+        key, inner = next(iter(value.items()))
+        if key not in {f.name for f in dataclasses.fields(tp)}:
+            return validate(inner, tp)
     try:
         return validate(value, tp)
     except ValueError:
+        # A label that happens to be valid JSON, like 2 for Literal["1", "2"].
+        word = _bare_word(cleaned, tp)
+        if word is not _NO_WORD:
+            return word
         # An answer wrapped in a one-key object, like {"rating": 4} for an int: unwrap it, once.
         if isinstance(value, dict) and len(value) == 1:
             try:
@@ -85,18 +90,37 @@ def parse(text: str, tp: Any) -> Any:
 
 # A leading reasoning block, as some local models emit: <think>...</think>
 _THINK = re.compile(r"\A<(think|thinking)>.*?</\1>", re.DOTALL | re.IGNORECASE)
-# A byte-order mark and zero-width characters, which str.strip() keeps.
-_INVISIBLE = "\ufeff\u200b\u200c\u200d\u2060"
+# Whitespace, a byte-order mark and zero-width characters at either end (str.strip() keeps the last two).
+_EDGES = re.compile(r"\A[\s\ufeff\u200b\u200c\u200d\u2060]+|[\s\ufeff\u200b\u200c\u200d\u2060]+\Z")
+_NO_WORD = object()
+
+
+def _trim(text: str) -> str:
+    return _EDGES.sub("", text)
+
+
+def _bare_word(text: str, tp: Any) -> Any:
+    """The usual near-misses that aren't JSON of the right kind: yes/no for a bool, an unquoted
+    (or single-quoted) label for a string Literal. Also inside an Optional. _NO_WORD if neither."""
+    options = typing.get_args(tp) if typing.get_origin(tp) in (Union, types.UnionType) else (tp,)
+    word = text.lower().strip(".")
+    if bool in options and str not in options and word in {"true", "yes", "false", "no"}:
+        return word in {"true", "yes"}
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        text = text[1:-1]
+    labels = [a for o in options if typing.get_origin(o) is Literal for a in typing.get_args(o) if isinstance(a, str)]
+    return text if text in labels else _NO_WORD
 
 
 def _unfence(text: str) -> str:
-    """The inside of a Markdown code fence: the whole reply, or the only fence in it (after a
-    "Here you go:"). The language tag is ignored, whatever it is."""
+    """The inside of a Markdown code fence: the whole reply, or a fence that ends the reply after a
+    line of prose ("Here you go:"). The language tag is ignored, whatever it is. Anything after the
+    fence could be a second answer, so then the reply is left as it is (and fails)."""
     inline = re.fullmatch(r"```(?:json\b)?(.*?)```", text, re.DOTALL | re.IGNORECASE)
     if inline and "\n" not in inline.group(1).strip():
         return inline.group(1).strip()
-    blocks = re.findall(r"^```[^\n`]*\n(.*?)^```", text, re.DOTALL | re.MULTILINE)
-    return blocks[0].strip() if len(blocks) == 1 else text
+    blocks = re.findall(r"^```[^\n`]*\n(.*?)^```\s*\Z", text, re.DOTALL | re.MULTILINE)
+    return blocks[0].strip() if len(blocks) == 1 and text.count("```") == 2 else text
 
 
 def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -133,8 +157,12 @@ def validate(value: Any, tp: Any) -> Any:
         ok = whole and not isinstance(value, bool)
         return int(_expect(ok, value, "an integer"))
     if tp is float:
-        number = isinstance(value, (int, float)) and not isinstance(value, bool)
-        return float(_expect(number and math.isfinite(value), value, "a finite number"))
+        try:
+            number = float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else math.nan
+        except OverflowError:  # an integer too big for a float, like 1 followed by 400 zeros
+            number = math.inf
+        _expect(math.isfinite(number), value, "a finite number")
+        return number
     if tp is str:
         return _expect(isinstance(value, str), value, "a string")
     if _is_dataclass(tp):

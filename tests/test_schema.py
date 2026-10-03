@@ -56,6 +56,12 @@ class Positive:
         assert self.n > 0, "n must be positive"
 
 
+@dataclass
+class Filters:  # every field has a default
+    city: str | None = None
+    max_price: float | None = None
+
+
 @pytest.mark.parametrize(
     "text, tp, expected",
     [
@@ -86,6 +92,14 @@ class Positive:
         ("3.5", int | float, 3.5),
         # Fields the class sets itself (init=False) are ignored, not passed to __init__
         ('{"name": "A", "slug": "a"}', Slugged, Slugged("A")),
+        # A wrapped object for a class whose fields all have defaults isn't read as empty
+        ('{"filters": {"city": "Paris", "max_price": 100}}', Filters, Filters("Paris", 100.0)),
+        # Labels that happen to be valid JSON, and near-misses inside an Optional
+        ("2", Literal["1", "2", "3"], "2"),
+        ("bug", Literal["bug", "billing"] | None, "bug"),
+        ("yes", bool | None, True),
+        # Invisible characters after a reasoning block
+        ("<think>easy</think>\n\u200b4", int, 4),
     ],
 )
 def test_recovers_near_misses(text, tp, expected):
@@ -115,6 +129,10 @@ def test_recovers_near_misses(text, tp, expected):
         ('{"rating": "4"}', int, "expected an integer"),  # unwrapped, but still the wrong type
         ('{"a": 4, "b": 5}', int, "expected an integer"),  # two keys: not a wrapper
         ("```json\n1\n```\n```json\n2\n```", int, "not valid JSON"),  # two fences: no guessing
+        ("```json\n4\n```\n5", int, "not valid JSON"),  # a second answer after the fence
+        pytest.param("1" + "0" * 400, float, "finite number", id="huge-int-for-float"),
+        pytest.param('{"order_id": "A", "amount": 1' + "0" * 400 + "}", Order, "finite number", id="huge-field"),
+        ('{"filters": "Paris"}', Filters, "expected an object"),  # not silently Filters()
     ],
 )
 def test_rejects_with_a_reason(text, tp, reason):

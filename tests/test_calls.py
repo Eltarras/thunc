@@ -90,6 +90,29 @@ def test_backend_that_returns_no_text(monkeypatch):
         thunc.call("hi", backend="broken")
 
 
+def test_lone_surrogate_in_a_reply_is_traced_and_cached(fake, tmp_path):
+    # Half an emoji escape is valid JSON but can't be written as UTF-8 as it is.
+    thunc.configure(trace=str(tmp_path / "calls.jsonl"), cache_dir=str(tmp_path / "cache"))
+    fake.replies = ['["\\ud83d"]', "half \ud83d"]
+    assert thunc.call("Emoji?", returns=list[str]) == ["\ud83d"]
+    assert thunc.call("Emoji?", cache=True) == "half \ud83d"
+    assert thunc.call("Emoji?", cache=True) == "half \ud83d"  # read back from the cache
+    entries = [json.loads(line) for line in (tmp_path / "calls.jsonl").read_text().splitlines()]
+    assert entries[0]["value"] == ["\ud83d"] and entries[2]["cached"]
+    assert not list((tmp_path / "cache").glob("*.tmp"))
+
+
+def test_trace_records_nested_dataclasses_as_objects(fake, tmp_path):
+    @dataclass
+    class City:
+        name: str
+
+    thunc.configure(trace=str(tmp_path / "calls.jsonl"))
+    fake.replies = ['[{"name": "Lyon"}]']
+    thunc.call("Cities?", returns=list[City])
+    assert json.loads((tmp_path / "calls.jsonl").read_text())["value"] == [{"name": "Lyon"}]
+
+
 # --- @thunc.function (docstring prompts) ---------------------------------------------------
 
 
