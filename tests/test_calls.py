@@ -52,6 +52,44 @@ def test_ensure_rejection_triggers_retry(fake):
     assert "rejected by the program's validation check" in fake.prompts[1]
 
 
+def test_ensure_that_raises_triggers_retry(fake):
+    # `1 <= n` raises TypeError when the model answers null; that's a failed answer, not a crash.
+    fake.replies = ["null", "4"]
+    assert thunc.call("Rate 1-5, or null.", returns=int | None, ensure=lambda n: 1 <= n <= 5) == 4
+    assert "TypeError" in fake.prompts[1]
+
+
+def test_unparseable_answers_never_escape_the_retry_loop(fake):
+    fake.replies = ["[" * 100_000 + "]" * 100_000, "<think>easy</think>4"]
+    assert thunc.call("Rate 1-5.", returns=int) == 4
+
+
+def test_gives_up_with_the_last_problem_as_cause(fake):
+    fake.replies = ["null"] * 3
+    with pytest.raises(thunc.ThuncError) as caught:
+        thunc.call("Rate 1-5.", returns=int | None, ensure=lambda n: n > 0)
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert isinstance(caught.value.__cause__.__cause__, TypeError)
+
+
+def test_empty_answer_is_retried_for_str(fake):
+    fake.replies = ["  ", "hello"]
+    assert thunc.call("Say hello.") == "hello"
+    assert "empty" in fake.prompts[1]
+
+
+def test_retry_prompt_stays_short_after_a_huge_answer(fake):
+    fake.replies = [json.dumps({f"k{i}": "v" * 50 for i in range(2000)}), "4"]
+    assert thunc.call("Rate 1-5.", returns=int) == 4
+    assert len(fake.prompts[1]) < len(fake.prompts[0]) + 1500
+
+
+def test_backend_that_returns_no_text(monkeypatch):
+    monkeypatch.setitem(thunc.backends.BACKENDS, "broken", lambda text, **kw: None)
+    with pytest.raises(thunc.ThuncError, match="returned NoneType, not text"):
+        thunc.call("hi", backend="broken")
+
+
 # --- @thunc.function (docstring prompts) ---------------------------------------------------
 
 

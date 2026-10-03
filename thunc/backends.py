@@ -129,6 +129,8 @@ def claude_code(text: str, *, system: str, model: str | None, api_key: str | Non
         raise ThuncError(f"claude exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()[-500:]}") from None
     if data.get("is_error") or proc.returncode != 0:
         raise ThuncError(f"claude error: {data.get('result') or proc.stderr.strip()[-500:]}")
+    if not isinstance(data.get("result"), str):
+        raise ThuncError(f"claude returned no text: {proc.stdout.strip()[-500:]}")
     return str(data["result"])
 
 

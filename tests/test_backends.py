@@ -71,6 +71,13 @@ def test_claude_code(monkeypatch):
     assert "<instructions>\nping" in kwargs["input"]
 
 
+def test_claude_code_without_text(monkeypatch):
+    stub_cli(monkeypatch, json.dumps({"result": None, "is_error": False}))
+    thunc.configure(backend="claude-code")
+    with pytest.raises(thunc.ThuncError, match="no text"):
+        thunc.call("ping")
+
+
 def test_claude_code_error(monkeypatch):
     stub_cli(monkeypatch, json.dumps({"result": "Not logged in", "is_error": True}), returncode=1)
     thunc.configure(backend="claude-code")

@@ -17,7 +17,7 @@ from typing import Any, TypeVar, overload
 from .backends import BACKENDS, DEFAULT_MODELS
 from .config import cache_dir, resolve_backend, setting, trace_path
 from .errors import ThuncError
-from .schema import describe, parse
+from .schema import describe, parse, short_repr
 
 T = TypeVar("T")
 A = TypeVar("A")
@@ -117,7 +117,9 @@ def call(
                 _cache_put(where, answer)
             result.update(value=value, error=None)
             return value
-        raise ThuncError(f"No valid {describe(returns)} after {retries + 1} attempt(s); last error: {result['error']}")
+        raise ThuncError(
+            f"No valid {describe(returns)} after {retries + 1} attempt(s); last error: {result['error']}"
+        ) from result["error"]
     except Exception as exc:
         result["error"] = exc
         raise
@@ -133,15 +135,27 @@ def map(func: Callable[[A], T], items: Iterable[A], *, workers: int = 8) -> list
 
 def _check(answer: str, returns: Any, ensure: Callable[[Any], bool] | None) -> Any:
     value = parse(answer, returns)
-    if ensure is not None and not ensure(value):
-        raise ValueError(f"the value {value!r} was rejected by the program's validation check")
+    if ensure is None:
+        return value
+    try:
+        ok = ensure(value)
+    except Exception as exc:  # e.g. `1 <= n` when the answer was null: the answer failed the check
+        raise ValueError(
+            f"the value {short_repr(value)} failed the program's validation check ({type(exc).__name__}: {exc})"
+        ) from exc
+    if not ok:
+        raise ValueError(f"the value {short_repr(value)} was rejected by the program's validation check")
     return value
 
 
 def _send(text: str, backend: str | None, model: str | None) -> str:
-    return BACKENDS[resolve_backend(backend)](
+    name = resolve_backend(backend)
+    answer = BACKENDS[name](
         text, system=SYSTEM, model=model or setting("model"), api_key=setting("api_key"), timeout=setting("timeout")
     )
+    if not isinstance(answer, str):
+        raise ThuncError(f"The {name} backend returned {type(answer).__name__}, not text.")
+    return answer
 
 
 def _build_prompt(instructions: str, inputs: dict[str, Any], returns: Any) -> str:

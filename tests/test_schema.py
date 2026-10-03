@@ -1,6 +1,6 @@
 """Return types: parsing model text into checked values."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import pytest
@@ -34,6 +34,98 @@ class Order:
 )
 def test_accepts(text, tp, expected):
     assert parse(text, tp) == expected
+
+
+@dataclass
+class Ticket:
+    category: str
+    urgency: int
+
+
+@dataclass
+class Slugged:
+    name: str
+    slug: str = field(init=False, default="")
+
+
+@dataclass
+class Positive:
+    n: int
+
+    def __post_init__(self):
+        assert self.n > 0, "n must be positive"
+
+
+@pytest.mark.parametrize(
+    "text, tp, expected",
+    [
+        # A leading reasoning block, as local models emit
+        ("<think>charged twice, so urgent</think>\n4", int, 4),
+        ("<THINKING>\nhmm\n</THINKING>\n\ntrue", bool, True),
+        ("<think>translate it</think>Bonjour", str, "Bonjour"),
+        # Code fences: any language tag, any case, after a line of prose
+        ("```JSON\n4\n```", int, 4),
+        ("```python\n[1, 2]\n```", list[int], [1, 2]),
+        ("```json [1, 2]```", list[int], [1, 2]),
+        ("```4```", int, 4),
+        ('Here you go:\n```json\n{"category": "bug", "urgency": 4}\n```', Ticket, Ticket("bug", 4)),
+        # Invisible characters around the answer
+        ("\ufeff4", int, 4),
+        ("\u200btrue\u200b", bool, True),
+        # An answer wrapped in a one-key object
+        ('{"rating": 4}', int, 4),
+        ('{"answer": true}', bool, True),
+        ('{"category": "bug"}', Literal["bug", "billing"], "bug"),
+        ('{"items": ["a", "b"]}', list[str], ["a", "b"]),
+        ('{"ticket": {"category": "bug", "urgency": 4}}', Ticket, Ticket("bug", 4)),
+        # Literal options keep their own type
+        ("3.0", Literal[1, 2, 3], 3),
+        ("'bug'", Literal["bug", "billing"], "bug"),
+        # A union keeps the value's own type when it's one of the options
+        ("3", float | int, 3),
+        ("3.5", int | float, 3.5),
+        # Fields the class sets itself (init=False) are ignored, not passed to __init__
+        ('{"name": "A", "slug": "a"}', Slugged, Slugged("A")),
+    ],
+)
+def test_recovers_near_misses(text, tp, expected):
+    value = parse(text, tp)
+    assert value == expected and type(value) is type(expected)
+
+
+@pytest.mark.parametrize(
+    "text, tp, reason",
+    [
+        ("true", Literal[1, 2, 3], "one of"),  # True == 1 in Python, but not here
+        ("false", Literal[0, 1], "one of"),
+        ("[1, true]", list[Literal[1, 2]], "one of"),
+        ("1", Literal[True, False], "one of"),
+        ("NaN", float, "NaN"),
+        ("-Infinity", float, "Infinity"),
+        ("1e999", float, "out of range"),
+        ("[1.5, NaN]", list[float], "NaN"),
+        ('{"a": 1, "a": 2}', dict[str, int], "more than once"),
+        ('{"category": "bug", "urgency": 1, "urgency": 5}', Ticket, "more than once"),
+        ('"bug', Literal["bug", "billing"], "not valid JSON"),  # an unbalanced quote
+        ("", str, "empty"),
+        ("  \n\u200b ", str, "empty"),
+        ("<think>still thinking</think>", str, "empty"),
+        pytest.param("[" * 100_000 + "]" * 100_000, int, "nested too deeply", id="deep-nesting"),
+        ('{"n": -1}', Positive, "AssertionError"),  # __post_init__ raising anything is a retry
+        ('{"rating": "4"}', int, "expected an integer"),  # unwrapped, but still the wrong type
+        ('{"a": 4, "b": 5}', int, "expected an integer"),  # two keys: not a wrapper
+        ("```json\n1\n```\n```json\n2\n```", int, "not valid JSON"),  # two fences: no guessing
+    ],
+)
+def test_rejects_with_a_reason(text, tp, reason):
+    with pytest.raises(ValueError, match=reason):
+        parse(text, tp)
+
+
+def test_error_message_shortens_a_huge_answer():
+    with pytest.raises(ValueError) as caught:
+        parse(str(list(range(10_000))), dict[str, int])
+    assert len(str(caught.value)) < 300
 
 
 @pytest.mark.parametrize(
