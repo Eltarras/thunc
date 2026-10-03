@@ -21,7 +21,7 @@ class FakeBackend:
 @pytest.fixture(autouse=True)
 def clean_settings(monkeypatch):
     monkeypatch.setattr(config, "_settings", dict(config.DEFAULTS))
-    for var in ("THUNC_BACKEND", "THUNC_TRACE", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+    for var in ("THUNC_BACKEND", "THUNC_TRACE", "THUNC_CACHE_DIR", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
 
