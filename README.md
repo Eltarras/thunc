@@ -1,6 +1,7 @@
-# thunc
+![thunc: call an LLM like a typed Python function](https://raw.githubusercontent.com/Eltarras/thunc/main/.github/social-preview.png)
 
 [![CI](https://github.com/Eltarras/thunc/actions/workflows/ci.yml/badge.svg)](https://github.com/Eltarras/thunc/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/thunc)](https://pypi.org/project/thunc/)
 
 **think + function.** Call an LLM like a typed Python function.
 
