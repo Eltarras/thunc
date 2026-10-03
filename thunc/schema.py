@@ -66,12 +66,6 @@ def parse(text: str, tp: Any) -> Any:
         if word is not _NO_WORD:
             return word
         raise ValueError(f"not valid JSON: {cleaned[:200]!r}") from None
-    if isinstance(value, dict) and len(value) == 1 and _is_dataclass(tp):
-        # {"ticket": {...}} for a Ticket: unwrap it before the unknown key is ignored, or a class
-        # whose fields all have defaults would quietly come back empty.
-        key, inner = next(iter(value.items()))
-        if key not in {f.name for f in dataclasses.fields(tp)}:
-            return validate(inner, tp)
     try:
         return validate(value, tp)
     except ValueError:
@@ -90,37 +84,46 @@ def parse(text: str, tp: Any) -> Any:
 
 # A leading reasoning block, as some local models emit: <think>...</think>
 _THINK = re.compile(r"\A<(think|thinking)>.*?</\1>", re.DOTALL | re.IGNORECASE)
-# Whitespace, a byte-order mark and zero-width characters at either end (str.strip() keeps the last two).
-_EDGES = re.compile(r"\A[\s\ufeff\u200b\u200c\u200d\u2060]+|[\s\ufeff\u200b\u200c\u200d\u2060]+\Z")
+# Whitespace (all of it is below U+3001), a byte-order mark and zero-width characters, which
+# str.strip() keeps. Stripped with str.strip(chars): a regex here is quadratic on long blank runs.
+_EDGES = "".join(c for c in map(chr, range(0x3001)) if c.isspace()) + "\ufeff\u200b\u200c\u200d\u2060"
 _NO_WORD = object()
 
 
 def _trim(text: str) -> str:
-    return _EDGES.sub("", text)
+    return text.strip(_EDGES)
 
 
 def _bare_word(text: str, tp: Any) -> Any:
     """The usual near-misses that aren't JSON of the right kind: yes/no for a bool, an unquoted
     (or single-quoted) label for a string Literal. Also inside an Optional. _NO_WORD if neither."""
     options = typing.get_args(tp) if typing.get_origin(tp) in (Union, types.UnionType) else (tp,)
+    label = text[1:-1] if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"" else text
+    literals = [typing.get_args(o) for o in options if typing.get_origin(o) is Literal]
+    if any(label in labels for labels in literals):  # a str only equals a str option
+        return label  # an exact label first: "no" for Literal["no", "partial"] | bool is the label
     word = text.lower().strip(".")
     if bool in options and str not in options and word in {"true", "yes", "false", "no"}:
         return word in {"true", "yes"}
-    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
-        text = text[1:-1]
-    labels = [a for o in options if typing.get_origin(o) is Literal for a in typing.get_args(o) if isinstance(a, str)]
-    return text if text in labels else _NO_WORD
+    return _NO_WORD
 
 
 def _unfence(text: str) -> str:
     """The inside of a Markdown code fence: the whole reply, or a fence that ends the reply after a
-    line of prose ("Here you go:"). The language tag is ignored, whatever it is. Anything after the
-    fence could be a second answer, so then the reply is left as it is (and fails)."""
-    inline = re.fullmatch(r"```(?:json\b)?(.*?)```", text, re.DOTALL | re.IGNORECASE)
-    if inline and "\n" not in inline.group(1).strip():
-        return inline.group(1).strip()
-    blocks = re.findall(r"^```[^\n`]*\n(.*?)^```\s*\Z", text, re.DOTALL | re.MULTILINE)
-    return blocks[0].strip() if len(blocks) == 1 and text.count("```") == 2 else text
+    line of prose ("Here you go:"). The language tag is ignored, whatever it is. A reply with more
+    fences, or text after the fence (a second answer?), is left as it is (and fails). Linear time:
+    it only looks for fences at the start of a line, so "```" inside a JSON string is fine."""
+    if not text.endswith("```") or len(text) < 6:
+        return text
+    if "\n" not in text:  # ```4``` or ```json [1, 2]```
+        inline = re.fullmatch(r"```(?:json\b)?(.*)```", text, re.DOTALL | re.IGNORECASE)
+        return inline.group(1).strip() if inline and text.startswith("```") else text
+    close = len(text) - 3
+    opens = [m.start() for m in re.finditer(r"^```", text, re.MULTILINE) if m.start() != close]
+    if len(opens) != 1:
+        return text
+    body = text.find("\n", opens[0]) + 1  # the line after the opening fence and its language tag
+    return text[body:close].strip() if 0 < body <= close else text
 
 
 def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -153,7 +156,8 @@ def validate(value: Any, tp: Any) -> Any:
     if tp is bool:
         return _expect(isinstance(value, bool), value, "true or false")
     if tp is int:
-        whole = isinstance(value, int) or (isinstance(value, float) and value.is_integer())
+        # 3.0 is 3, but only while a float holds the integer exactly (12345678901234567.0 doesn't).
+        whole = isinstance(value, int) or (isinstance(value, float) and value.is_integer() and abs(value) < 2**53)
         ok = whole and not isinstance(value, bool)
         return int(_expect(ok, value, "an integer"))
     if tp is float:
@@ -179,10 +183,14 @@ def validate(value: Any, tp: Any) -> Any:
                     raise ValueError(f"field {f.name!r}: {exc}") from None
             elif _required(f):
                 raise ValueError(f"missing required field {f.name!r}")
+        names = [f.name for f in dataclasses.fields(tp) if f.init]
+        if value and names and not kwargs:
+            # Not one known field, like {"filters": {...}} for Filters: not an empty Filters().
+            raise ValueError(f"expected an object with the fields {names}, got {short_repr(value)}")
         try:
             return tp(**kwargs)
         except Exception as exc:  # a check in __post_init__, for example
-            raise ValueError(f"{tp.__name__}(...) failed: {type(exc).__name__}: {exc}") from exc
+            raise ValueError(f"{tp.__name__}(...) failed: {type(exc).__name__}: {shorten(str(exc))}") from exc
 
     origin, args = typing.get_origin(tp), typing.get_args(tp)
     if origin is Literal:
@@ -216,7 +224,10 @@ def _expect(ok: bool, value: Any, wanted: str) -> Any:
 
 def short_repr(value: Any, limit: int = 200) -> str:
     """repr() cut to `limit` characters, so a huge wrong answer doesn't flood the retry prompt."""
-    text = repr(value)
+    return shorten(repr(value), limit)
+
+
+def shorten(text: str, limit: int = 200) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 

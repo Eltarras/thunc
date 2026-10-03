@@ -1,5 +1,6 @@
 """Return types: parsing model text into checked values."""
 
+import time
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -100,6 +101,13 @@ class Filters:  # every field has a default
         ("yes", bool | None, True),
         # Invisible characters after a reasoning block
         ("<think>easy</think>\n\u200b4", int, 4),
+        # The same wrapper inside an Optional, and an exact label before yes/no
+        ('{"filters": {"city": "Paris"}}', Filters | None, Filters("Paris")),
+        ("no", Literal["no", "partial"] | bool, "no"),
+        # One fence whose JSON mentions a fence mid-line; CRLF line endings; a closing fence mid-line
+        ('```json\n{"md": "Run:\\n```bash\\nls\\n```"}\n```', dict[str, str], {"md": "Run:\n```bash\nls\n```"}),
+        ("```json\r\n[1]\r\n```", list[int], [1]),
+        ("```json\n4```", int, 4),
     ],
 )
 def test_recovers_near_misses(text, tp, expected):
@@ -133,11 +141,25 @@ def test_recovers_near_misses(text, tp, expected):
         pytest.param("1" + "0" * 400, float, "finite number", id="huge-int-for-float"),
         pytest.param('{"order_id": "A", "amount": 1' + "0" * 400 + "}", Order, "finite number", id="huge-field"),
         ('{"filters": "Paris"}', Filters, "expected an object"),  # not silently Filters()
+        ('{"confidence": 0.9}', Filters, "expected an object with the fields"),
+        ("12345678901234567.0", int, "expected an integer"),  # not ...568, which is what a float holds
     ],
 )
 def test_rejects_with_a_reason(text, tp, reason):
     with pytest.raises(ValueError, match=reason):
         parse(text, tp)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["4" + "\n" * 200_000 + ".", "```\n" * 50_000 + "done", "```json\n" + "[\n" * 50_000, "<think>" + "x" * 500_000],
+    ids=["blank-lines", "fence-lines", "open-fence", "unclosed-think"],
+)
+def test_long_replies_are_handled_in_linear_time(text):
+    started = time.monotonic()
+    with pytest.raises(ValueError):
+        parse(text, int)
+    assert time.monotonic() - started < 1
 
 
 def test_error_message_shortens_a_huge_answer():

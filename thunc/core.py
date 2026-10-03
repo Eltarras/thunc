@@ -17,7 +17,7 @@ from typing import Any, TypeVar, overload
 from .backends import BACKENDS, DEFAULT_MODELS
 from .config import cache_dir, resolve_backend, setting, trace_path
 from .errors import ThuncError
-from .schema import describe, parse, short_repr
+from .schema import describe, parse, short_repr, shorten
 
 T = TypeVar("T")
 A = TypeVar("A")
@@ -110,7 +110,7 @@ def call(
                 result["error"] = problem
                 text = (
                     f"{request}\n\nYour previous reply was:\n{answer.strip()[:1000]}\n"
-                    f"That is invalid ({problem}). Reply again with only {describe(returns)}."
+                    f"That is invalid ({shorten(str(problem), 1000)}). Reply again with only {describe(returns)}."
                 )
                 continue
             if where is not None:
@@ -120,7 +120,7 @@ def call(
         raise ThuncError(
             f"No valid {describe(returns)} after {retries + 1} attempt(s); last error: {result['error']}"
         ) from result["error"]
-    except Exception as exc:
+    except BaseException as exc:  # Ctrl-C too, so the trace doesn't record it as a success
         result["error"] = exc
         raise
     finally:
@@ -140,9 +140,8 @@ def _check(answer: str, returns: Any, ensure: Callable[[Any], bool] | None) -> A
     try:
         ok = ensure(value)
     except Exception as exc:  # e.g. `1 <= n` when the answer was null: the answer failed the check
-        raise ValueError(
-            f"the value {short_repr(value)} failed the program's validation check ({type(exc).__name__}: {exc})"
-        ) from exc
+        problem = f"{type(exc).__name__}: {shorten(str(exc))}"
+        raise ValueError(f"the value {short_repr(value)} failed the program's validation check ({problem})") from exc
     if not ok:
         raise ValueError(f"the value {short_repr(value)} was rejected by the program's validation check")
     return value
@@ -178,13 +177,9 @@ def _plain(value: Any) -> Any:
     return dataclasses.asdict(value) if dataclasses.is_dataclass(value) and not isinstance(value, type) else value
 
 
-def _plain_deep(value: Any) -> Any:
-    """_plain all the way down, so a list of dataclasses is traced as objects, not repr strings."""
-    if isinstance(value, (list, tuple)):
-        return [_plain_deep(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _plain_deep(v) for k, v in value.items()}
-    return _plain(value)
+def _traceable(value: Any) -> Any:
+    """json.dumps fallback for the trace: dataclasses at any depth as objects, the rest as str()."""
+    return _plain(value) if dataclasses.is_dataclass(value) and not isinstance(value, type) else str(value)
 
 
 def _cache_identity(request: str, backend: str | None, model: str | None) -> dict[str, Any]:
@@ -253,15 +248,19 @@ def _trace(
         "backend": backend,
         "model": model or setting("model"),
         "instructions": instructions,
-        "inputs": {k: _plain_deep(v) for k, v in inputs.items()},
+        "inputs": inputs,
         "returns": getattr(returns, "__name__", None) or repr(returns),
         "answers": answers,  # raw model replies, one per attempt
         "attempts": len(answers),
         "cached": result["cached"],  # answered from the cache, without asking the model
         "ok": result["error"] is None,
-        "value": _plain_deep(result["value"]),
-        "error": None if result["error"] is None else str(result["error"]),
+        "value": result["value"],
+        "error": None if result["error"] is None else str(result["error"]) or type(result["error"]).__name__,
         "seconds": round(time.monotonic() - started, 3),
     }
     with _trace_lock, open(path, "a", encoding="utf-8", errors="backslashreplace") as f:
-        f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+        try:
+            line = json.dumps(entry, ensure_ascii=False, default=_traceable)
+        except (RecursionError, TypeError, ValueError):  # very deep, circular, or tuple keys: shortened
+            line = json.dumps({**entry, "inputs": short_repr(inputs), "value": short_repr(result["value"])})
+        f.write(line + "\n")

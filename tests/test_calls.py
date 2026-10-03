@@ -113,6 +113,33 @@ def test_trace_records_nested_dataclasses_as_objects(fake, tmp_path):
     assert json.loads((tmp_path / "calls.jsonl").read_text())["value"] == [{"name": "Lyon"}]
 
 
+def test_retry_prompt_stays_short_when_a_check_quotes_a_huge_value(fake):
+    codes = {"FR": "France"}
+    fake.replies = [json.dumps("X" * 50_000), '"FR"']
+    assert thunc.call("Country code?", returns=str | int, ensure=lambda c: codes[c]) == "FR"
+    assert len(fake.prompts[1]) < len(fake.prompts[0]) + 2000  # the reply is cut to 1000, the error to 400
+
+
+def test_deep_but_valid_answer_is_returned_and_traced(fake, tmp_path):
+    thunc.configure(trace=str(tmp_path / "calls.jsonl"))
+    fake.replies = ["[" * 900 + "]" * 900]
+    assert thunc.call("Nest.", returns=list) is not None
+    assert json.loads((tmp_path / "calls.jsonl").read_text())["ok"]
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+def test_interrupted_call_is_traced_as_failed(monkeypatch, tmp_path, interrupt):
+    def backend(text, **kw):
+        raise interrupt()
+
+    monkeypatch.setitem(thunc.backends.BACKENDS, "stop", backend)
+    thunc.configure(trace=str(tmp_path / "calls.jsonl"))
+    with pytest.raises(interrupt):
+        thunc.call("Rate.", returns=int, backend="stop")
+    entry = json.loads((tmp_path / "calls.jsonl").read_text())
+    assert not entry["ok"] and entry["error"] == interrupt.__name__
+
+
 # --- @thunc.function (docstring prompts) ---------------------------------------------------
 
 
