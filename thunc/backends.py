@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -58,8 +60,10 @@ def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | N
 
     if response.stop_reason == "refusal":
         raise ThuncError("The model declined this request.")
-    if response.stop_reason == "max_tokens":
-        raise ThuncError("The answer was cut off at max_tokens.")
+    if response.stop_reason in ("max_tokens", "model_context_window_exceeded"):
+        raise ThuncError(f"The answer was cut off ({response.stop_reason}).")
+    if response.stop_reason not in ("end_turn", "stop_sequence", None):
+        raise ThuncError(f"The model stopped before finishing its answer ({response.stop_reason}).")
     return "".join(block.text for block in response.content if block.type == "text")
 
 
@@ -88,6 +92,8 @@ def openai_api(text: str, *, system: str, model: str | None, api_key: str | None
         if reason == "max_output_tokens":
             raise ThuncError("The answer was cut off at max_output_tokens.")
         raise ThuncError(f"The OpenAI response is incomplete ({reason or 'no reason given'}).")
+    if response.status not in ("completed", None):  # failed, cancelled, ...: no finished answer
+        raise ThuncError(f"The OpenAI response is {response.status}, not completed.")
     for item in response.output:
         if item.type == "message" and any(part.type == "refusal" for part in item.content):
             raise ThuncError("The model declined this request.")
@@ -95,13 +101,21 @@ def openai_api(text: str, *, system: str, model: str | None, api_key: str | None
 
 
 def _run_cli(args: list[str], text: str, timeout: float) -> subprocess.CompletedProcess[str]:
+    """Run a CLI with `text` on stdin. Output bytes that aren't UTF-8 come back as lone surrogates
+    (surrogateescape) rather than failing here: see _not_utf8."""
     exe = args[0]
     if shutil.which(exe) is None:
         raise ThuncError(f"`{exe}` was not found on PATH.")
     try:
         # A neutral cwd keeps the CLI from picking up project files (CLAUDE.md, AGENTS.md, ...).
         return subprocess.run(
-            args, input=text, capture_output=True, text=True, timeout=timeout, cwd=tempfile.gettempdir()
+            args,
+            input=text.encode("utf-8", "backslashreplace").decode("utf-8"),  # no lone surrogates on stdin
+            capture_output=True,
+            encoding="utf-8",
+            errors="surrogateescape",
+            timeout=timeout,
+            cwd=tempfile.gettempdir(),
         )
     except subprocess.TimeoutExpired as exc:
         raise ThuncError(f"`{exe}` timed out after {timeout:.0f}s.") from exc
@@ -123,12 +137,18 @@ def claude_code(text: str, *, system: str, model: str | None, api_key: str | Non
     if model:
         args += ["--model", model]
     proc = _run_cli(args, text, timeout)
+    if _not_utf8(proc.stdout):
+        raise ThuncError(f"claude printed output that isn't UTF-8: {_printable(proc.stdout)[-500:]}")
     try:
         data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        raise ThuncError(f"claude exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()[-500:]}") from None
+    except (ValueError, RecursionError):
+        data = None
+    if not isinstance(data, dict):  # not the JSON object `--output-format json` prints
+        raise ThuncError(f"claude exited {proc.returncode}: {_printable(proc.stderr or proc.stdout).strip()[-500:]}")
     if data.get("is_error") or proc.returncode != 0:
-        raise ThuncError(f"claude error: {data.get('result') or proc.stderr.strip()[-500:]}")
+        raise ThuncError(f"claude error: {data.get('result') or _printable(proc.stderr).strip()[-500:]}")
+    if not isinstance(data.get("result"), str):
+        raise ThuncError(f"claude returned no text: {proc.stdout.strip()[-500:]}")
     return str(data["result"])
 
 
@@ -155,11 +175,25 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
         args.append("-")  # read the prompt from stdin
         proc = _run_cli(args, full_prompt, timeout)
         if proc.returncode != 0:
-            raise ThuncError(f"codex exited {proc.returncode}: {proc.stderr.strip()[-500:]}")
-        with open(out_path, encoding="utf-8") as f:
-            return f.read().strip()
+            raise ThuncError(f"codex exited {proc.returncode}: {_printable(proc.stderr).strip()[-500:]}")
+        try:
+            with open(out_path, encoding="utf-8") as f:
+                return f.read().strip()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ThuncError(f"Could not read codex's answer: {exc}") from exc
     finally:
-        os.unlink(out_path)
+        with contextlib.suppress(OSError):  # gone, or not a file any more: nothing to clean up
+            os.unlink(out_path)
+
+
+def _not_utf8(output: str) -> bool:
+    """Whether CLI output had bytes that aren't UTF-8 (surrogateescape turns them into U+DC80-DCFF).
+    A surrogate the CLI wrote as a JSON escape ("\\ud83d") is plain ASCII here, so it doesn't count."""
+    return re.search("[\udc80-\udcff]", output) is not None
+
+
+def _printable(output: str) -> str:
+    return output.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 BACKENDS: dict[str, Callable[..., str]] = {

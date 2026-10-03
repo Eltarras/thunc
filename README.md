@@ -85,8 +85,16 @@ Anything from users, files or the web goes in the inputs:
 **Return types:** `str`, `bool`, `int`, `float`, `Literal[...]`, `list[T]`, `dict[str, T]`,
 `T | None`, and dataclasses (built into real instances).
 
+**Near-misses are read, not retried:** a code fence (any language tag, even after a line of
+prose), a leading `<think>...</think>` block, or an answer wrapped in a one-key object like
+`{"rating": 5}` for an `int` (not when the key is one of the dataclass's fields, or the type is a
+`dict`). Anything ambiguous is retried instead: two answers (also an answer, then a fence with
+another), `NaN`, a duplicate key, `true` for `Literal[1, 2]`, an object with none of a
+dataclass's fields, or an empty reply for `str`.
+
 **`ensure=`** adds your own check, for example `ensure=lambda n: 1 <= n <= 5`. A failed check is
-sent back to the model and retried.
+sent back to the model and retried, and so is a check that raises (`1 <= None` when the model
+answered `null`).
 
 **`cache=True`** saves each answer on disk and reuses it when the same inputs come again, so the
 model is asked once. It's off by default, because it only suits some functions:
@@ -142,8 +150,8 @@ has been tested with [LM Studio](https://lmstudio.ai) running `openai/gpt-oss-20
 thunc.configure(backend="openai", model="openai/gpt-oss-20b")
 ```
 
-Small models sometimes wrap an answer, like `{"rating": 5}` for an `int`, and need the retry more
-often.
+Small models need the retry more often, for example when they explain the answer instead of
+giving it alone.
 
 The backend can also be set with `THUNC_BACKEND`. With none set, `ANTHROPIC_API_KEY` (or a
 `configure(api_key=...)` alone) selects `anthropic`, and otherwise `OPENAI_API_KEY` selects `openai`.

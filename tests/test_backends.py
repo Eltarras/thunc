@@ -1,6 +1,7 @@
 """Backend selection, the CLI backends and the OpenAI backend (subprocess and the SDK are stubbed)."""
 
 import json
+import os
 import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
@@ -71,11 +72,88 @@ def test_claude_code(monkeypatch):
     assert "<instructions>\nping" in kwargs["input"]
 
 
+def test_claude_code_without_text(monkeypatch):
+    stub_cli(monkeypatch, json.dumps({"result": None, "is_error": False}))
+    thunc.configure(backend="claude-code")
+    with pytest.raises(thunc.ThuncError, match="no text"):
+        thunc.call("ping")
+
+
 def test_claude_code_error(monkeypatch):
     stub_cli(monkeypatch, json.dumps({"result": "Not logged in", "is_error": True}), returncode=1)
     thunc.configure(backend="claude-code")
     with pytest.raises(thunc.ThuncError, match="Not logged in"):
         thunc.call("ping")
+
+
+@pytest.mark.parametrize("stdout", ["[1, 2]", '"4"', "null", "42", "[" * 100_000 + "]" * 100_000, "Not JSON"])
+def test_claude_code_output_that_is_not_its_json_object(monkeypatch, stdout):
+    stub_cli(monkeypatch, stdout)
+    thunc.configure(backend="claude-code")
+    with pytest.raises(thunc.ThuncError, match="claude exited 0"):
+        thunc.call("ping", returns=int)
+
+
+def test_claude_code_stdout_that_is_not_utf8(monkeypatch):
+    stub_cli(monkeypatch, '{"is_error": false, "result": "caf\udce9"}')  # \xe9 as surrogateescape decodes it
+    thunc.configure(backend="claude-code")
+    with pytest.raises(thunc.ThuncError, match="isn't UTF-8"):
+        thunc.call("ping")
+
+
+def test_claude_code_result_with_an_escaped_lone_surrogate_is_text(monkeypatch):
+    stub_cli(monkeypatch, '{"is_error": false, "result": "\\ud83d"}')  # the model's half emoji, as JSON
+    thunc.configure(backend="claude-code")
+    assert thunc.call("ping") == "\ud83d"
+
+
+def test_codex_noise_that_is_not_utf8_does_not_matter(monkeypatch):
+    def run(args, **kwargs):
+        with open(args[args.index("--output-last-message") + 1], "w") as f:
+            f.write("4")
+        return subprocess.CompletedProcess(args, 0, stdout="\udcff", stderr="\udce9")
+
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(backends.subprocess, "run", run)
+    thunc.configure(backend="codex")
+    assert thunc.call("ping", returns=int) == 4
+
+
+def test_cli_is_run_so_undecodable_output_cannot_raise(monkeypatch):
+    calls = []
+    stub_cli(monkeypatch, json.dumps({"result": "pong", "is_error": False}), calls=calls)
+    thunc.configure(backend="claude-code")
+    thunc.call("ping \ud83d")  # a lone surrogate in the prompt is sent escaped, not refused
+    kwargs = calls[0][1]
+    assert kwargs["errors"] == "surrogateescape" and kwargs["encoding"] == "utf-8"
+    assert "\\ud83d" in kwargs["input"]
+
+
+def test_codex_output_that_is_not_utf8(monkeypatch, tmp_path):
+    def run(args, **kwargs):
+        with open(args[args.index("--output-last-message") + 1], "wb") as f:
+            f.write(b"\xff\xfe4\x00")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(backends.subprocess, "run", run)
+    thunc.configure(backend="codex")
+    with pytest.raises(thunc.ThuncError, match="Could not read codex's answer"):
+        thunc.call("ping", returns=int)
+
+
+def test_codex_answer_path_turned_into_a_directory(monkeypatch):
+    def run(args, **kwargs):
+        out = args[args.index("--output-last-message") + 1]
+        os.remove(out)
+        os.mkdir(out)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(backends.subprocess, "run", run)
+    thunc.configure(backend="codex")
+    with pytest.raises(thunc.ThuncError, match="Could not read codex's answer"):
+        thunc.call("ping", returns=int)
 
 
 def test_codex(monkeypatch):
@@ -141,6 +219,52 @@ def test_openai_cut_off(monkeypatch):
     thunc.configure(backend="openai")
     with pytest.raises(thunc.ThuncError, match="cut off"):
         thunc.call("ping")
+
+
+def test_openai_failed(monkeypatch):
+    stub_openai(monkeypatch, openai_response("", status="failed"))
+    thunc.configure(backend="openai")
+    with pytest.raises(thunc.ThuncError, match="is failed, not completed"):
+        thunc.call("ping")
+
+
+def stub_anthropic(monkeypatch, stop_reason, text="pong"):
+    """A fake `anthropic` module whose client returns one text block with `stop_reason`."""
+    response = SimpleNamespace(stop_reason=stop_reason, content=[SimpleNamespace(type="text", text=text)])
+    messages = SimpleNamespace(create=lambda **kwargs: response)
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.messages = messages
+            self.beta = SimpleNamespace(messages=messages)
+
+    module = ModuleType("anthropic")
+    module.Anthropic = Client
+    module.APIConnectionError = type("APIConnectionError", (Exception,), {})
+    module.APIStatusError = type("APIStatusError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "anthropic", module)
+
+
+def test_anthropic(monkeypatch):
+    stub_anthropic(monkeypatch, "end_turn")
+    thunc.configure(backend="anthropic")
+    assert thunc.call("ping") == "pong"
+
+
+@pytest.mark.parametrize(
+    "stop_reason, error",
+    [
+        ("refusal", "declined"),
+        ("max_tokens", "cut off"),
+        ("model_context_window_exceeded", "cut off"),
+        ("pause_turn", "stopped before finishing"),
+    ],
+)
+def test_anthropic_unfinished_answer_is_never_returned(monkeypatch, stop_reason, error):
+    stub_anthropic(monkeypatch, stop_reason, text="The first half of the ans")
+    thunc.configure(backend="anthropic")
+    with pytest.raises(thunc.ThuncError, match=error):
+        thunc.call("Summarize.")
 
 
 def test_openai_missing_sdk(monkeypatch):
