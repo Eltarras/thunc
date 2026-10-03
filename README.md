@@ -79,7 +79,7 @@ sent back to the model and retried.
 
 **Backends:**
 - `anthropic` is the Claude API: `configure(api_key=...)` or `ANTHROPIC_API_KEY`, plus
-  `pip install anthropic`.
+  `pip install "thunc[anthropic]"`.
 - `claude-code` and `codex` call your local CLI login, and are meant for cheap testing.
 
 The backend can also be set with `THUNC_BACKEND`.
