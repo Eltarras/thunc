@@ -10,9 +10,11 @@ class FakeBackend:
     def __init__(self):
         self.replies: list[str] = []  # scripted answers, consumed in order
         self.prompts: list[str] = []  # what was sent
+        self.systems: list[str] = []  # the system prompt sent with each
 
     def __call__(self, text, **kwargs):
         self.prompts.append(text)
+        self.systems.append(kwargs["system"])
         if not self.replies:
             raise AssertionError("FakeBackend ran out of scripted replies")
         return self.replies.pop(0)

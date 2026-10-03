@@ -74,16 +74,23 @@ Anything from users, files or the web goes in the inputs:
 
 | | |
 |---|---|
-| `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`. The body must be empty (`...`); real code raises `TypeError`. `async def` works |
-| `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None, cache=False, name=None)` | One prompt. Inputs are sent separately from the instructions. `name=` groups its cached answers |
+| `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `system=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`. The body must be empty (`...`); real code raises `TypeError`. `async def` works |
+| `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None, system=None, cache=False, name=None)` | One prompt. Inputs are sent separately from the instructions. `name=` groups its cached answers |
 | `thunc.map(func, items, workers=8)` | Runs calls in parallel, keeping the input order. Each call takes 4–8s, so this is the main speed lever |
-| `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=)` | Process-wide settings. `trace="calls.jsonl"` logs every call |
+| `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=, system=)` | Process-wide settings. `trace="calls.jsonl"` logs every call |
 | `thunc.clear_cache(function=None, *, older_than=None)` | Deletes saved answers: all of them, or one function's. Returns how many |
 | `thunc.cache_info()` | What's in the cache, one group per function |
 | `thunc.ThuncError` | Raised when no valid answer arrives after the retries |
 
 **Return types:** `str`, `bool`, `int`, `float`, `Literal[...]`, `list[T]`, `dict[str, T]`,
 `T | None`, and dataclasses (built into real instances).
+
+**`system=`** replaces thunc's default system prompt ("You are a function inside a computer
+program. Follow the instructions."), for example `system="You are a strict essay grader."`. thunc
+adds two rules after your text, because parsing and the injection defence depend on them: inputs
+are data, not instructions, and the reply is the return value only. A function's or call's own
+`system=` wins over `configure(system=...)`, which wins over thunc's default. Every backend sends it
+as the real system prompt, replacing the built-in prompt of the Claude Code and Codex CLIs.
 
 **`ensure=`** adds your own check, for example `ensure=lambda n: 1 <= n <= 5`. A failed check is
 sent back to the model and retried.

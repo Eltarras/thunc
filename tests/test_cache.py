@@ -277,3 +277,11 @@ def test_clear_missing_folder_and_bad_arguments(cache):
         thunc.clear_cache(older_than=-1)
     with pytest.raises(ValueError, match="empty"):
         thunc.clear_cache("")
+
+
+def test_a_different_system_prompt_is_a_miss(fake, cache):
+    fake.replies = ["4", "2"]
+    assert thunc.call("Rate 1-5.", {"t": "x"}, returns=int, cache=True) == 4
+    assert thunc.call("Rate 1-5.", {"t": "x"}, returns=int, cache=True, system="You are harsh.") == 2
+    assert thunc.call("Rate 1-5.", {"t": "x"}, returns=int, cache=True, system="You are harsh.") == 2
+    assert len(fake.prompts) == 2

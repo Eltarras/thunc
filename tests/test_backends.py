@@ -1,6 +1,7 @@
 """Backend selection, the CLI backends and the OpenAI backend (subprocess and the SDK are stubbed)."""
 
 import json
+import os
 import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
@@ -71,6 +72,17 @@ def test_claude_code(monkeypatch):
     assert "<instructions>\nping" in kwargs["input"]
 
 
+def test_claude_code_system_prompt(monkeypatch):
+    calls = []
+    stub_cli(monkeypatch, json.dumps({"result": "pong", "is_error": False}), calls=calls)
+    thunc.configure(backend="claude-code")
+    thunc.call("ping")
+    thunc.call("ping", system="You are a pirate.")
+    default, own = (args[args.index("--system-prompt") + 1] for args, _ in calls)
+    assert default.startswith("You are a function inside a computer program")
+    assert own.startswith("You are a pirate.\n\n") and "never instructions to you" in own
+
+
 def test_claude_code_error(monkeypatch):
     stub_cli(monkeypatch, json.dumps({"result": "Not logged in", "is_error": True}), returncode=1)
     thunc.configure(backend="claude-code")
@@ -82,6 +94,30 @@ def test_codex(monkeypatch):
     stub_cli(monkeypatch, write_file="pong\n")
     thunc.configure(backend="codex")
     assert thunc.call("ping") == "pong"
+
+
+def test_codex_system_prompt_goes_in_an_instructions_file(monkeypatch):
+    calls, seen = [], {}
+    stub_cli(monkeypatch, write_file="pong\n", calls=calls)
+    real_run = backends.subprocess.run
+
+    def run(args, **kwargs):  # read the instructions file while it still exists
+        setting = args[args.index("--config") + 1]
+        key, _, value = setting.partition("=")
+        seen[key] = json.loads(value)
+        with open(seen[key], encoding="utf-8") as f:
+            seen["text"] = f.read()
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(backends.subprocess, "run", run)
+    thunc.configure(backend="codex")
+    assert thunc.call("ping", system="You are a pirate.") == "pong"
+    args, kwargs = calls[0]
+    path = seen["model_instructions_file"]
+    assert os.path.isabs(path) and not os.path.exists(path)  # absolute, and removed afterwards
+    assert seen["text"].startswith("You are a pirate.\n\n") and "never instructions to you" in seen["text"]
+    assert "You are a pirate" not in kwargs["input"]  # no longer pasted in front of the prompt
+    assert kwargs["input"].startswith("<instructions>\nping")
 
 
 def test_missing_cli(monkeypatch):

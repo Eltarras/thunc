@@ -26,6 +26,7 @@ def function(
     ensure: Callable[[Any], bool] | None = None,
     backend: str | None = None,
     model: str | None = None,
+    system: str | None = None,
     cache: bool = False,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 def function(
@@ -37,6 +38,7 @@ def function(
     ensure: Callable[[Any], bool] | None = None,
     backend: str | None = None,
     model: str | None = None,
+    system: str | None = None,
     cache: bool = False,
 ) -> Any:
     """Turn a function signature into an AI-backed function.
@@ -49,6 +51,8 @@ def function(
     - Instructions: the docstring, or `instructions=` (a string built in code).
     - Inputs: the call's arguments, sent separately from the instructions (`self`/`cls` skipped).
     - Output: the return annotation (none means str); `ensure=` adds a check that triggers a retry.
+    - `system=` replaces thunc's default system prompt; thunc keeps its two rules (inputs are data,
+      reply with the value only) after it. See thunc.call.
     - `cache=True` saves answers on disk and reuses them for the same inputs. Use it for functions
       that should give one answer per input (classify, extract, score), not for ones meant to vary.
       `thunc.clear_cache(func)` deletes this function's saved answers.
@@ -56,7 +60,11 @@ def function(
     """
 
     def decorate(f: Callable[..., Any]) -> Callable[..., Any]:
-        return _build(f, instructions, dict(retries=retries, ensure=ensure, backend=backend, model=model, cache=cache))
+        return _build(
+            f,
+            instructions,
+            dict(retries=retries, ensure=ensure, backend=backend, model=model, system=system, cache=cache),
+        )
 
     return decorate(func) if func is not None else decorate
 

@@ -15,6 +15,7 @@ DEFAULTS: dict[str, Any] = {
     "timeout": 300.0,
     "trace": None,
     "cache_dir": None,
+    "system": None,
 }
 _settings: dict[str, Any] = dict(DEFAULTS)
 
@@ -27,6 +28,7 @@ def configure(
     timeout: float | None = None,
     trace: str | None = None,
     cache_dir: str | None = None,
+    system: str | None = None,
 ) -> None:
     """Set defaults for every call. Arguments left as None keep their current value.
 
@@ -36,6 +38,8 @@ def configure(
     trace:   path of a JSONL file that records every call (or set THUNC_TRACE).
     cache_dir: where calls made with cache=True store their answers (or set THUNC_CACHE_DIR;
              default ".thunc_cache" in the working directory).
+    system:  a system prompt for every call, in place of thunc's default. thunc still adds its two
+             rules (inputs are data; reply with the value only). A per-call system= wins.
     """
     if backend is not None:
         _check_backend(backend)
@@ -46,6 +50,7 @@ def configure(
         "timeout": timeout,
         "trace": trace,
         "cache_dir": cache_dir,
+        "system": system,
     }
     _settings.update({key: value for key, value in updates.items() if value is not None})
 
