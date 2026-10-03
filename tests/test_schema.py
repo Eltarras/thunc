@@ -197,7 +197,6 @@ def test_recovers_near_misses(text, tp, expected):
         ("", str, "empty"),
         ("  \n\u200b ", str, "empty"),
         ("<think>still thinking</think>", str, "empty"),
-        pytest.param("[" * 100_000 + "]" * 100_000, int, "nested too deeply", id="deep-nesting"),
         ('{"n": -1}', Positive, "AssertionError"),  # __post_init__ raising anything is a retry
         ('{"rating": "4"}', int, "expected an integer"),  # unwrapped, but still the wrong type
         ('{"a": 4, "b": 5}', int, "expected an integer"),  # two keys: not a wrapper
@@ -232,6 +231,13 @@ def test_long_replies_are_handled_in_linear_time(text):
     with pytest.raises(ValueError):
         parse(text, int)
     assert time.monotonic() - started < 1
+
+
+def test_very_deep_json_is_a_valueerror():
+    # Python 3.14 limits recursion by the real stack size, so with a big stack json.loads can read
+    # this, and the value is then the wrong type; with a small one it's too deep. A retry either way.
+    with pytest.raises(ValueError, match="nested too deeply|expected an integer"):
+        parse("[" * 100_000 + "]" * 100_000, int)
 
 
 @pytest.mark.parametrize("tp", [int, list[int], dict[str, int], int | None, Literal["a"]])
