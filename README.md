@@ -4,7 +4,7 @@
 
 **think + function.** Call an LLM like a typed Python function.
 
-> **Status: prototype (v0.1).** The API may change, and it isn't on PyPI yet. Feedback and issues are welcome.
+> **Status: prototype (v0.1).** The API may change. Feedback and issues are welcome.
 
 ```python
 import thunc
@@ -28,8 +28,8 @@ Python 3.10+.
 ## Install
 
 ```bash
-pip install "git+https://github.com/Eltarras/thunc"                # standard library only
-pip install "thunc[anthropic] @ git+https://github.com/Eltarras/thunc"  # adds the Claude API backend
+pip install thunc               # standard library only
+pip install "thunc[anthropic]"  # adds the Claude API backend
 ```
 
 ## Try it
@@ -91,10 +91,10 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
 | | |
 |---|---|
-| [hello.py](examples/hello.py) | The smallest call |
-| [support_inbox.py](examples/support_inbox.py) | Docstring functions returning a `Literal`, an `int` with `ensure=`, a dataclass, and a reply; tickets processed in parallel |
-| [dynamic_prompts.py](examples/dynamic_prompts.py) | Prompts built from a style guide with `thunc.call`, and a grading function generated from a rubric |
-| [log_triage.py](examples/log_triage.py) | Plain Python and AI functions mixed, with tracing |
+| [hello.py](https://github.com/Eltarras/thunc/blob/main/examples/hello.py) | The smallest call |
+| [support_inbox.py](https://github.com/Eltarras/thunc/blob/main/examples/support_inbox.py) | Docstring functions returning a `Literal`, an `int` with `ensure=`, a dataclass, and a reply; tickets processed in parallel |
+| [dynamic_prompts.py](https://github.com/Eltarras/thunc/blob/main/examples/dynamic_prompts.py) | Prompts built from a style guide with `thunc.call`, and a grading function generated from a rubric |
+| [log_triage.py](https://github.com/Eltarras/thunc/blob/main/examples/log_triage.py) | Plain Python and AI functions mixed, with tracing |
 
 ## Code
 
@@ -130,4 +130,4 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[anthropic,dev]"
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/Eltarras/thunc/blob/main/LICENSE)
