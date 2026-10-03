@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/Eltarras/thunc/actions/workflows/ci.yml/badge.svg)](https://github.com/Eltarras/thunc/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/thunc)](https://pypi.org/project/thunc/)
+[![Website](https://img.shields.io/badge/website-eltarras.github.io%2Fthunc-f5b14c)](https://eltarras.github.io/thunc/)
 
 **think + function.** Call an LLM like a typed Python function.
 
