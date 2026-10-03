@@ -11,26 +11,20 @@
 <meta property="og:url" content="https://eltarras.github.io/thunc/">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0f1218">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f1218'/%3E%3Ctext x='32' y='44' font-family='Menlo,monospace' font-size='34' font-weight='700' fill='%23f5b14c' text-anchor='middle'%3E()%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
 <style>
+  /* Same palette as .github/social-preview.png */
   :root {
     --bg: #0f1218;
-    --bg-alt: #13171f;
-    --surface: #171b23;
-    --line: #262c37;
+    --card: #171b23;
+    --line: #2a303b;
     --text: #e8ebf1;
-    --muted: #9aa2b1;
+    --muted: #8b93a3;
     --accent: #f5b14c;
-    --accent-ink: #1a1306;
-    --good: #7ad49a;
-    --bad: #ff8a7a;
-    /* code colours stay dark in both themes */
-    --code-bg: #171b23;
-    --code-line: #2a303b;
-    --code-text: #e8ebf1;
     --kw: #c79bff;
     --fn: #7cc4ff;
     --str: #9fe0a8;
@@ -40,410 +34,204 @@
     --sans: Inter, -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
     color-scheme: dark;
   }
-  @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #fbfaf7;
-      --bg-alt: #f3f1ec;
-      --surface: #ffffff;
-      --line: #e3e0d8;
-      --text: #171a20;
-      --muted: #5b6270;
-      --accent: #b86e00;
-      --accent-ink: #ffffff;
-      --good: #1f7a45;
-      --bad: #b3261e;
-      color-scheme: light;
-    }
-  }
-
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html { scroll-behavior: smooth; }
   body {
-    background: var(--bg);
+    background:
+      radial-gradient(900px 520px at 88% 0%, rgba(245, 177, 76, 0.10), transparent 60%),
+      radial-gradient(700px 520px at 0% 40%, rgba(124, 196, 255, 0.06), transparent 60%),
+      var(--bg);
+    background-repeat: no-repeat;
+    background-color: var(--bg);
     color: var(--text);
     font-family: var(--sans);
     font-size: 17px;
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
-    font-variant-ligatures: none;
     font-feature-settings: "liga" 0, "calt" 0;
   }
   a { color: inherit; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
-  code, pre, .mono { font-family: var(--mono); font-variant-ligatures: none; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+  code, pre { font-family: var(--mono); }
   :not(pre) > code {
-    font-size: 0.88em;
-    background: var(--bg-alt);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 1px 6px;
-    white-space: nowrap;
+    font-size: 0.88em; background: var(--card); border: 1px solid var(--line);
+    border-radius: 6px; padding: 1px 6px; white-space: nowrap;
   }
-
-  /* nav */
-  nav { border-bottom: 1px solid var(--line); }
-  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; gap: 16px; }
-  .logo { font-family: var(--mono); font-weight: 800; font-size: 22px; text-decoration: none; letter-spacing: -0.5px; }
-  .logo span, .wordmark span { color: var(--accent); }
-  .links { display: flex; gap: 22px; font-size: 15px; }
-  .links a { text-decoration: none; color: var(--muted); }
-  .links a:hover { color: var(--text); }
 
   /* hero */
-  .hero {
-    padding: 80px 0 72px;
-    background:
-      radial-gradient(800px 420px at 85% 10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 65%),
-      var(--bg);
-  }
-  .hero .wrap { display: grid; grid-template-columns: 1fr 1.1fr; gap: 56px; align-items: center; }
-  .wordmark { font-family: var(--mono); font-weight: 800; font-size: 22px; color: var(--muted); letter-spacing: -0.3px; margin-bottom: 18px; }
-  .wordmark b { color: var(--text); }
-  h1 { font-size: clamp(38px, 5vw, 56px); line-height: 1.06; letter-spacing: -1.5px; font-weight: 800; }
+  header { padding: 72px 0 40px; }
+  header .wrap { display: grid; grid-template-columns: 1fr 1.05fr; gap: 56px; align-items: center; }
+  .mark { font-family: var(--mono); font-weight: 800; font-size: 76px; line-height: 1; letter-spacing: -3px; }
+  .mark span { color: var(--accent); }
+  .sub { margin-top: 12px; font-family: var(--mono); font-size: 18px; color: var(--muted); }
+  .sub b { color: var(--text); font-weight: 700; }
+  h1 { margin-top: 36px; font-size: clamp(34px, 4.4vw, 46px); line-height: 1.1; letter-spacing: -1px; font-weight: 800; }
   h1 em { font-style: normal; color: var(--accent); }
-  .lede { margin-top: 20px; font-size: 19px; color: var(--muted); max-width: 34em; }
   .install {
-    margin-top: 30px; display: inline-flex; align-items: center; gap: 14px;
-    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
-    padding: 10px 10px 10px 18px; font-family: var(--mono); font-size: 17px; font-weight: 700;
-    max-width: 100%;
+    margin-top: 32px; display: inline-flex; align-items: center; gap: 14px; max-width: 100%;
+    background: var(--card); border: 2px solid var(--line); border-radius: 12px;
+    padding: 8px 8px 8px 18px; font: 700 18px var(--mono);
   }
-  .install::before { content: "$"; color: var(--muted); font-weight: 400; }
+  .install::before { content: "$"; color: var(--muted); font-weight: 500; }
   .copy {
-    font: 600 13px var(--sans); color: var(--muted); background: transparent;
-    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer;
+    font: 600 13px var(--sans); color: var(--muted); background: transparent; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
   }
   .copy:hover { color: var(--text); border-color: var(--muted); }
-  .ctas { margin-top: 22px; display: flex; gap: 12px; flex-wrap: wrap; }
-  .btn {
-    display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 600; font-size: 15px;
-    padding: 11px 18px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface);
-  }
-  .btn:hover { border-color: var(--muted); }
-  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-  .btn.primary:hover { filter: brightness(1.06); }
-  .badge {
-    display: inline-block; font-size: 13px; font-weight: 600; color: var(--muted);
-    border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; margin-bottom: 22px;
-  }
+  .links { margin-top: 18px; display: flex; gap: 22px; font-size: 15px; color: var(--muted); flex-wrap: wrap; }
+  .links a { text-decoration: none; }
+  .links a:hover { color: var(--text); }
+  .links .gh { color: var(--accent); font-weight: 600; }
 
-  /* code blocks */
   .code {
-    background: var(--code-bg); border: 1px solid var(--code-line); border-radius: 16px;
-    color: var(--code-text); overflow: hidden; min-width: 0;
+    background: var(--card); border: 2px solid var(--line); border-radius: 20px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45); overflow: hidden; min-width: 0;
   }
-  .code .bar {
-    display: flex; align-items: center; gap: 7px; padding: 12px 16px; border-bottom: 1px solid var(--code-line);
-    font: 500 13px var(--sans); color: var(--com);
-  }
-  .code .bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--code-line); display: block; }
-  .code .bar span { margin-left: 8px; }
-  pre { padding: 20px 22px 22px; font-size: 15px; line-height: 1.65; overflow-x: auto; }
-  .hero pre { font-size: 16px; }
+  .dots { display: flex; gap: 8px; padding: 18px 22px 0; }
+  .dots i { width: 12px; height: 12px; border-radius: 50%; background: var(--line); display: block; }
+  pre { padding: 18px 26px 26px; font-size: 16px; line-height: 1.65; overflow-x: auto; }
   .kw { color: var(--kw); } .fn { color: var(--fn); } .str { color: var(--str); }
-  .ty { color: var(--ty); } .com { color: var(--com); } .res { color: var(--ty); font-weight: 700; }
+  .ty { color: var(--ty); } .com { color: var(--com); } .res { color: var(--accent); font-weight: 700; }
 
   /* sections */
-  section { padding: 88px 0; }
-  section.alt { background: var(--bg-alt); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  .eyebrow { font: 700 13px var(--mono); text-transform: uppercase; letter-spacing: 1.5px; color: var(--accent); margin-bottom: 12px; }
-  h2 { font-size: clamp(28px, 3.4vw, 38px); line-height: 1.15; letter-spacing: -0.8px; font-weight: 800; max-width: 22em; }
-  .intro { margin-top: 16px; color: var(--muted); font-size: 18px; max-width: 40em; }
-  h3 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; }
+  section { padding: 56px 0; }
+  h2 { font-size: 28px; line-height: 1.2; letter-spacing: -0.5px; font-weight: 800; }
+  .lead { margin-top: 10px; color: var(--muted); max-width: 40em; }
 
-  .grid { display: grid; gap: 18px; margin-top: 44px; }
-  .g2 { grid-template-columns: repeat(2, 1fr); }
-  .g3 { grid-template-columns: repeat(3, 1fr); }
-  .g4 { grid-template-columns: repeat(4, 1fr); }
-  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 24px; min-width: 0; }
-  .card p { color: var(--muted); margin-top: 8px; font-size: 15.5px; }
-  .card .k { font: 700 14px var(--mono); color: var(--accent); margin-bottom: 10px; display: block; }
+  .map { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 28px; }
+  .map div { background: var(--card); border: 2px solid var(--line); border-radius: 14px; padding: 20px 22px; }
+  .map b { display: block; font: 700 15px var(--mono); color: var(--accent); margin-bottom: 6px; }
+  .map p { color: var(--muted); font-size: 15.5px; }
 
-  /* steps */
-  .steps { list-style: none; margin-top: 44px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; counter-reset: s; }
-  .steps li { counter-increment: s; border-top: 2px solid var(--line); padding-top: 18px; }
-  .steps li::before { content: counter(s, decimal-leading-zero); font: 800 14px var(--mono); color: var(--accent); display: block; margin-bottom: 10px; }
-  .steps p { color: var(--muted); font-size: 15.5px; margin-top: 6px; }
+  .types { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+  .types span {
+    font: 700 16px var(--mono); padding: 9px 14px; border-radius: 10px;
+    background: var(--card); border: 2px solid var(--line);
+  }
 
-  /* two ways */
-  .ways { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 44px; }
-  .ways .label { margin-bottom: 12px; }
-  .ways .label p { color: var(--muted); font-size: 15.5px; margin-top: 4px; }
+  .robust { list-style: none; margin-top: 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px 40px; }
+  .robust li { padding-left: 30px; position: relative; color: var(--muted); }
+  .robust li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 800; }
+  .robust b { color: var(--text); font-weight: 600; }
 
-  /* injection */
-  .stat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 44px; }
-  .stat { border-radius: 14px; border: 1px solid var(--line); background: var(--surface); overflow: hidden; }
-  .stat .top { padding: 22px 24px 4px; display: flex; align-items: baseline; gap: 14px; }
-  .stat .num { font: 800 46px/1 var(--mono); letter-spacing: -1px; }
-  .stat.bad .num { color: var(--bad); }
-  .stat.good .num { color: var(--good); }
-  .stat .what { color: var(--muted); font-size: 15px; }
-  .stat pre { font-size: 14px; background: var(--code-bg); color: var(--code-text); margin: 16px 0 0; border-top: 1px solid var(--code-line); }
-  .note { margin-top: 18px; color: var(--muted); font-size: 14.5px; }
+  .string { display: grid; grid-template-columns: 1fr 1.25fr; gap: 40px; align-items: center; }
 
-  /* backends */
-  .backend .tag { display: inline-block; font: 600 12px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; margin-top: 14px; }
-
-  /* roadmap */
-  .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 44px; }
-  .cols ul { list-style: none; margin-top: 12px; }
-  .cols li { padding: 9px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 15.5px; }
-  .cols li:first-child { border-top: 0; }
-  .cols li a { color: var(--text); }
-
-  /* closing */
-  .closing { text-align: center; }
-  .closing h2 { margin: 0 auto; }
-  .closing .intro { margin-left: auto; margin-right: auto; }
-  .closing .ctas { justify-content: center; }
-
-  footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
+  footer { border-top: 1px solid var(--line); margin-top: 32px; padding: 28px 0 44px; color: var(--muted); font-size: 14px; }
   footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-  footer a { color: var(--muted); }
+  footer span:first-child { font-family: var(--mono); }
 
-  @media (max-width: 900px) {
-    .hero .wrap, .ways, .stat-row { grid-template-columns: 1fr; }
-    .g3, .g4, .cols { grid-template-columns: 1fr 1fr; }
-    .steps { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 880px) {
+    header .wrap, .string { grid-template-columns: 1fr; gap: 36px; }
+    .map, .robust { grid-template-columns: 1fr; }
   }
   @media (max-width: 600px) {
     .wrap { padding: 0 16px; }
-    .links a.hide-sm { display: none; }
-    .hero { padding: 48px 0 56px; }
-    section { padding: 64px 0; }
-    .g2, .g3, .g4, .cols, .steps { grid-template-columns: 1fr; }
-    pre, .hero pre { font-size: 13.5px; padding: 16px; }
-    .install { font-size: 15px; }
+    header { padding: 44px 0 24px; }
+    .mark { font-size: 60px; }
+    section { padding: 40px 0; }
+    pre { font-size: 13.5px; padding: 14px 18px 20px; }
+    .install { font-size: 16px; }
   }
 </style>
 </head>
 <body>
 
-<nav>
-  <div class="wrap">
-    <a class="logo" href="#">thunc<span>()</span></a>
-    <div class="links">
-      <a class="hide-sm" href="#why">Why</a>
-      <a class="hide-sm" href="#how">How it works</a>
-      <a class="hide-sm" href="#backends">Backends</a>
-      <a href="https://github.com/Eltarras/thunc">GitHub</a>
-    </div>
-  </div>
-</nav>
-
-<header class="hero">
+<header>
   <div class="wrap">
     <div>
-      <span class="badge">Beta · v0.1 · MIT</span>
-      <div class="wordmark"><b>th</b>ink + f<b>unc</b>tion</div>
+      <div class="mark">thunc<span>()</span></div>
+      <div class="sub"><b>th</b>ink + f<b>unc</b>tion</div>
       <h1>Call an LLM like a <em>typed</em> Python function.</h1>
-      <p class="lede">Write a signature and a docstring. thunc sends them to a model, parses the answer into your return type, and asks again when it doesn't fit. Standard library only.</p>
-      <div class="install"><span id="pip">pip install thunc</span><button class="copy" data-copy="pip install thunc" type="button">Copy</button></div>
-      <div class="ctas">
-        <a class="btn primary" href="https://github.com/Eltarras/thunc">View on GitHub</a>
-        <a class="btn" href="https://pypi.org/project/thunc/">PyPI</a>
-        <a class="btn" href="https://github.com/Eltarras/thunc#readme">Docs</a>
+      <div class="install"><span>pip install thunc</span><button class="copy" data-copy="pip install thunc" type="button">Copy</button></div>
+      <div class="links">
+        <a class="gh" href="https://github.com/Eltarras/thunc">GitHub →</a>
+        <a href="https://pypi.org/project/thunc/">PyPI</a>
+        <a href="https://github.com/Eltarras/thunc#readme">Docs</a>
+        <span>Claude · OpenAI · local models</span>
       </div>
     </div>
     <div class="code">
-      <div class="bar"><i></i><i></i><i></i><span>triage.py</span></div>
-<pre><span class="kw">import</span> thunc
-
-<span class="kw">@thunc.function</span>
+      <div class="dots"><i></i><i></i><i></i></div>
+<pre><span class="kw">@thunc.function</span>
 <span class="kw">def</span> <span class="fn">urgency</span>(ticket: <span class="ty">str</span>) -&gt; <span class="ty">int</span>:
     <span class="str">"""Rate how urgent this ticket is,
-    from 1 (can wait) to 5 (customer
-    is blocked)."""</span>
+    from 1 (can wait) to 5 (blocked)."""</span>
     ...
 
 <span class="fn">urgency</span>(<span class="str">"I was charged twice!"</span>)
-<span class="com"># -&gt;</span> <span class="res">4</span>  <span class="com"># an int, checked</span></pre>
+<span class="com"># -&gt;</span> <span class="res">4</span>  <span class="com"># a checked int</span></pre>
     </div>
   </div>
 </header>
 
-<section id="why" class="alt">
+<section>
   <div class="wrap">
-    <div class="eyebrow">The aim</div>
-    <h2>Most LLM calls in real code are small. They should look small.</h2>
-    <p class="intro">Classify this ticket. Score that answer. Pull these fields out of an email. Each one needs the same plumbing: build a prompt string, send it, parse the reply, handle the reply that isn't valid JSON, try again. thunc's aim is to make that call look like any other function in your program: typed, readable, and loud when it fails.</p>
-    <div class="grid g4">
-      <div class="card"><span class="k">-&gt; int</span><h3>The signature is the contract</h3><p>The docstring is the prompt, the parameters are the inputs, and the return annotation is the type you get back.</p></div>
-      <div class="card"><span class="k">ThuncError</span><h3>Fails loudly</h3><p>A wrong-shaped answer is sent back to the model to fix. If it still doesn't fit, you get an exception, never a silent default.</p></div>
-      <div class="card"><span class="k">stdlib</span><h3>Nothing extra to install</h3><p>The core uses the standard library only. Provider SDKs are optional extras you add when you need them.</p></div>
-      <div class="card"><span class="k">&lt;inputs&gt;</span><h3>User data stays data</h3><p>Arguments are sent separately from the instructions, so text from users can't quietly rewrite your prompt.</p></div>
+    <h2>Your function is the prompt.</h2>
+    <div class="map">
+      <div><b>docstring</b><p>The instructions the model follows.</p></div>
+      <div><b>parameters</b><p>The inputs, sent separately from the instructions as data.</p></div>
+      <div><b>return type</b><p>What you get back, parsed and checked.</p></div>
     </div>
   </div>
 </section>
 
-<section id="how">
+<section>
   <div class="wrap">
-    <div class="eyebrow">How it works</div>
-    <h2>One decorator, four steps.</h2>
-    <ol class="steps">
-      <li><h3>Docstring → instructions</h3><p>The docstring (or an <code>instructions=</code> string built in code) tells the model what to do.</p></li>
-      <li><h3>Arguments → inputs</h3><p>Each argument is sent in its own block, marked as data, never pasted into the instructions.</p></li>
-      <li><h3>Return type → reply format</h3><p>The annotation tells the model the exact shape to answer in, such as an integer, one of these labels, or an object with these fields.</p></li>
-      <li><h3>Parse, check, retry</h3><p>The reply is parsed and checked, including your own <code>ensure=</code> rule. Problems go back to the model; after the retries, <code>ThuncError</code>.</p></li>
-    </ol>
-
-    <div class="grid g3">
-      <div class="card"><span class="k">Typed results</span><p><code>str</code>, <code>bool</code>, <code>int</code>, <code>float</code>, <code>Literal[...]</code>, <code>list[T]</code>, <code>dict[str, T]</code>, <code>T | None</code> and dataclasses, built into real instances.</p></div>
-      <div class="card"><span class="k">ensure=</span><p>Add your own rule, like <code>ensure=lambda n: 1 &lt;= n &lt;= 5</code>. A failed check is sent back and retried.</p></div>
-      <div class="card"><span class="k">thunc.map</span><p>Run calls in parallel and keep the input order. Each call takes seconds, so this is the main speed lever.</p></div>
-      <div class="card"><span class="k">async def</span><p>Declare the function <code>async</code> and you get an awaitable.</p></div>
-      <div class="card"><span class="k">trace=</span><p><code>configure(trace="calls.jsonl")</code> logs every prompt, answer, retry and timing.</p></div>
-      <div class="card"><span class="k">mypy · Pyright</span><p>Signatures and return types are real Python, so your type checker sees them.</p></div>
+    <h2>Supported return types</h2>
+    <div class="types">
+      <span>str</span><span>bool</span><span>int</span><span>float</span><span>Literal[...]</span>
+      <span>list[T]</span><span>dict[str, T]</span><span>T | None</span><span>dataclasses</span>
     </div>
   </div>
 </section>
 
-<section class="alt">
+<section>
   <div class="wrap">
-    <div class="eyebrow">Two ways to write a prompt</div>
-    <h2>Fixed prompts read like code. Built prompts stay in code.</h2>
-    <div class="ways">
-      <div>
-        <div class="label"><h3><code>@thunc.function</code></h3><p>When the prompt is fixed. Reusable and fully typed.</p></div>
-        <div class="code">
-<pre><span class="kw">@dataclass</span>
-<span class="kw">class</span> <span class="fn">Order</span>:
-    order_id: <span class="ty">str</span>
-    amount_eur: <span class="ty">float</span> | <span class="ty">None</span> = <span class="ty">None</span>
+    <h2>Robust by default</h2>
+    <ul class="robust">
+      <li><b>Every answer is validated</b> against your return type. Dataclasses come back as real instances.</li>
+      <li><b>Wrong answers get fixed.</b> The problem is sent back to the model and it tries again.</li>
+      <li><b>Never a silent bad value.</b> If it still doesn't fit, you get a <code>ThuncError</code>.</li>
+      <li><b>Your own checks</b> with <code>ensure=lambda n: 1 &lt;= n &lt;= 5</code>, retried the same way.</li>
+      <li><b>Harder to hijack.</b> Inputs never get pasted into the instructions, which blunts prompt injection.</li>
+      <li><b>Zero dependencies.</b> Standard library only; provider SDKs are optional extras.</li>
+    </ul>
+  </div>
+</section>
 
-<span class="kw">@thunc.function</span>
-<span class="kw">def</span> <span class="fn">category</span>(ticket: <span class="ty">str</span>) -&gt; <span class="ty">Literal</span>[
-    <span class="str">"bug"</span>, <span class="str">"billing"</span>, <span class="str">"other"</span>]:
-    <span class="str">"""Classify this support ticket."""</span>
-    ...
-
-<span class="kw">@thunc.function</span>
-<span class="kw">def</span> <span class="fn">find_order</span>(ticket: <span class="ty">str</span>) -&gt; <span class="ty">Order</span> | <span class="ty">None</span>:
-    <span class="str">"""Extract the order, or null if none."""</span>
-    ...
-
-labels = thunc.<span class="fn">map</span>(category, tickets)</pre>
-        </div>
-      </div>
-      <div>
-        <div class="label"><h3><code>thunc.call(...)</code></h3><p>When the prompt is built in code: from config, in a loop, from a file.</p></div>
-        <div class="code">
-<pre><span class="kw">for</span> lang, rules <span class="kw">in</span> STYLE_GUIDES.items():
-    text = thunc.<span class="fn">call</span>(
-        <span class="str">f"Translate into </span>{lang}<span class="str">. Style: </span>{rules}<span class="str">"</span>,
-        {<span class="str">"release_note"</span>: note},  <span class="com"># data</span>
-    )
+<section>
+  <div class="wrap string">
+    <div>
+      <h2>Or just pass a string.</h2>
+      <p class="lead">When the prompt comes from a variable, a config file or a loop, call <code>thunc.call</code> with it. You still get typed, checked results.</p>
+    </div>
+    <div class="code">
+<pre>prompt = <span class="str">f"Translate into </span>{lang}<span class="str">."</span>
+text = thunc.<span class="fn">call</span>(prompt, {<span class="str">"note"</span>: note})
 
 score = thunc.<span class="fn">call</span>(
-    <span class="str">"Score this answer from 0 to 3."</span>,
+    rubric,
     {<span class="str">"answer"</span>: answer},
     returns=<span class="ty">int</span>,
-    ensure=<span class="kw">lambda</span> n: <span class="res">0</span> &lt;= n &lt;= <span class="res">3</span>,
 )</pre>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="safety">
-  <div class="wrap">
-    <div class="eyebrow">Prompt injection</div>
-    <h2>Where user text goes matters.</h2>
-    <p class="intro">In a live test, the same hostile email was sent to the model two ways. The only difference was where the email went.</p>
-    <div class="stat-row">
-      <div class="stat bad">
-        <div class="top"><span class="num">3/3</span><span class="what">times the email took over the model</span></div>
-<pre>thunc.<span class="fn">call</span>(<span class="str">f"Summarise this email: </span>{email}<span class="str">"</span>)</pre>
-      </div>
-      <div class="stat good">
-        <div class="top"><span class="num">0/3</span><span class="what">times, with the email passed as an input</span></div>
-<pre>thunc.<span class="fn">call</span>(<span class="str">"Summarise this email."</span>, {<span class="str">"email"</span>: email})</pre>
-      </div>
-    </div>
-    <p class="note">A small live test, not a guarantee. <code>@thunc.function</code> always sends arguments as inputs; with <code>thunc.call</code>, keep your own text in the instructions and everything from users, files or the web in the inputs.</p>
-  </div>
-</section>
-
-<section id="backends" class="alt">
-  <div class="wrap">
-    <div class="eyebrow">Backends</div>
-    <h2>Your model, your choice.</h2>
-    <p class="intro">Pick one with <code>thunc.configure(backend=...)</code> or <code>THUNC_BACKEND</code>. With nothing set, an <code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code> in the environment picks one for you.</p>
-    <div class="grid g4">
-      <div class="card backend"><h3>Claude API</h3><p>Anthropic's API, with your key.</p><span class="tag">thunc[anthropic]</span></div>
-      <div class="card backend"><h3>OpenAI API</h3><p>The Responses API, with your key.</p><span class="tag">thunc[openai]</span></div>
-      <div class="card backend"><h3>Local models</h3><p>Any server that speaks the OpenAI API, via <code>OPENAI_BASE_URL</code>. Tested with LM Studio and gpt-oss-20b.</p><span class="tag">thunc[openai]</span></div>
-      <div class="card backend"><h3>Claude Code · Codex</h3><p>Your local CLI login. No API key needed, which makes it handy for trying thunc out.</p><span class="tag">no extra</span></div>
-    </div>
-  </div>
-</section>
-
-<section id="status">
-  <div class="wrap">
-    <div class="eyebrow">Status</div>
-    <h2>Beta, and built in the open.</h2>
-    <p class="intro">thunc is at v0.1. It works, it's tested, and the API may still change. Here's where things stand.</p>
-    <div class="cols">
-      <div class="card">
-        <h3>Works today</h3>
-        <ul>
-          <li>Typed results, retries and <code>ensure=</code></li>
-          <li>Claude, OpenAI, local and CLI backends</li>
-          <li>Parallel calls, async and tracing</li>
-        </ul>
-      </div>
-      <div class="card">
-        <h3>Up next</h3>
-        <ul>
-          <li><a href="https://github.com/Eltarras/thunc/issues/6">Enum return types</a></li>
-          <li><a href="https://github.com/Eltarras/thunc/issues/7">Pydantic models as return types</a></li>
-          <li><a href="https://github.com/Eltarras/thunc/issues/8">Caching and record/replay</a></li>
-          <li>Planned for 0.2: agents</li>
-        </ul>
-      </div>
-      <div class="card">
-        <h3>Known limits</h3>
-        <ul>
-          <li>No caching yet, so repeated calls cost again</li>
-          <li><code>Literal</code> results from <code>thunc.call</code> are typed as <code>Any</code></li>
-          <li>Docstrings vanish under <code>python -OO</code>; use <code>instructions=</code></li>
-        </ul>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="alt closing">
-  <div class="wrap">
-    <div class="eyebrow">Get involved</div>
-    <h2>Try it, break it, tell us.</h2>
-    <p class="intro">Feedback on the API is the most useful thing right now. Starter issues are labelled, and every discussion gets read.</p>
-    <div class="ctas">
-      <a class="btn primary" href="https://github.com/Eltarras/thunc/labels/good%20first%20issue">Good first issues</a>
-      <a class="btn" href="https://github.com/Eltarras/thunc/discussions">Discussions</a>
-      <a class="btn" href="https://github.com/Eltarras/thunc/blob/main/CONTRIBUTING.md">Contributing guide</a>
     </div>
   </div>
 </section>
 
 <footer>
   <div class="wrap">
-    <span><span class="mono">thunc()</span> · MIT licensed</span>
-    <span><a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+    <span>thunc() · beta · MIT</span>
+    <span><a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a></span>
   </div>
 </footer>
 
 <script>
   document.querySelectorAll(".copy").forEach(function (button) {
     button.addEventListener("click", function () {
-      var text = button.getAttribute("data-copy");
-      var done = function () {
-        button.textContent = "Copied";
-        setTimeout(function () { button.textContent = "Copy"; }, 1500);
-      };
       try {
-        navigator.clipboard.writeText(text).then(done, function () {});
+        navigator.clipboard.writeText(button.getAttribute("data-copy")).then(function () {
+          button.textContent = "Copied";
+          setTimeout(function () { button.textContent = "Copy"; }, 1500);
+        }, function () {});
       } catch (e) {}
     });
   });
