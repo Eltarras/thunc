@@ -2,7 +2,7 @@
 
 import time
 from dataclasses import InitVar, dataclass, field
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 import pytest
 
@@ -123,6 +123,8 @@ class Scaled:
         # Whole numbers keep their exact value
         ("9007199254740994.0", int, 9007199254740994),
         ("1e2", int, 100),
+        # A float option that no integer text equals exactly, asked for as describe() writes it
+        ("1e+23", Literal[1e23, "none"], 1e23),
         # Direction marks, embeddings and isolates around the reply
         ("\u20664\u2069", int, 4),
         ("\u202a4\u202c", int, 4),
@@ -205,6 +207,17 @@ def test_json_just_under_the_depth_limit_is_a_valueerror(tp):
     for depth in range(2, 1001):  # "[]" is a valid list[int]
         with pytest.raises(ValueError):
             parse("[" * depth + "]" * depth, tp)
+
+
+def test_deep_answer_before_a_fence_is_still_a_second_answer():
+    for depth in range(2, 1001):
+        before = "[" * depth + "]" * depth
+        try:
+            parse(before, Any)
+        except ValueError:
+            continue  # too deep to be an answer on its own
+        with pytest.raises(ValueError, match="two answers"):
+            parse(before + "\n```json\n4\n```", Any)
 
 
 def test_error_message_shortens_a_huge_answer():

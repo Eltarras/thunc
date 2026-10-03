@@ -182,7 +182,7 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
         except (OSError, UnicodeDecodeError) as exc:
             raise ThuncError(f"Could not read codex's answer: {exc}") from exc
     finally:
-        with contextlib.suppress(FileNotFoundError):
+        with contextlib.suppress(OSError):  # gone, or not a file any more: nothing to clean up
             os.unlink(out_path)
 
 

@@ -162,7 +162,9 @@ def _unfence(text: str) -> tuple[str, str]:
 def _is_answer(text: str, tp: Any) -> bool:
     """Whether the prose before a fence is an answer itself, like the 4 in "4\n```json\n5\n```"."""
     try:
-        parse(text, tp)
+        _parse(text, tp)
+    except RecursionError:  # JSON as deep as the stack allows here: no line of prose
+        return True
     except ValueError:
         return False
     return True
@@ -254,8 +256,10 @@ def validate(value: Any, tp: Any) -> Any:
 
     origin, args = typing.get_origin(tp), typing.get_args(tp)
     if origin is Literal:
-        # Compared by kind too, or true would match Literal[1] (True == 1 in Python).
-        match = [a for a in args if _kind(a) == _kind(value) and a == value]
+        # Compared by kind too, or true would match Literal[1] (True == 1 in Python). A number that only
+        # rounds to a whole float (see _Rounded) can be a float option (1e23), never an int one.
+        rounded = isinstance(value, _Rounded)
+        match = [a for a in args if _kind(a) == _kind(value) and a == value and not (rounded and type(a) is int)]
         _expect(bool(match), value, f"one of {list(args)}")
         return match[0]
     if origin in (Union, types.UnionType):
@@ -298,8 +302,6 @@ def _kind(value: Any) -> str:
     """bool, number, string, ...: the JSON kind of a value, for comparing Literal options."""
     if isinstance(value, bool):
         return "bool"
-    if isinstance(value, _Rounded):
-        return "rounded"  # matches no option: 0.99999999999999999 isn't Literal[1]
     if isinstance(value, (int, float)):
         return "number"
     return type(value).__name__

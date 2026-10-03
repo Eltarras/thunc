@@ -1,6 +1,7 @@
 """Backend selection, the CLI backends and the OpenAI backend (subprocess and the SDK are stubbed)."""
 
 import json
+import os
 import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
@@ -132,6 +133,20 @@ def test_codex_output_that_is_not_utf8(monkeypatch, tmp_path):
     def run(args, **kwargs):
         with open(args[args.index("--output-last-message") + 1], "wb") as f:
             f.write(b"\xff\xfe4\x00")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(backends.subprocess, "run", run)
+    thunc.configure(backend="codex")
+    with pytest.raises(thunc.ThuncError, match="Could not read codex's answer"):
+        thunc.call("ping", returns=int)
+
+
+def test_codex_answer_path_turned_into_a_directory(monkeypatch):
+    def run(args, **kwargs):
+        out = args[args.index("--output-last-message") + 1]
+        os.remove(out)
+        os.mkdir(out)
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
     monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
