@@ -1,21 +1,20 @@
-"""thunc.call: instructions + inputs + a return type -> a validated value. Also thunc.map, caching and tracing."""
+"""thunc.call: instructions + inputs + a return type -> a validated value. Also thunc.map and tracing."""
 
 from __future__ import annotations
 
 import dataclasses
 import hashlib
 import json
-import os
-import tempfile
 import threading
 import time
-import warnings
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar, overload
 
 from .backends import BACKENDS, DEFAULT_MODELS
-from .config import cache_dir, resolve_backend, setting, trace_path
+from .cache import get as cache_get
+from .cache import put as cache_put
+from .config import resolve_backend, setting, trace_path
 from .errors import ThuncError
 from .schema import describe, parse, short_repr, shorten
 
@@ -39,6 +38,7 @@ def call(
     backend: str | None = None,
     model: str | None = None,
     cache: bool = False,
+    name: str | None = None,
 ) -> str: ...
 @overload
 def call(
@@ -51,6 +51,7 @@ def call(
     backend: str | None = None,
     model: str | None = None,
     cache: bool = False,
+    name: str | None = None,
 ) -> T: ...
 @overload
 def call(
@@ -63,6 +64,7 @@ def call(
     backend: str | None = None,
     model: str | None = None,
     cache: bool = False,
+    name: str | None = None,
 ) -> Any: ...
 def call(
     instructions: str,
@@ -74,6 +76,7 @@ def call(
     backend: str | None = None,
     model: str | None = None,
     cache: bool = False,
+    name: str | None = None,
 ) -> Any:
     """Run `instructions` on `inputs` and return a value of type `returns`.
 
@@ -83,16 +86,33 @@ def call(
 
     With cache=True, a valid answer is saved on disk and reused when the same prompt goes to the same
     backend and model. A saved answer is checked against `returns` and `ensure` again before it's
-    reused. Failures are never saved.
+    reused. Failures are never saved. `name` groups the saved answers, so thunc.clear_cache("name")
+    can delete them; it's part of the cache key, and shows in the trace.
     """
+    return _call(instructions, inputs, returns, retries, ensure, backend, model, cache, name, None)
+
+
+def _call(
+    instructions: str,
+    inputs: Mapping[str, Any] | None,
+    returns: Any,
+    retries: int,
+    ensure: Callable[[Any], bool] | None,
+    backend: str | None,
+    model: str | None,
+    cache: bool,
+    name: str | None,
+    module: str | None,
+) -> Any:
+    """thunc.call, plus the module of the @thunc.function making the call (shown by `thunc cache list`)."""
     inputs = dict(inputs or {})
     request = _build_prompt(instructions, inputs, returns)
     text, answers, started = request, [], time.monotonic()
     result: dict[str, Any] = {"value": None, "error": None, "cached": False}
     try:
-        where = _cache_identity(request, backend, model) if cache else None
+        where = _cache_identity(request, backend, model, name, module) if cache else None
         if where is not None:
-            saved = _cache_get(where["key"])
+            saved = cache_get(where["key"])
             if saved is not None:
                 try:
                     value = _check(saved, returns, ensure)
@@ -115,7 +135,7 @@ def call(
                 )
                 continue
             if where is not None:
-                _cache_put(where, answer)
+                cache_put(where, answer)
             result.update(value=value, error=None)
             return value
         raise ThuncError(
@@ -125,7 +145,7 @@ def call(
         result["error"] = exc
         raise
     finally:
-        _trace(instructions, inputs, returns, answers, result, started, backend, model)
+        _trace(instructions, inputs, returns, answers, result, started, backend, model, name)
 
 
 def map(func: Callable[[A], T], items: Iterable[A], *, workers: int = 8) -> list[T]:
@@ -189,44 +209,24 @@ def _traceable(value: Any) -> Any:
     return _plain(value) if dataclasses.is_dataclass(value) and not isinstance(value, type) else str(value)
 
 
-def _cache_identity(request: str, backend: str | None, model: str | None) -> dict[str, Any]:
-    """What makes two calls the same call: the exact text the model sees, and which model sees it.
-    Keying on the rendered prompt (not the Python arguments) means a change to the instructions,
-    the return type or the system prompt is a different key, with nothing to invalidate by hand."""
-    name = resolve_backend(backend)
-    where = {"backend": name, "model": model or setting("model") or DEFAULT_MODELS.get(name), "request": request}
-    blob = json.dumps({"format": 1, "system": SYSTEM, **where}, ensure_ascii=False, sort_keys=True)
-    return {"key": hashlib.sha256(blob.encode("utf-8", "surrogatepass")).hexdigest(), **where}
-
-
-def _cache_get(key: str) -> str | None:
-    """The saved answer, or None if there's none (a missing or unreadable entry is a miss)."""
-    try:
-        with open(os.path.join(cache_dir(), f"{key}.json"), encoding="utf-8") as f:
-            answer = json.load(f)["answer"]
-    except (OSError, ValueError, KeyError, TypeError, RecursionError):
-        return None
-    return answer if isinstance(answer, str) else None
-
-
-def _cache_put(where: dict[str, Any], answer: str) -> None:
-    """One JSON file per call. Written to a temporary file and renamed into place, so concurrent
-    calls (thunc.map) never see half an entry. A cache that can't be written warns, not fails:
-    the answer is valid and already paid for."""
-    folder = cache_dir()
-    entry = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **where, "answer": answer}
-    tmp = None
-    try:
-        os.makedirs(folder, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
-        # backslashreplace: a lone surrogate (half an emoji, "\ud83d") is written as the JSON escape it came from.
-        with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as f:
-            json.dump(entry, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, os.path.join(folder, f"{where['key']}.json"))
-    except OSError as exc:
-        if tmp is not None and os.path.exists(tmp):
-            os.unlink(tmp)
-        warnings.warn(f"thunc could not save to the cache in {folder!r}: {exc}", RuntimeWarning, stacklevel=3)
+def _cache_identity(
+    request: str, backend: str | None, model: str | None, name: str | None, module: str | None
+) -> dict[str, Any]:
+    """What makes two calls the same call: the exact text the model sees, which model sees it, and
+    which function asks. Keying on the rendered prompt (not the Python arguments) means a change to
+    the instructions, the return type or the system prompt is a different key, with nothing to
+    invalidate by hand. The function name is in the key so that clearing one function's answers
+    always clears them, even when another function sends the same prompt. The module isn't: a
+    script run directly is `__main__`, and the same file imported is not."""
+    backend_name = resolve_backend(backend)
+    model = model or setting("model") or DEFAULT_MODELS.get(backend_name)
+    blob = json.dumps(
+        {"format": 1, "system": SYSTEM, "function": name, "backend": backend_name, "model": model, "request": request},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    key = hashlib.sha256(blob.encode("utf-8", "surrogatepass")).hexdigest()
+    return {"key": key, "function": name, "module": module, "backend": backend_name, "model": model, "request": request}
 
 
 _trace_lock = threading.Lock()
@@ -241,6 +241,7 @@ def _trace(
     started: float,
     backend: str | None,
     model: str | None,
+    name: str | None,
 ) -> None:
     """Append one JSON line per call to the trace file, if tracing is on."""
     path = trace_path()
@@ -252,6 +253,7 @@ def _trace(
         pass
     entry = {
         "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "function": name,
         "backend": backend,
         "model": model or setting("model"),
         "instructions": instructions,

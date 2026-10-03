@@ -75,9 +75,11 @@ Anything from users, files or the web goes in the inputs:
 | | |
 |---|---|
 | `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`. The body must be empty (`...`); real code raises `TypeError`. `async def` works |
-| `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None, cache=False)` | One prompt. Inputs are sent separately from the instructions |
+| `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None, cache=False, name=None)` | One prompt. Inputs are sent separately from the instructions. `name=` groups its cached answers |
 | `thunc.map(func, items, workers=8)` | Runs calls in parallel, keeping the input order. Each call takes 4–8s, so this is the main speed lever |
 | `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=)` | Process-wide settings. `trace="calls.jsonl"` logs every call |
+| `thunc.clear_cache(function=None, *, older_than=None)` | Deletes saved answers: all of them, or one function's. Returns how many |
+| `thunc.cache_info()` | What's in the cache, one group per function |
 | `thunc.ThuncError` | Raised when no valid answer arrives after the retries |
 
 **Return types:** `str`, `bool`, `int`, `float`, `Literal[...]`, `list[T]`, `dict[str, T]`,
@@ -102,11 +104,35 @@ model is asked once. It's off by default, because it only suits some functions:
   depends on something that isn't an input, like today's date. Make that an input instead
   (`def overdue(deadline: date, today: date) -> bool`) and caching becomes safe.
 
-A saved answer is reused only for the exact same prompt, backend and model, so changing the
+A saved answer is reused only for the exact same function, prompt, backend and model, so changing the
 docstring, the return type or the model asks again. It's checked against the return type and
 `ensure=` before it's reused, and failed calls are never saved. Answers go in `.thunc_cache/`
 (change it with `configure(cache_dir=...)` or `THUNC_CACHE_DIR`), one JSON file per call, holding
-the full prompt in plain text, inputs included. Delete the folder to clear it.
+the full prompt in plain text, inputs included.
+
+**Clearing the cache.** Clear everything, or one function's answers, from Python or the command line:
+
+```python
+thunc.clear_cache()  # everything
+thunc.clear_cache(urgency)  # one function
+thunc.clear_cache("urgency")  # the same, by name
+thunc.clear_cache(older_than=timedelta(days=30))  # answers saved more than 30 days ago
+```
+
+```bash
+thunc cache list                                   # saved answers per function
+thunc cache clear                                  # everything
+thunc cache clear --function urgency               # one function (repeat for several)
+thunc cache clear --older-than 30d --dry-run       # what would go, without deleting
+```
+
+A name is the function's name (`urgency`, or `Triage.urgency` for a method), optionally with its
+module (`support_inbox.urgency`). For `thunc.call`, pass `name="..."` to group its answers the same
+way; unnamed calls are cleared only with everything or by age. The function's name is part of the
+cache key, so renaming a function starts its cache fresh. Ages count from when the answer was saved.
+Clearing deletes only cache entries, never other files in the folder, and it's safe while another
+process is using the cache. The `thunc` command (also `python -m thunc`) reads `THUNC_CACHE_DIR`,
+or takes `--cache-dir`; it can't see a `configure(cache_dir=...)` in your code.
 
 **Backends:**
 - `anthropic` is the Claude API: `configure(api_key=...)` or `ANTHROPIC_API_KEY`, plus
@@ -148,7 +174,9 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 thunc/
   __init__.py    public API
   decorator.py   @thunc.function
-  core.py        thunc.call, thunc.map, caching, tracing
+  __main__.py    the thunc command: thunc cache list / clear
+  core.py        thunc.call, thunc.map, tracing
+  cache.py       the answer cache: saving, listing, clearing
   schema.py      return types: describe, parse, validate
   config.py      settings and backend selection
   backends.py    anthropic, openai, claude-code, codex
