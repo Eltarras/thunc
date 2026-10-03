@@ -11,7 +11,9 @@ import decimal
 import functools
 import json
 import math
+import operator
 import re
+import sys
 import types
 import typing
 from typing import Any, Literal, Union
@@ -57,7 +59,9 @@ def parse(text: str, tp: Any) -> Any:
         if not cleaned:
             raise ValueError("the reply was empty")
         return cleaned
-    cleaned = _unfence(cleaned)
+    cleaned, before = _unfence(cleaned)
+    if before and _is_answer(before, tp):
+        raise ValueError("two answers: one before the code fence and one inside it")
     try:
         value = json.loads(cleaned, object_pairs_hook=_no_duplicates, parse_constant=_no_constant, parse_float=_finite)
     except RecursionError:
@@ -89,7 +93,9 @@ def parse(text: str, tp: Any) -> Any:
 _THINK = re.compile(r"\A<(think|thinking)>.*?</\1>", re.DOTALL | re.IGNORECASE)
 # Whitespace (all of it is below U+3001), a byte-order mark, zero-width and direction marks, which
 # str.strip() keeps. Stripped with str.strip(chars): a regex here is quadratic on long blank runs.
-_EDGES = "".join(c for c in map(chr, range(0x3001)) if c.isspace()) + "\ufeff\u200b\u200c\u200d\u200e\u200f\u2060"
+_INVISIBLE = "\ufeff\u200b\u200c\u200d\u2060"  # a byte-order mark, zero-width characters
+_DIRECTION = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"  # marks, embeddings, isolates
+_EDGES = "".join(c for c in map(chr, range(0x3001)) if c.isspace()) + _INVISIBLE + _DIRECTION
 _NO_WORD = object()
 
 
@@ -119,32 +125,42 @@ def _bare_word(text: str, tp: Any) -> Any:
     """The usual near-misses that aren't JSON of the right kind: yes/no for a bool, an unquoted
     (or single-quoted) label for a string Literal. Also inside an Optional. _NO_WORD if neither."""
     options = _options(tp)
-    label = text[1:-1] if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"" else text
     literals = [typing.get_args(o) for o in options if typing.get_origin(o) is Literal]
-    if any(label in labels for labels in literals):  # a str only equals a str option
-        return label  # an exact label first: "no" for Literal["no", "partial"] | bool is the label
+    unquoted = text[1:-1] if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"" else text
+    for label in (text, unquoted):  # the text as it is first: Literal["'quoted'"] has the quotes
+        if any(label in labels for labels in literals):  # a str only equals a str option
+            return label  # an exact label first: "no" for Literal["no", "partial"] | bool is the label
     word = text.lower().rstrip(".")
     if bool in options and str not in options and word in {"true", "yes", "false", "no"}:
         return word in {"true", "yes"}
     return _NO_WORD
 
 
-def _unfence(text: str) -> str:
-    """The inside of a Markdown code fence: the whole reply, or a fence that ends the reply after a
-    line of prose ("Here you go:"). The language tag is ignored, whatever it is. A reply with more
-    fences, or text after the fence (a second answer?), is left as it is (and fails). Linear time:
-    it only looks for fences at the start of a line, so "```" inside a JSON string is fine."""
+def _unfence(text: str) -> tuple[str, str]:
+    """(the inside of a Markdown code fence, the text before it). The fence is the whole reply, or
+    ends the reply after a line of prose ("Here you go:"). The language tag is ignored, whatever it
+    is. A reply with more fences, or text after the fence (a second answer?), is left as it is (and
+    fails). Linear time: fences only count at the start of a line, so "```" in a JSON string is fine."""
     if not text.endswith("```") or len(text) < 6:
-        return text
+        return text, ""
     if "\n" not in text:  # ```4``` or ```json [1, 2]```
         inline = re.fullmatch(r"```(?:json\b)?(.*)```", text, re.DOTALL | re.IGNORECASE)
-        return inline.group(1).strip() if inline and text.startswith("```") else text
+        return (inline.group(1).strip() if inline and text.startswith("```") else text), ""
     close = len(text) - 3
     opens = [m.start() for m in re.finditer(r"^```", text, re.MULTILINE) if m.start() != close]
     if len(opens) != 1:
-        return text
+        return text, ""
     body = text.find("\n", opens[0]) + 1  # the line after the opening fence and its language tag
-    return text[body:close].strip() if 0 < body <= close else text
+    return (text[body:close].strip(), text[: opens[0]].strip()) if 0 < body <= close else (text, "")
+
+
+def _is_answer(text: str, tp: Any) -> bool:
+    """Whether the prose before a fence is an answer itself, like the 4 in "4\n```json\n5\n```"."""
+    try:
+        parse(text, tp)
+    except ValueError:
+        return False
+    return True
 
 
 def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -290,14 +306,54 @@ def _init_fields(tp: type) -> tuple[tuple[str, Any, bool], ...]:
     """(name, type, required) for each __init__ argument of a dataclass: its fields, and InitVars
     (passed to __post_init__, never stored). Not ClassVars, nor fields the class sets itself
     (init=False). The model is asked for these, and only these are read from its answer."""
-    hints = typing.get_type_hints(tp)
+    hints = _hints(tp)
+    stored = {f.name for f in dataclasses.fields(tp) if f.init}  # no ClassVars, no InitVars
     result = []
-    for f in tp.__dataclass_fields__.values():  # type: ignore[attr-defined]  # dataclasses.fields() skips InitVars
-        hint = hints[f.name]
-        if not f.init or typing.get_origin(hint) is typing.ClassVar:
-            continue
+    for f in tp.__dataclass_fields__.values():  # type: ignore[attr-defined]  # fields() skips InitVars
+        hint = hints.get(f.name, Any)
         if isinstance(hint, dataclasses.InitVar):
             hint = hint.type
+        elif hint is dataclasses.InitVar:  # a bare InitVar
+            hint = Any
+        elif f.name not in stored:
+            continue
         required = f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
         result.append((f.name, hint, required))
     return tuple(result)
+
+
+def _hints(tp: type) -> dict[str, Any]:
+    """typing.get_type_hints(tp), also where Python 3.10's falls short: it can't evaluate a string
+    "InitVar[int]" (from __future__ import annotations), and leaves strings inside builtin
+    generics (list["Item"]). Annotations are evaluated in the class's module, as it would."""
+    module = sys.modules.get(tp.__module__)
+    namespace = {**(vars(module) if module else {}), tp.__name__: tp}
+    try:
+        hints = typing.get_type_hints(tp)
+    except TypeError:
+        hints = {}
+        for cls in reversed(tp.__mro__):
+            hints.update(cls.__dict__.get("__annotations__", {}))
+    return {name: _resolve(hint, namespace) for name, hint in hints.items()}
+
+
+def _resolve(tp: Any, namespace: dict[str, Any]) -> Any:
+    """A type with any string (or ForwardRef) inside it evaluated, or as it is if one can't be."""
+    try:
+        if isinstance(tp, typing.ForwardRef):
+            tp = tp.__forward_arg__
+        if isinstance(tp, str):
+            tp = eval(tp, namespace)  # what typing.get_type_hints does with a string annotation
+    except Exception:
+        return tp  # describe() then names it as unsupported
+    origin, args = typing.get_origin(tp), typing.get_args(tp)
+    if origin is Literal or not args:
+        return tp
+    resolved = tuple(_resolve(a, namespace) for a in args)
+    if resolved == args:
+        return tp
+    if origin in (Union, types.UnionType):
+        return functools.reduce(operator.or_, resolved)
+    if origin in (list, dict):
+        return types.GenericAlias(origin, resolved)
+    return tp

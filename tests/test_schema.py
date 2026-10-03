@@ -2,7 +2,7 @@
 
 import time
 from dataclasses import InitVar, dataclass, field
-from typing import Literal
+from typing import ClassVar, Literal
 
 import pytest
 
@@ -123,6 +123,13 @@ class Scaled:
         # Whole numbers keep their exact value
         ("9007199254740994.0", int, 9007199254740994),
         ("1e2", int, 100),
+        # Direction marks, embeddings and isolates around the reply
+        ("\u20664\u2069", int, 4),
+        ("\u202a4\u202c", int, 4),
+        ("\u061c4\u061c", int, 4),
+        # A label that has quotes of its own, sent exactly
+        ("'quoted'", Literal["'quoted'", "other"], "'quoted'"),
+        ('"x"', Literal['"x"', "other"], '"x"'),
         # Exponents beyond what Decimal holds are still numbers
         ("0e99999999999999999999", float, 0.0),
         ("[1e-99999999999999999999]", list[float], [0.0]),
@@ -166,6 +173,10 @@ def test_recovers_near_misses(text, tp, expected):
         ("0.99999999999999999", Literal[0, 1], "one of"),
         ("1e-99999999999999999999", int, "got 1e-99999999999999999999"),  # what the model wrote, not 0.0
         (".yes", bool, "not valid JSON"),
+        # An answer, then a fence with another answer: two answers
+        ("4\n```json\n5\n```", int, "two answers"),
+        ("true\n```json\nfalse\n```", bool, "two answers"),
+        ("bug\n```\nbilling\n```", Literal["bug", "billing"], "two answers"),
         ('{"category": null}', Ticket | None, "field 'category'"),  # a Ticket with a bad field, not None
         ('{"alice": null}', dict[str, int] | None, "expected an integer"),  # a dict can't be a wrapper
     ],
@@ -213,6 +224,29 @@ def test_rejects(text, tp):
 def test_initvar_is_asked_for_and_passed_to_post_init():
     assert describe(Scaled) == 'a JSON object with these fields: {"name": a JSON string, "scale": a JSON integer}'
     assert parse('{"name": "ab", "scale": 3}', Scaled).size == 6
+
+
+@dataclass
+class Counter:
+    n: int
+    registry: ClassVar = {}  # a bare ClassVar
+
+
+def test_classvars_are_not_asked_for_nor_read():
+    assert describe(Counter) == 'a JSON object with these fields: {"n": a JSON integer}'
+    assert parse('{"n": 3, "registry": 5}', Counter) == Counter(3)
+
+
+def test_string_annotations_in_a_future_annotations_module():
+    from future_types import Holder, Item, Scaled
+
+    assert (
+        describe(Scaled) == 'a JSON object with these fields: {"a": a JSON integer, "scale": a JSON integer (optional)}'
+    )
+    assert parse('{"a": 2, "scale": 3}', Scaled).a == 6
+    assert parse('{"items": [{"sku": "A"}], "table": {"b": {"sku": "B"}}}', Holder) == Holder(
+        [Item("A")], {"b": Item("B")}
+    )
 
 
 def test_describe_leaves_out_fields_the_class_sets_itself():
