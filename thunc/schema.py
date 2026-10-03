@@ -133,8 +133,8 @@ def _bare_word(text: str, tp: Any) -> Any:
     literals = [typing.get_args(o) for o in options if typing.get_origin(o) is Literal]
     unquoted = text[1:-1] if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"" else text
     for label in (text, unquoted):  # the text as it is first: Literal["'quoted'"] has the quotes
-        if any(label in labels for labels in literals):  # a str only equals a str option
-            return label  # an exact label first: "no" for Literal["no", "partial"] | bool is the label
+        for option in (a for labels in literals for a in labels if isinstance(a, str) and a == label):
+            return option  # an exact label first: "no" for Literal["no", "partial"] | bool is the label
     word = text.lower().rstrip(".")
     if bool in options and str not in options and word in {"true", "yes", "false", "no"}:
         return word in {"true", "yes"}
@@ -259,7 +259,7 @@ def validate(value: Any, tp: Any) -> Any:
         # Compared by kind too, or true would match Literal[1] (True == 1 in Python). A number that only
         # rounds to a whole float (see _Rounded) can be a float option (1e23), never an int one.
         rounded = isinstance(value, _Rounded)
-        match = [a for a in args if _kind(a) == _kind(value) and a == value and not (rounded and type(a) is int)]
+        match = [a for a in args if _kind(a) == _kind(value) and a == value and not (rounded and isinstance(a, int))]
         _expect(bool(match), value, f"one of {list(args)}")
         return match[0]
     if origin in (Union, types.UnionType):
@@ -304,6 +304,8 @@ def _kind(value: Any) -> str:
         return "bool"
     if isinstance(value, (int, float)):
         return "number"
+    if isinstance(value, str):  # a str Enum member too: Literal[Color.RED] is "red" in JSON
+        return "string"
     return type(value).__name__
 
 

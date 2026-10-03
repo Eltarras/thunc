@@ -2,6 +2,7 @@
 
 import time
 from dataclasses import InitVar, dataclass, field
+from enum import Enum, IntEnum
 from typing import Any, ClassVar, Literal
 
 import pytest
@@ -70,6 +71,33 @@ class Scaled:
 
     def __post_init__(self, scale):
         self.size = len(self.name) * scale
+
+
+class Color(str, Enum):
+    RED = "red"
+    BLUE = "blue"
+
+
+class Level(IntEnum):
+    ZERO = 0
+    ONE = 1
+
+
+COLOR = Literal[Color.RED, Color.BLUE]
+
+
+@pytest.mark.parametrize(
+    "text, tp, expected",
+    [
+        ('["red", "blue"]', list[COLOR], [Color.RED, Color.BLUE]),
+        ('"blue"', COLOR, Color.BLUE),
+        ("red", COLOR, Color.RED),
+        ("1", Literal[Level.ZERO, Level.ONE], Level.ONE),
+    ],
+)
+def test_enum_members_as_literal_options_come_back_as_members(text, tp, expected):
+    value = parse(text, tp)
+    assert value == expected and repr(value) == repr(expected)
 
 
 @pytest.mark.parametrize(
@@ -173,6 +201,7 @@ def test_recovers_near_misses(text, tp, expected):
         ("3.9999999999999999", int, "expected an integer"),  # not 4: it only rounds to a whole float
         ("1e-400", int, "expected an integer"),  # not 0
         ("0.99999999999999999", Literal[0, 1], "one of"),
+        ("0.99999999999999999", Literal[Level.ZERO, Level.ONE], "one of"),  # an IntEnum option is an int
         ("1e-99999999999999999999", int, "got 1e-99999999999999999999"),  # what the model wrote, not 0.0
         (".yes", bool, "not valid JSON"),
         # An answer, then a fence with another answer: two answers
