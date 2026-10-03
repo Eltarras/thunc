@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -58,8 +59,10 @@ def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | N
 
     if response.stop_reason == "refusal":
         raise ThuncError("The model declined this request.")
-    if response.stop_reason == "max_tokens":
-        raise ThuncError("The answer was cut off at max_tokens.")
+    if response.stop_reason in ("max_tokens", "model_context_window_exceeded"):
+        raise ThuncError(f"The answer was cut off ({response.stop_reason}).")
+    if response.stop_reason not in ("end_turn", "stop_sequence", None):
+        raise ThuncError(f"The model stopped before finishing its answer ({response.stop_reason}).")
     return "".join(block.text for block in response.content if block.type == "text")
 
 
@@ -88,6 +91,8 @@ def openai_api(text: str, *, system: str, model: str | None, api_key: str | None
         if reason == "max_output_tokens":
             raise ThuncError("The answer was cut off at max_output_tokens.")
         raise ThuncError(f"The OpenAI response is incomplete ({reason or 'no reason given'}).")
+    if response.status not in ("completed", None):  # failed, cancelled, ...: no finished answer
+        raise ThuncError(f"The OpenAI response is {response.status}, not completed.")
     for item in response.output:
         if item.type == "message" and any(part.type == "refusal" for part in item.content):
             raise ThuncError("The model declined this request.")
@@ -125,8 +130,10 @@ def claude_code(text: str, *, system: str, model: str | None, api_key: str | Non
     proc = _run_cli(args, text, timeout)
     try:
         data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        raise ThuncError(f"claude exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()[-500:]}") from None
+    except (ValueError, RecursionError):
+        data = None
+    if not isinstance(data, dict):  # not the JSON object `--output-format json` prints
+        raise ThuncError(f"claude exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()[-500:]}")
     if data.get("is_error") or proc.returncode != 0:
         raise ThuncError(f"claude error: {data.get('result') or proc.stderr.strip()[-500:]}")
     if not isinstance(data.get("result"), str):
@@ -158,10 +165,14 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
         proc = _run_cli(args, full_prompt, timeout)
         if proc.returncode != 0:
             raise ThuncError(f"codex exited {proc.returncode}: {proc.stderr.strip()[-500:]}")
-        with open(out_path, encoding="utf-8") as f:
-            return f.read().strip()
+        try:
+            with open(out_path, encoding="utf-8") as f:
+                return f.read().strip()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ThuncError(f"Could not read codex's answer: {exc}") from exc
     finally:
-        os.unlink(out_path)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(out_path)
 
 
 BACKENDS: dict[str, Callable[..., str]] = {

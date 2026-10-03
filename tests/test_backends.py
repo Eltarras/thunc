@@ -85,6 +85,27 @@ def test_claude_code_error(monkeypatch):
         thunc.call("ping")
 
 
+@pytest.mark.parametrize("stdout", ["[1, 2]", '"4"', "null", "42", "[" * 100_000 + "]" * 100_000, "Not JSON"])
+def test_claude_code_output_that_is_not_its_json_object(monkeypatch, stdout):
+    stub_cli(monkeypatch, stdout)
+    thunc.configure(backend="claude-code")
+    with pytest.raises(thunc.ThuncError, match="claude exited 0"):
+        thunc.call("ping", returns=int)
+
+
+def test_codex_output_that_is_not_utf8(monkeypatch, tmp_path):
+    def run(args, **kwargs):
+        with open(args[args.index("--output-last-message") + 1], "wb") as f:
+            f.write(b"\xff\xfe4\x00")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(backends.subprocess, "run", run)
+    thunc.configure(backend="codex")
+    with pytest.raises(thunc.ThuncError, match="Could not read codex's answer"):
+        thunc.call("ping", returns=int)
+
+
 def test_codex(monkeypatch):
     stub_cli(monkeypatch, write_file="pong\n")
     thunc.configure(backend="codex")
@@ -148,6 +169,52 @@ def test_openai_cut_off(monkeypatch):
     thunc.configure(backend="openai")
     with pytest.raises(thunc.ThuncError, match="cut off"):
         thunc.call("ping")
+
+
+def test_openai_failed(monkeypatch):
+    stub_openai(monkeypatch, openai_response("", status="failed"))
+    thunc.configure(backend="openai")
+    with pytest.raises(thunc.ThuncError, match="is failed, not completed"):
+        thunc.call("ping")
+
+
+def stub_anthropic(monkeypatch, stop_reason, text="pong"):
+    """A fake `anthropic` module whose client returns one text block with `stop_reason`."""
+    response = SimpleNamespace(stop_reason=stop_reason, content=[SimpleNamespace(type="text", text=text)])
+    messages = SimpleNamespace(create=lambda **kwargs: response)
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.messages = messages
+            self.beta = SimpleNamespace(messages=messages)
+
+    module = ModuleType("anthropic")
+    module.Anthropic = Client
+    module.APIConnectionError = type("APIConnectionError", (Exception,), {})
+    module.APIStatusError = type("APIStatusError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "anthropic", module)
+
+
+def test_anthropic(monkeypatch):
+    stub_anthropic(monkeypatch, "end_turn")
+    thunc.configure(backend="anthropic")
+    assert thunc.call("ping") == "pong"
+
+
+@pytest.mark.parametrize(
+    "stop_reason, error",
+    [
+        ("refusal", "declined"),
+        ("max_tokens", "cut off"),
+        ("model_context_window_exceeded", "cut off"),
+        ("pause_turn", "stopped before finishing"),
+    ],
+)
+def test_anthropic_unfinished_answer_is_never_returned(monkeypatch, stop_reason, error):
+    stub_anthropic(monkeypatch, stop_reason, text="The first half of the ans")
+    thunc.configure(backend="anthropic")
+    with pytest.raises(thunc.ThuncError, match=error):
+        thunc.call("Summarize.")
 
 
 def test_openai_missing_sdk(monkeypatch):
