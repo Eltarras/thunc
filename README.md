@@ -105,10 +105,10 @@ the full prompt in plain text, inputs included.
 **Clearing the cache.** Clear everything, or one function's answers, from Python or the command line:
 
 ```python
-thunc.clear_cache()                                # everything
-thunc.clear_cache(urgency)                         # one function
-thunc.clear_cache("urgency")                       # the same, by name
-thunc.clear_cache(older_than=timedelta(days=30))   # answers saved more than 30 days ago
+thunc.clear_cache()  # everything
+thunc.clear_cache(urgency)  # one function
+thunc.clear_cache("urgency")  # the same, by name
+thunc.clear_cache(older_than=timedelta(days=30))  # answers saved more than 30 days ago
 ```
 
 ```bash
