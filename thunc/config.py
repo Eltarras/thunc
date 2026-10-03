@@ -8,7 +8,14 @@ from typing import Any
 from .backends import BACKENDS
 from .errors import ThuncError
 
-DEFAULTS: dict[str, Any] = {"backend": None, "api_key": None, "model": None, "timeout": 300.0, "trace": None}
+DEFAULTS: dict[str, Any] = {
+    "backend": None,
+    "api_key": None,
+    "model": None,
+    "timeout": 300.0,
+    "trace": None,
+    "cache_dir": None,
+}
 _settings: dict[str, Any] = dict(DEFAULTS)
 
 
@@ -19,6 +26,7 @@ def configure(
     model: str | None = None,
     timeout: float | None = None,
     trace: str | None = None,
+    cache_dir: str | None = None,
 ) -> None:
     """Set defaults for every call. Arguments left as None keep their current value.
 
@@ -26,10 +34,19 @@ def configure(
              needs api_key or OPENAI_API_KEY), or "claude-code" / "codex" (your local CLI login;
              for cheap testing). An api_key with no backend means "anthropic".
     trace:   path of a JSONL file that records every call (or set THUNC_TRACE).
+    cache_dir: where calls made with cache=True store their answers (or set THUNC_CACHE_DIR;
+             default ".thunc_cache" in the working directory).
     """
     if backend is not None:
         _check_backend(backend)
-    updates = {"backend": backend, "api_key": api_key, "model": model, "timeout": timeout, "trace": trace}
+    updates = {
+        "backend": backend,
+        "api_key": api_key,
+        "model": model,
+        "timeout": timeout,
+        "trace": trace,
+        "cache_dir": cache_dir,
+    }
     _settings.update({key: value for key, value in updates.items() if value is not None})
 
 
@@ -39,6 +56,10 @@ def setting(name: str) -> Any:
 
 def trace_path() -> str | None:
     return _settings["trace"] or os.environ.get("THUNC_TRACE")
+
+
+def cache_dir() -> str:
+    return _settings["cache_dir"] or os.environ.get("THUNC_CACHE_DIR") or ".thunc_cache"
 
 
 def resolve_backend(override: str | None = None) -> str:

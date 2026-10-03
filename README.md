@@ -74,10 +74,10 @@ Anything from users, files or the web goes in the inputs:
 
 | | |
 |---|---|
-| `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `ensure=`, `retries=`, `backend=`, `model=`. The body must be empty (`...`); real code raises `TypeError`. `async def` works |
-| `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None)` | One prompt. Inputs are sent separately from the instructions |
+| `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`. The body must be empty (`...`); real code raises `TypeError`. `async def` works |
+| `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None, cache=False)` | One prompt. Inputs are sent separately from the instructions |
 | `thunc.map(func, items, workers=8)` | Runs calls in parallel, keeping the input order. Each call takes 4–8s, so this is the main speed lever |
-| `thunc.configure(backend=, api_key=, model=, timeout=, trace=)` | Process-wide settings. `trace="calls.jsonl"` logs every call |
+| `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=)` | Process-wide settings. `trace="calls.jsonl"` logs every call |
 | `thunc.ThuncError` | Raised when no valid answer arrives after the retries |
 
 **Return types:** `str`, `bool`, `int`, `float`, `Literal[...]`, `list[T]`, `dict[str, T]`,
@@ -85,6 +85,20 @@ Anything from users, files or the web goes in the inputs:
 
 **`ensure=`** adds your own check, for example `ensure=lambda n: 1 <= n <= 5`. A failed check is
 sent back to the model and retried.
+
+**`cache=True`** saves each answer on disk and reuses it when the same inputs come again, so the
+model is asked once. It's off by default, because it only suits some functions:
+
+- **Use it** for functions that should give one answer per input: classify, extract, score.
+- **Don't use it** for functions meant to vary (drafting a reply, brainstorming), or whose answer
+  depends on something that isn't an input, like today's date. Make that an input instead
+  (`def overdue(deadline: date, today: date) -> bool`) and caching becomes safe.
+
+A saved answer is reused only for the exact same prompt, backend and model, so changing the
+docstring, the return type or the model asks again. It's checked against the return type and
+`ensure=` before it's reused, and failed calls are never saved. Answers go in `.thunc_cache/`
+(change it with `configure(cache_dir=...)` or `THUNC_CACHE_DIR`), one JSON file per call, holding
+the full prompt in plain text, inputs included. Delete the folder to clear it.
 
 **Backends:**
 - `anthropic` is the Claude API: `configure(api_key=...)` or `ANTHROPIC_API_KEY`, plus
@@ -126,7 +140,7 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 thunc/
   __init__.py    public API
   decorator.py   @thunc.function
-  core.py        thunc.call, thunc.map, tracing
+  core.py        thunc.call, thunc.map, caching, tracing
   schema.py      return types: describe, parse, validate
   config.py      settings and backend selection
   backends.py    anthropic, openai, claude-code, codex
@@ -138,7 +152,8 @@ examples/
 
 ## Limitations
 
-- **There's no caching and no record/replay yet**, so repeated calls cost again.
+- **There's no record/replay for tests yet.** `cache=True` is per function; there's no switch
+  that serves every call from disk and fails on a miss.
 - **`Literal` results from `thunc.call` are typed as `Any`.** `@thunc.function` has no such gap.
 - **Docstrings disappear under `python -OO`.** Use `instructions=` there.
 
