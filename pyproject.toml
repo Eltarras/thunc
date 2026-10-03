@@ -10,7 +10,7 @@ requires-python = ">=3.10"
 dependencies = []
 keywords = ["llm", "ai", "claude", "typed", "structured-output", "prompt"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",

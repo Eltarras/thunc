@@ -4,7 +4,7 @@
 
 **think + function.** Call an LLM like a typed Python function.
 
-> **Status: prototype (v0.1).** The API may change. Feedback and issues are welcome.
+> **Status: beta (v0.1).** Expect bugs; the API may change. Feedback and issues are welcome.
 
 ```python
 import thunc
