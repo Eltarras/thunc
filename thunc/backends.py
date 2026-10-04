@@ -165,6 +165,36 @@ def claude_code(text: str, *, system: str, model: str | None, api_key: str | Non
     return str(data["result"])
 
 
+# Codex's own tools and the user's Codex setup stay out of thunc's calls, as `--tools ""` and
+# --strict-mcp-config do for claude: no shell (exec_command, write_stdin), no images, plugins, apps,
+# hooks, sub-agents or web search, and no MCP servers, model settings or notify command from
+# ~/.codex/config.toml (login still comes from CODEX_HOME). What remains is apply_patch, which the
+# read-only sandbox stops from writing, request_user_input and a clock; Codex can't turn those off.
+_CODEX_LOCKDOWN = (
+    "--ignore-user-config",
+    "--ignore-rules",
+    *(
+        flag
+        for feature in (
+            "shell_tool",
+            "unified_exec",
+            "view_image",
+            "multi_agent",
+            "apps",
+            "plugins",
+            "skill_search",
+            "hooks",
+            "browser_use",
+            "computer_use",
+            "image_generation",
+        )
+        for flag in ("--disable", feature)
+    ),
+    "--config",
+    'web_search="disabled"',
+)
+
+
 def codex(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
     # codex exec has no system-prompt flag; the model_instructions_file setting replaces Codex's
     # built-in instructions with the file's text. The path is absolute because the CLI runs in a temp dir.
@@ -187,6 +217,7 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
             out_path,
             "--config",
             f"model_instructions_file={json.dumps(system_path)}",  # a TOML string (JSON escapes are valid TOML)
+            *_CODEX_LOCKDOWN,
         ]
         if model:
             args += ["--model", model]

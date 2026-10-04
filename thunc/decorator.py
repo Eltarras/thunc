@@ -74,7 +74,7 @@ def _build(func: Callable[..., Any], instructions: str | None, options: dict[str
     if inspect.isgeneratorfunction(func) or inspect.isasyncgenfunction(func):
         raise TypeError(f"@thunc.function {name}: generators are not supported.")
     is_async = inspect.iscoroutinefunction(func)
-    if func.__code__.co_code not in _empty_bodies(is_async):
+    if _body(func) not in _empty_bodies(is_async):
         raise TypeError(
             f"@thunc.function {name}: the body must be empty (a docstring and/or `...`). "
             "The model replaces the body, so code there would never run."
@@ -108,15 +108,26 @@ def _build(func: Callable[..., Any], instructions: str | None, options: dict[str
     return wrapper
 
 
+def _body(func: Callable[..., Any]) -> tuple[Any, ...]:
+    """What the body does: its bytecode, the names it uses and its constants, less the docstring.
+    Bytecode alone isn't enough: `return 1` and an empty body's `return None` differ only in the
+    constant, and `raise ValueError` and `raise NotImplementedError` only in the name."""
+    code = func.__code__
+    consts = list(code.co_consts)
+    if func.__doc__ is not None and func.__doc__ in consts:
+        consts.remove(func.__doc__)
+    return code.co_code, code.co_names, tuple((type(c), c) for c in consts)
+
+
 @functools.cache
-def _empty_bodies(is_async: bool) -> frozenset[bytes]:
-    """Bytecode of each allowed empty body (docstring, `...`, `pass`, `raise NotImplementedError`),
-    compiled by the running interpreter so the check holds on every Python version."""
+def _empty_bodies(is_async: bool) -> frozenset[tuple[Any, ...]]:
+    """Each allowed empty body (docstring, `...`, `pass`, `raise NotImplementedError`), compiled by
+    the running interpreter so the check holds on every Python version."""
     bodies = ['"""doc"""', "...", "pass", "raise NotImplementedError", "raise NotImplementedError()"]
     bodies += [f'"""doc"""\n    {b}' for b in bodies[1:]]
     codes = set()
     for body in bodies:
         namespace: dict[str, Any] = {}
         exec(f"{'async def' if is_async else 'def'} f(a, *args, b=1, **kw):\n    {body}\n", namespace)
-        codes.add(namespace["f"].__code__.co_code)
+        codes.add(_body(namespace["f"]))
     return frozenset(codes)
