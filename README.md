@@ -148,6 +148,9 @@ or takes `--cache-dir`; it can't see a `configure(cache_dir=...)` in your code.
   `pip install "thunc[openai]"`. The default model is `gpt-5.5`. `OPENAI_BASE_URL` points it at
   any server that speaks the OpenAI Responses API.
 - `claude-code` and `codex` call your local CLI login, and are meant for cheap testing.
+  Both run with their own tools turned off, so the model can only answer. `codex` also ignores
+  `~/.codex/config.toml` (your MCP servers, plugins, `notify` command and model settings); your
+  login still works. Pick the model with `configure(model=...)` or `model=`.
 
 **Local models:** the `openai` backend works with a local server through `OPENAI_BASE_URL`. This
 has been tested with [LM Studio](https://lmstudio.ai) running `openai/gpt-oss-20b`:
