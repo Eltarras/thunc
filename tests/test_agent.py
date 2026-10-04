@@ -154,9 +154,7 @@ def test_task_explores_then_finishes_with_a_typed_value(fake, repo):
     assert "config.py\nsrc/\nsrc/app.py" in after_list and ".git" not in after_list
     assert "config.py:2: TIMEOUT = 30" in after_search
     assert "1  NAME = 'demo'\n2  TIMEOUT = 30" in after_read
-    assert all(
-        p.startswith(first.removesuffix("Reply with your first action as one JSON object.")) for p in fake.prompts
-    )
+    assert all(p.startswith(first.partition("Reply with your first action")[0]) for p in fake.prompts)
 
 
 def test_system_prompt_has_the_method_rules_and_tools(fake, repo):
@@ -238,6 +236,94 @@ def test_symlinks_pointing_outside_are_refused(fake, repo):
 
     peek()
     assert "outside the working directory" in fake.prompts[1] and "password" not in fake.prompts[1]
+
+
+# --- several actions in one reply ----------------------------------------------------------
+
+
+def batch(*actions):
+    return "[" + ", ".join(actions) + "]"
+
+
+def test_a_batch_of_actions_runs_in_one_turn(fake, repo):
+    fake.replies = [
+        batch(act("list"), act("read", path="config.py"), act("search", pattern="TIMEOUT")),
+        finish(30),
+    ]
+
+    agent = thunc.Agent("a", workdir=repo)
+
+    @agent.task
+    def timeout() -> int:
+        """Find the timeout."""
+        ...
+
+    run = agent.run(timeout)
+    assert run.value == 30 and run.steps == 2 and len(fake.prompts) == 2
+    second = fake.prompts[1]
+    assert second.index('<step n="1">') < second.index('<step n="2">') < second.index('<step n="3">')
+    assert "src/app.py" in second and "2  TIMEOUT = 30" in second and "config.py:2: TIMEOUT = 30" in second
+    assert "several independent ones as a JSON array" in second
+
+
+def test_one_bad_action_in_a_batch_fails_alone(fake, repo):
+    fake.replies = [
+        batch(act("read", path="config.py"), act("delete", path="config.py"), '"read"', act("read")),
+        finish(30),
+    ]
+
+    @thunc.Agent("a", workdir=repo).task
+    def timeout() -> int:
+        """Find the timeout."""
+        ...
+
+    assert timeout() == 30
+    second = fake.prompts[1]
+    assert "2  TIMEOUT = 30" in second
+    assert "error: action 2: unknown tool 'delete'" in second
+    assert 'error: action 3: expected an action like {"tool": ..., "args": {...}}, got "read"' in second
+    assert "error: read needs 'path'" in second  # a valid action whose arguments are wrong
+
+
+@pytest.mark.parametrize(
+    "reply, problem",
+    [("[]", "the array is empty"), (batch(*[act("list")] * 17), "17 actions in one reply; send at most 16")],
+)
+def test_empty_and_oversized_batches_are_sent_back(fake, repo, reply, problem):
+    fake.replies = [reply, finish("ok")]
+
+    @thunc.Agent("a", workdir=repo).task
+    def look() -> str:
+        """Look."""
+        ...
+
+    assert look() == "ok"
+    assert f"error: {problem}" in fake.prompts[1] and "src/app.py" not in fake.prompts[1]
+
+
+def test_finish_in_a_batch_ends_the_run_and_skips_what_follows(fake, repo):
+    fake.replies = [
+        batch(act("read", path="config.py"), finish(30), act("write", path="late.txt", content="x")),
+    ]
+
+    @thunc.Agent("a", workdir=repo, permissions=["write"]).task
+    def timeout() -> int:
+        """Find the timeout."""
+        ...
+
+    assert timeout() == 30
+    assert not (repo / "late.txt").exists()
+
+
+def test_max_steps_counts_replies_not_actions(fake, repo):
+    fake.replies = [batch(*[act("read", path="config.py")] * 5), finish("ok")]
+
+    @thunc.Agent("a", workdir=repo, max_steps=2).task
+    def look() -> str:
+        """Look."""
+        ...
+
+    assert look() == "ok"
 
 
 # --- replies that don't fit -----------------------------------------------------------------

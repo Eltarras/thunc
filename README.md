@@ -199,6 +199,31 @@ giving it alone.
 The backend can also be set with `THUNC_BACKEND`. With none set, `ANTHROPIC_API_KEY` (or a
 `configure(api_key=...)` alone) selects `anthropic`, and otherwise `OPENAI_API_KEY` selects `openai`.
 
+**Profiling:** run your program with `thunc run --profile` to see where the time went when it ends:
+
+```bash
+thunc run --profile support_inbox.py --limit 20   # a script and its arguments
+thunc run --profile -m myapp.triage               # a module, as with python -m
+```
+
+The report goes to stderr: per function, the calls, cache hits, retries and failures, the total,
+mean, p95 and slowest time, and how much of it was the model and how much thunc's own work
+(building the prompt, parsing, the cache). Agent runs get their steps, model time and time in each
+tool. It also says what share of the program's wall time was spent in thunc, and how much calls
+overlapped under `thunc.map`. Without `--profile`, `thunc run` just runs the program, and nothing
+is recorded. The program's exit code is passed through.
+
+```
+CALLS
+FUNCTION  CALLS  CACHED  RETRIES  FAILED  TOTAL   MEAN    P95    MAX  MODEL  LOCAL
+urgency      11       1        1       0  1.70s  155ms  309ms  309ms  1.69s   12ms
+
+In thunc:      774ms of 980ms wall time (79%); the rest was the program's own code
+Model time:    1.69s, 99% of the time in calls (anthropic/default model 1.69s)
+Concurrency:   calls overlapped 2.2x on average (thunc.map or threads)
+Slowest:       urgency took 309ms
+```
+
 **Type checking:** signatures and return types are visible to mypy and Pyright. mypy reports
 empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
@@ -245,10 +270,10 @@ calls are native too: the agent's tools are an MCP server that one `claude -p` p
 calls, while thunc carries out each call with its own tools, permissions and records. If Claude Code
 can't start them (an older `claude` CLI, or MCP servers turned off by a policy), the run uses the
 text protocol below instead, with a warning, and so do later runs in the process;
-`protocol="native"` fails instead. On Codex the
-model replies with one JSON action at a time. `protocol="text"` uses that way on any backend, for
-example with a server behind `OPENAI_BASE_URL` that has no function calling. (Durable runs on
-Claude Code use it too.)
+`protocol="native"` fails instead. On Codex the model replies with JSON actions as text: one at a
+time, or several independent ones (reading three files) as a JSON array, which saves turns.
+`protocol="text"` uses that way on any backend, for example with a server behind `OPENAI_BASE_URL`
+that has no function calling. (Durable runs on Claude Code use it too.)
 The `jev` backend only answers typed questions and cannot run agents, even for a task returning
 `bool` or `Literal[...]`. An agent run using it raises `ThuncError` before creating any run files
 or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
@@ -431,7 +456,8 @@ thunc/
   claude_code.py native tool calls on Claude Code, through an MCP server (mcp_relay.py)
   store.py       the agent's folder: memory, settings, run records, the lock
   prompts.py     the agent's system prompt
-  __main__.py    the thunc command: thunc cache list / clear
+  __main__.py    the thunc command: thunc run [--profile], thunc cache list / clear
+  profiling.py   thunc run --profile: timing records and the report
   core.py        thunc.call, thunc.map, tracing
   cache.py       the answer cache: saving, listing, clearing
   schema.py      return types: describe, parse, validate

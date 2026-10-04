@@ -1,7 +1,8 @@
 """How a run talks to its backend, one model reply at a time.
 
-- TextConversation works on text backends: the model replies with one JSON action as text, and
-  the whole transcript is sent again each step (the CLI backends keep no conversation).
+- TextConversation works on text backends: the model replies with JSON actions as text (one, or
+  an array of independent ones), and the whole transcript is sent again each turn (the CLI
+  backends keep no conversation), so every action saved by batching saves a resend.
 - AnthropicConversation and OpenAIConversation use the APIs' own tool calls: tools are declared
   with JSON Schemas, the model can call several at once, and the conversation grows by appending.
 
@@ -17,7 +18,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from .backends import _FALLBACK_MODELS, DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL
+from .backends import _FALLBACK_MODELS, DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL, sdk_client
 from .config import resolve_backend, setting
 from .core import _send, _sendable
 from .errors import ThuncError
@@ -99,10 +100,10 @@ class TextConversation:
             timeout = min(timeout, CLI_STEP_TIMEOUT)
         answer = _send(self._transcript(), self.system, self.backend, self.model, timeout)
         try:
-            tool, args = action(answer, self.names)
+            calls = actions(answer, self.names)
         except ValueError as problem:
             return Reply([], answer, str(problem))
-        return Reply([Call(None, tool, args)], answer)
+        return Reply(calls, answer)
 
     def results(self, results: Sequence[tuple[Call, str, bool]]) -> None:
         for call, output, _ in results:
@@ -115,14 +116,47 @@ class TextConversation:
         )
 
     def _transcript(self) -> str:
+        ask = "Reply with your {} action as one JSON object, or several independent ones as a JSON array."
         if not self.steps:
-            return f"{self.request}\n\nReply with your first action as one JSON object."
-        return f"{self.request}\n\n" + "\n\n".join(self.steps) + "\n\nReply with your next action as one JSON object."
+            return f"{self.request}\n\n{ask.format('first')}"
+        return f"{self.request}\n\n" + "\n\n".join(self.steps) + f"\n\n{ask.format('next')}"
 
 
-def action(answer: str, names: Sequence[str]) -> tuple[str, dict[str, Any]]:
-    """A text-protocol reply as (tool, args). Raises ValueError with a reason the model can act on."""
-    obj = parse(answer, dict[str, Any])  # reads code fences and <think> blocks like any answer
+MAX_ACTIONS = 16  # in one text-protocol reply; Temporal's limit per reply is higher (64)
+
+
+def actions(answer: str, names: Sequence[str]) -> list[Call]:
+    """A text-protocol reply as its calls: one JSON action, or a JSON array of them, carried out in
+    order. Raises ValueError, with a reason the model can act on, for a reply with no usable call. In
+    an array, an action that isn't valid becomes a call with a problem: it fails, the others run."""
+    value = parse(answer, dict[str, Any] | list[Any])  # reads code fences and <think> blocks like any answer
+    if isinstance(value, dict):
+        return [Call(None, *_action(value, names))]
+    if not value:
+        raise ValueError("the array is empty; send at least one action")
+    if len(value) > MAX_ACTIONS:
+        raise ValueError(f"{len(value)} actions in one reply; send at most {MAX_ACTIONS}")
+    calls = []
+    for n, item in enumerate(value, start=1):
+        try:
+            calls.append(Call(None, *_action(item, names)))
+        except ValueError as problem:
+            tool = item.get("tool") if isinstance(item, dict) else None
+            args = item.get("args") if isinstance(item, dict) else None
+            calls.append(
+                Call(
+                    None,
+                    tool if isinstance(tool, str) else "?",
+                    args if isinstance(args, dict) else {},
+                    f"action {n}: {problem}",
+                )
+            )
+    return calls
+
+
+def _action(obj: Any, names: Sequence[str]) -> tuple[str, dict[str, Any]]:
+    if not isinstance(obj, dict):
+        raise ValueError(f'expected an action like {{"tool": ..., "args": {{...}}}}, got {shorten(json.dumps(obj))}')
     tool = obj.get("tool")
     if not isinstance(tool, str) or tool not in names:
         raise ValueError(
@@ -158,9 +192,7 @@ class AnthropicConversation:
             raise ThuncError("The anthropic backend needs the SDK: pip install 'thunc[anthropic]'") from exc
         self._anthropic = anthropic
         # api_key=None lets the SDK resolve ANTHROPIC_API_KEY or an `ant auth login` profile.
-        self.client = anthropic.Anthropic(
-            api_key=setting("api_key"), timeout=setting("timeout"), **(setting("sdk_options") or {})
-        )
+        self.client = sdk_client(anthropic.Anthropic, "ANTHROPIC_", setting("api_key"), setting("timeout"))
         self.model = model or setting("model") or DEFAULT_ANTHROPIC_MODEL
         self.system: list[Any] = [{"type": "text", "text": fixed, "cache_control": {"type": "ephemeral"}}]
         if memory:
@@ -234,9 +266,7 @@ class OpenAIConversation:
             raise ThuncError("The openai backend needs the SDK: pip install 'thunc[openai]'") from exc
         self._openai = openai
         # api_key=None lets the SDK resolve OPENAI_API_KEY (and OPENAI_BASE_URL for compatible servers).
-        self.client = openai.OpenAI(
-            api_key=setting("api_key"), timeout=setting("timeout"), **(setting("sdk_options") or {})
-        )
+        self.client = sdk_client(openai.OpenAI, "OPENAI_", setting("api_key"), setting("timeout"))
         self.model = model or setting("model") or DEFAULT_OPENAI_MODEL
         self.system = system
         self.tools: list[Any] = [

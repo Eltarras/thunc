@@ -63,9 +63,11 @@ def steps(task_name: str) -> str:
     tools = []
     for answer in run["answers"]:
         try:
-            tools.append(json.loads(answer)["tool"])
+            reply = json.loads(answer)
+            # one action, or several sent together as an array
+            tools.append(reply["tool"] if isinstance(reply, dict) else "+".join(a["tool"] for a in reply))
         except (ValueError, KeyError, TypeError):
-            tools.append("?")  # a reply that wasn't one JSON action; thunc sent it back to be fixed
+            tools.append("?")  # a reply that wasn't JSON actions; thunc sent it back to be fixed
     return f"{len(tools)} steps, {run['seconds']:.0f}s: {' -> '.join(tools)}"
 
 

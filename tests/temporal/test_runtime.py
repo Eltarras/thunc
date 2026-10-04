@@ -236,6 +236,43 @@ async def test_continue_as_new_preserves_progress(service, tmp_path, fake):
 
 
 @pytest.mark.asyncio
+async def test_batch_of_actions_settles_each_call_durably(service, tmp_path, fake):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "a").write_text("first")
+    (root / "b").write_text("second")
+    agent = thunc.Agent("batch", workdir=root, permissions=["write:c"])
+
+    @agent.task
+    def gather() -> str:
+        """Read a and b, write c and finish."""
+        ...
+
+    fake.replies = [
+        json.dumps(
+            [
+                {"tool": "read", "args": {"path": "a"}},
+                {"tool": "read", "args": {"path": "b"}},
+                {"tool": "write", "args": {"path": "c", "content": "both"}},
+            ]
+        ),
+        json.dumps({"tool": "finish", "args": {"value": "done"}}),
+    ]
+    registry = Registry(state_dir=tmp_path / "state")
+    registry.agent_task("gather", gather, version="1", workspace_id="batch")
+    runtime = Runtime(service.client, task_queue="batch")
+    async with Worker(service.client, task_queue="batch", registry=registry):
+        handle = await runtime.start(
+            "gather", version="1", workspace_id="batch", inputs={}, returns=str, request_id="one"
+        )
+        run = await asyncio.wait_for(handle.result(), 20)
+        assert run.value == "done" and run.steps == 2 and len(fake.prompts) == 2
+        assert run.files_changed == ["c"] and (root / "c").read_text() == "both"
+        assert "first" in fake.prompts[1] and "second" in fake.prompts[1]
+        await Replayer(workflows=[AgentWorkflow]).replay_workflow(await handle.child.fetch_history())
+
+
+@pytest.mark.asyncio
 async def test_cancel_queued_run_never_calls_model(service, tmp_path, fake, monkeypatch):
     import threading
 

@@ -17,8 +17,8 @@ Harnesses, on the same model:
                through an MCP server), permissions ["write", "run"] so nothing is held back by rules.
 - thunc-text:  the same with protocol="text" (one JSON action per reply as text).
 - thunc-shell: the default, with permissions ["write", "shell"]: commands run in a shell.
-- thunc-fixed: the text protocol with three fixes patched in (lenient reading of the first action,
-               stopping the CLI once an action has arrived, arrays of actions). A prototype; it
+- thunc-fixed: the text protocol with two fixes patched in (lenient reading of the first action,
+               stopping the CLI once an action has arrived). A prototype; it
                patches the text protocol for the whole process, so run it on its own.
 - claude-code: Claude Code itself (`claude -p` with Read, Edit, Write, Bash, Grep, Glob), as the
                reference harness.
@@ -566,15 +566,14 @@ def _session_steps(path: str) -> list[dict[str, Any]]:
 
 # --- harness: thunc-fixed (a prototype of the recommended text-protocol fixes) -------------------
 #
-# Three changes, applied as patches for this process only, so the same tasks can be run with and
-# without them. Not part of thunc: they're here to measure how much of the gap they close.
-#   1. Lenient reading: the first complete action in a reply is used, whatever text, markup or
-#      invented "results" come before or after it.
+# Two changes, applied as patches for this process only, so the same tasks can be run with and
+# without them. Not part of thunc: they're here to measure how much of the gap they close. (A third,
+# several actions per reply as a JSON array, is in thunc's text protocol now.)
+#   1. Lenient reading: the first complete action (or array of actions) in a reply is used,
+#      whatever text, markup or invented "results" come before or after it.
 #   2. Stop early: the CLI's output is streamed, and the process is stopped as soon as a complete
 #      action has arrived, so a model that carries on (inventing the tool's result) can't run on
 #      to the timeout. A failed or empty CLI call is retried once.
-#   3. Several actions per reply: a JSON array of independent actions is accepted, and the prompt
-#      says so, so the model has a way to do the parallel calls it is trained to make.
 
 _ACTION_START = re.compile(r'(\[\s*)?\{\s*"tool"\s*:')
 _PRICES = {  # $/M tokens: input, output, cache read, cache write (the CLI writes 1-hour entries: 2x input)
@@ -607,10 +606,9 @@ def _patched_next(self: Any) -> Any:
     found = find_actions(answer)
     if found is None:
         try:
-            tool, args = native.action(answer, self.names)  # for its error message
+            return native.Reply(native.actions(answer, self.names), answer)  # or its error message
         except ValueError as problem:
             return native.Reply([], answer, str(problem))
-        return native.Reply([native.Call(None, tool, args)], answer)
     calls = []
     for item in found[0]:
         tool = item["tool"]
@@ -619,26 +617,6 @@ def _patched_next(self: Any) -> Any:
             return native.Reply([], answer, f"unknown tool {tool!r}; use one of {self.names}")
         calls.append(native.Call(None, tool, args if isinstance(args, dict) else {}))
     return native.Reply(calls, answer[: found[1]])
-
-
-def _patched_transcript(self: Any) -> str:
-    ask = "Reply with your {} action as one JSON object, or a JSON array of independent actions."
-    if not self.steps:
-        return f"{self.request}\n\n{ask.format('first')}"
-    return f"{self.request}\n\n" + "\n\n".join(self.steps) + "\n\n" + ask.format("next")
-
-
-_PROTOCOL_OLD = (
-    "How to use a tool: reply with exactly one JSON object and nothing else, like this:\n"
-    '{"tool": "read", "args": {"path": "README.md"}}\n'
-)
-_PROTOCOL_NEW = (
-    "How to use a tool: reply with a JSON object like this:\n"
-    '{"tool": "read", "args": {"path": "README.md"}}\n'
-    "To use several tools whose results don't depend on each other, reply with a JSON array of such "
-    "objects; they run in order. Write nothing after the JSON: the program runs it and sends back the "
-    "results.\n"
-)
 
 
 def streaming_claude_code(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
@@ -724,17 +702,7 @@ def _stream_once(text: str, system: str, model: str | None, timeout: float) -> s
 def patch_text_protocol() -> None:
     from thunc import native
 
-    agent_module = sys.modules["thunc.agent"]
     native.TextConversation.next = _patched_next  # type: ignore[method-assign]
-    native.TextConversation._transcript = _patched_transcript  # type: ignore[method-assign]
-    real_fixed = agent_module.Agent._fixed_prompt
-
-    def fixed(self: Any, *args: Any, **kwargs: Any) -> str:
-        prompt = real_fixed(self, *args, **kwargs)
-        assert _PROTOCOL_OLD in prompt or "native" in str(args)
-        return prompt.replace(_PROTOCOL_OLD, _PROTOCOL_NEW)
-
-    agent_module.Agent._fixed_prompt = fixed
     backends.BACKENDS["claude-code"] = streaming_claude_code
 
 
