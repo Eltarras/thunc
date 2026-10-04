@@ -1,5 +1,7 @@
-"""The `thunc` command (also `python -m thunc`): look at and clear the answer cache.
+"""The `thunc` command (also `python -m thunc`): run a program, and look at and clear the answer cache.
 
+thunc run [--profile] SCRIPT [ARG]...
+thunc run [--profile] -m MODULE [ARG]...
 thunc cache list
 thunc cache clear [--function NAME]... [--older-than AGE] [--dry-run] [--cache-dir DIR]
 """
@@ -7,11 +9,15 @@ thunc cache clear [--function NAME]... [--older-than AGE] [--dry-run] [--cache-d
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import runpy
 import sys
+import traceback
 from collections.abc import Sequence
+from contextlib import nullcontext
 
-from . import __version__
+from . import __version__, profiling
 from .cache import CacheGroup, _clear, _info
 from .config import cache_dir
 
@@ -20,6 +26,8 @@ _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "run":
+        return _run(args.target, args.args, module=args.module, profile=args.profile)
     folder = args.cache_dir or cache_dir()
     if args.action == "list":
         return _list(folder)
@@ -30,6 +38,16 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="thunc", description="thunc: call an LLM like a typed Python function.")
     parser.add_argument("--version", action="version", version=f"thunc {__version__}")
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    run = commands.add_parser(
+        "run",
+        help="run a Python program that uses thunc",
+        description="Run a Python script (or a module, with -m) as `python` would. With --profile, a report of "
+        "where the time went in thunc calls and agent runs is printed to stderr when it ends.",
+    )
+    run.add_argument("--profile", action="store_true", help="print a performance report when the program ends")
+    run.add_argument("-m", dest="module", action="store_true", help="TARGET is a module name, as in python -m")
+    run.add_argument("target", metavar="TARGET", help="the script to run (or the module, with -m)")
+    run.add_argument("args", nargs=argparse.REMAINDER, metavar="ARG", help="arguments passed to the program")
     cache = commands.add_parser("cache", help="look at or clear the answers saved by cache=True")
     actions = cache.add_subparsers(dest="action", required=True, metavar="ACTION")
 
@@ -57,6 +75,36 @@ def _parser() -> argparse.ArgumentParser:
     )
     clear.add_argument("--dry-run", action="store_true", help="say what would be deleted, and delete nothing")
     return parser
+
+
+def _run(target: str, args: list[str], *, module: bool, profile: bool) -> int:
+    """Run the program in this process, like `python [-m] target args...`; its exit code is ours."""
+    sys.argv = [target, *args]
+    sys.path.insert(0, os.getcwd() if module else os.path.dirname(os.path.abspath(target)))
+    with profiling.profiling() if profile else nullcontext() as profiler:
+        try:
+            if module:
+                runpy.run_module(target, run_name="__main__", alter_sys=True)
+            else:
+                runpy.run_path(target, run_name="__main__")
+            code = 0
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else _exit_message(exc.code))
+        except KeyboardInterrupt:
+            code = 130
+        except BaseException:
+            traceback.print_exc()
+            code = 1
+    if profiler is not None:
+        sys.stdout.flush()
+        print(f"\n{profiler.report(f'thunc profile: {target}')}", file=sys.stderr)
+    return code
+
+
+def _exit_message(message: object) -> int:
+    """sys.exit("message"): print it, as Python does, and exit with 1."""
+    print(message, file=sys.stderr)
+    return 1
 
 
 def _age(text: str) -> float:

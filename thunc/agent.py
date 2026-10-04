@@ -10,8 +10,9 @@
 Each call is one run: the model calls tools one reply at a time, thunc carries the calls out and
 sends back the results, until the model calls finish with a value of the return type. On the Claude
 and OpenAI APIs the calls are the APIs' own tool calls; on the CLI backends (and with
-protocol="text") each reply is one JSON action written as text. See native.py. The tools: list, read and search; write,
-edit and run where the permissions allow; and remember, which saves a note to the agent's memory.
+protocol="text") each reply is one JSON action written as text, or an array of them. See native.py.
+The tools: list, read and search; write, edit and run where the permissions allow; and remember,
+which saves a note to the agent's memory.
 
 Instruction files: with follow=, files such as AGENTS.md are read at the start of each run and sent
 in the system prompt as instructions to follow, within thunc's rules. Without it, the agent can
@@ -35,7 +36,7 @@ import warnings
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from typing import Any, ParamSpec, TypeVar, overload
 
-from . import native, tools
+from . import native, profiling, tools
 from .backends import TYPED_BACKENDS
 from .config import _check_backend, resolve_backend
 from .core import _plain, _render, _trace
@@ -71,7 +72,7 @@ class Agent:
                Off by default, so a folder you point an agent at can't give it instructions.
     system:    replaces the opening of the agent's system prompt. thunc's working method and rules
                are always sent after it.
-    protocol:  "native" for the APIs' own tool calls, "text" for one JSON action per reply as text.
+    protocol:  "native" for the APIs' own tool calls, "text" for JSON actions written as text.
                By default native on the anthropic and openai backends, text on the others. Use
                "text" with a server behind OPENAI_BASE_URL that has no function calling.
     tools:     your own Python functions the agent may call, like open_issue(title: str) -> int. Each
@@ -324,7 +325,12 @@ class Agent:
             protocol = (
                 "How to use a tool: reply with exactly one JSON object and nothing else, like this:\n"
                 '{"tool": "read", "args": {"path": "README.md"}}\n'
-                "The program carries it out and sends back the result. Paths are relative to the working directory.\n\n"
+                "The program carries it out and sends back the result. Paths are relative to the working directory.\n"
+                "When you need several actions that don't depend on each other's results, such as reading three "
+                "files, reply with a JSON array of them instead, and nothing else:\n"
+                '[{"tool": "read", "args": {"path": "a.py"}}, {"tool": "read", "args": {"path": "b.py"}}]\n'
+                f"They run in order, at most {native.MAX_ACTIONS} at a time, and you get every result back. "
+                "Call finish on its own, once you have seen the results you need.\n\n"
                 f"Tools:\n{listed}\n"
                 '- finish {"value": ...}  Ends the task. The value is your result, in the type the task asks for.\n\n'
                 + self.permissions.describe()
@@ -452,6 +458,8 @@ class Agent:
         result: dict[str, Any] = {"value": None, "error": None, "cached": False}
         state = AgentState()
         step = 0
+        waits: list[float] = []  # seconds spent on each model reply
+        tool_times: dict[str, list[float]] = {}
 
         def record(value: Any, error: str | None = None) -> Run[Any]:
             return Run(
@@ -473,7 +481,7 @@ class Agent:
                 state.begin_turn(self.max_steps, name)
                 if deadline is not None and time.monotonic() >= deadline:
                     raise ThuncError(f"{name}: the agent didn't finish within timeout={self.timeout:g}s")
-                reply = conversation.next()
+                reply = profiling.timed(waits, conversation.next)
                 answers.append(reply.raw)
                 if not state.receive(reply):  # nothing to carry out: say what's wrong and ask again
                     step += 1
@@ -490,9 +498,13 @@ class Agent:
                     if outcome.output is not None:
                         output, was_denied = outcome.output, False
                     elif call.tool in self.custom and call.tool in offered:
-                        output, was_denied = self.custom[call.tool].call(call.args), False
+                        timing = tool_times.setdefault(call.tool, [])
+                        output, was_denied = profiling.timed(timing, self.custom[call.tool].call, call.args), False
                     else:
-                        output, was_denied = _use(call.tool, call.args, workdir, store, offered)
+                        timing = tool_times.setdefault(call.tool, [])
+                        output, was_denied = profiling.timed(
+                            timing, _use, call.tool, call.args, workdir, store, offered
+                        )
                     state.done(call, output, was_denied)
                     flag = {"denied": True} if was_denied else {}
                     args = call.args if call.tool == "finish" else _shortened(call.args)
@@ -510,6 +522,20 @@ class Agent:
             raise
         finally:
             _trace(instructions, inputs, returns, answers, result, started, system, self.backend, self.model, name)
+            if (profiler := profiling.active()) is not None:
+                profiler.add(
+                    profiling.AgentRecord(
+                        function=name,
+                        backend=resolve_backend(self.backend),
+                        model=self.model,
+                        start=started,
+                        end=time.monotonic(),
+                        model_seconds=sum(waits),
+                        steps=len(answers),
+                        tools=tool_times,
+                        ok=result["error"] is None,
+                    )
+                )
 
 
 FOLLOW_LIMIT = 50_000  # characters of one followed file put in the prompt

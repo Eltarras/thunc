@@ -86,7 +86,7 @@ repo.call(f"Where is {setting} set?", returns=str)</code></pre></div>
 <p>Each call is one run. The model takes one step at a time (list a folder, search, read or edit a file) and ends by calling <code>finish</code> with a value of the return type, which is checked like any thunc result.</p>
 <ul>
 <li>On the <strong>Claude and OpenAI APIs</strong> it uses their own tool calls: the model can make several at once, and the fixed part of the prompt is cached.</li>
-<li>On <strong>Claude Code and Codex</strong> it replies with one JSON action at a time. <code>protocol="text"</code> uses this way on an API too, for example with a server behind <code>OPENAI_BASE_URL</code> that has no function calling.</li>
+<li>On <strong>Claude Code and Codex</strong> it replies with JSON actions as text: one at a time, or several independent ones (reading three files) as a JSON array, which saves turns. <code>protocol="text"</code> uses this way on an API too, for example with a server behind <code>OPENAI_BASE_URL</code> that has no function calling.</li>
 <li><strong>Jev</strong> only answers typed questions and can't run agents. An agent run using it raises <code>ThuncError</code> before creating any run files or calling a backend.</li>
 </ul>
 
