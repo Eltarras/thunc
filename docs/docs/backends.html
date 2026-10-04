@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backends · thunc docs</title>
+<meta name="description" content="Run thunc on the Claude API, the OpenAI API, a local model, Claude Code, Codex or Jev.">
+<link rel="canonical" href="https://eltarras.github.io/thunc/docs/backends.html">
+<meta property="og:title" content="Backends · thunc docs">
+<meta property="og:description" content="Run thunc on the Claude API, the OpenAI API, a local model, Claude Code, Codex or Jev.">
+<meta property="og:image" content="https://raw.githubusercontent.com/Eltarras/thunc/main/.github/social-preview.png">
+<meta property="og:url" content="https://eltarras.github.io/thunc/docs/backends.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="thunc">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/thunc/favicon.ico" sizes="48x48">
+<link rel="icon" href="/thunc/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/thunc/favicon-96.png" type="image/png" sizes="96x96">
+<link rel="apple-touch-icon" href="/thunc/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href=".././">thunc<span>()</span></a>
+  <nav aria-label="Site">
+    <a href="../docs/" class="active">Docs</a>
+    <a href="../docs/agents.html" class="hide-sm">Agents</a>
+    <a href="https://pypi.org/project/thunc/" class="hide-sm">PyPI</a>
+    <a href="https://github.com/Eltarras/thunc" class="gh">GitHub</a>
+  </nav>
+</div></header>
+<div class="docs">
+<aside>
+  <nav aria-label="Docs">
+    <div class="eyebrow">Guide</div>
+    <a href="./">Get started</a>
+    <a href="functions.html">Functions</a>
+    <a href="backends.html" class="active" aria-current="page">Backends</a>
+    <a href="caching.html">Caching and tracing</a>
+    <a href="agents.html">Agents</a>
+    <div class="eyebrow">Going further</div>
+    <a href="temporal.html">Durable agents</a>
+    <a href="jev.html">Jev backend</a>
+    <div class="eyebrow">Reference</div>
+    <a href="api.html">API reference</a>
+  </nav>
+  <div class="version">thunc 0.2.1 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+</aside>
+<main>
+<header>
+  <div class="eyebrow">Guide</div>
+  <h1>Backends</h1>
+  <p class="lede">thunc runs on the Claude API, the OpenAI API, a local model, your Claude Code or Codex login, or TypeSafe's Jev. Pick one for the whole program, per function or per call.</p>
+</header>
+<h2 id="choosing">Choosing a backend</h2>
+<p>For each call, thunc uses the first of these that is set:</p>
+<ol>
+<li><code>backend=</code> on the call or the function;</li>
+<li><code>thunc.configure(backend=...)</code>;</li>
+<li>the <code>THUNC_BACKEND</code> environment variable;</li>
+<li>an API key: <code>ANTHROPIC_API_KEY</code> (or a <code>configure(api_key=...)</code> alone) selects <code>anthropic</code>, and otherwise <code>OPENAI_API_KEY</code> selects <code>openai</code>.</li>
+</ol>
+<p>With none of these, the call raises <code>ThuncError: No backend configured</code>.</p>
+<div class="codeblock"><pre><code class="py">thunc.configure(backend="anthropic")        # the default for this program
+
+
+@thunc.function(backend="jev")              # this function only
+def needs_reply(message: str) -&gt; bool:
+    """Does this message ask a question or report a problem we should answer?"""
+    ...
+
+
+thunc.call("Summarise this.", {"text": doc}, backend="openai", model="gpt-5.5")  # this call only</code></pre></div>
+<p>Pick the model the same way, with <code>model=</code> or <code>configure(model=...)</code>.</p>
+
+<h2 id="backends">The backends</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Backend</th><th>Uses</th><th>Needs</th></tr></thead>
+<tbody>
+<tr><td><code>anthropic</code></td><td>The Claude API. Default model <code>claude-opus-5-5</code></td><td><code>pip install "thunc[anthropic]"</code> and <code>ANTHROPIC_API_KEY</code> or <code>configure(api_key=...)</code></td></tr>
+<tr><td><code>openai</code></td><td>The OpenAI Responses API. Default model <code>gpt-5.5</code></td><td><code>pip install "thunc[openai]"</code> and <code>OPENAI_API_KEY</code> or <code>configure(backend="openai", api_key=...)</code></td></tr>
+<tr><td><code>claude-code</code></td><td>Your local Claude Code login</td><td>The <code>claude</code> CLI, logged in</td></tr>
+<tr><td><code>codex</code></td><td>Your local Codex login</td><td>The <code>codex</code> CLI, logged in</td></tr>
+<tr><td><code>jev</code></td><td>TypeSafe's Jev judgment model, for <code>bool</code> and <code>Literal</code> answers</td><td>The <code>jev</code> CLI and <code>jev login</code> or <code>JEV_API_KEY</code></td></tr>
+</tbody></table></div>
+
+<h3 id="apis">Claude API and OpenAI API</h3>
+<p>The production backends. Set the key in the environment, or pass it with <code>configure(api_key=...)</code>. <code>OPENAI_BASE_URL</code> points the <code>openai</code> backend at any server that speaks the OpenAI Responses API, which is how <a href="#local">local models</a> work.</p>
+
+<h3 id="clis">Claude Code and Codex</h3>
+<p><code>claude-code</code> and <code>codex</code> call your local CLI login, and are meant for cheap testing: no API key, no SDK. Both run with their own tools turned off, so the model can only answer. Your <code>system=</code> replaces the CLI's built-in system prompt.</p>
+<p><code>codex</code> also ignores <code>~/.codex/config.toml</code> (your MCP servers, plugins, <code>notify</code> command and model settings); your login still works.</p>
+
+<h3 id="jev">Jev</h3>
+<p>Jev doesn't write text. It answers <code>bool</code>, <code>Literal</code> of strings (up to 255) and <code>Literal</code> of integers (as ordered levels) in about 0.3 seconds, and any other return type raises <code>ThuncError</code> before a request is sent. It's only used when you choose it: <code>backend="jev"</code> or <code>THUNC_BACKEND=jev</code>. The key comes from <code>jev login</code> or <code>JEV_API_KEY</code>, never <code>configure(api_key=...)</code>, so Jev can be used for some functions alongside another backend's key.</p>
+<p>Setup, options and troubleshooting are in the <a href="jev.html">Jev guide</a>.</p>
+
+<h2 id="local">Local models</h2>
+<p>The <code>openai</code> backend works with a local server through <code>OPENAI_BASE_URL</code>. This has been tested with <a href="https://lmstudio.ai">LM Studio</a> running <code>openai/gpt-oss-20b</code>:</p>
+<div class="codeblock"><pre><code class="sh">export OPENAI_BASE_URL=http://localhost:1234/v1
+export OPENAI_API_KEY=lm-studio  # any non-empty key works</code></pre></div>
+<div class="codeblock"><pre><code class="py">thunc.configure(backend="openai", model="openai/gpt-oss-20b")</code></pre></div>
+<p>Small models need the retry more often, for example when they explain the answer instead of giving it alone. For <a href="agents.html">agents</a> on a server without function calling, use <code>protocol="text"</code>.</p>
+
+<h2 id="settings">Other settings</h2>
+<p><code>thunc.configure(timeout=...)</code> sets the request timeout in seconds. Every <code>configure</code> argument left out keeps its current value, so you can call it more than once. The full list is in the <a href="api.html#configure">API reference</a>.</p>
+<nav class="pager" aria-label="Pages"><a class="prev" href="functions.html"><span>Previous</span>Functions</a><a class="next" href="caching.html"><span>Next</span>Caching and tracing</a></nav>
+<p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/backends.html">Edit this page on GitHub</a></p>
+</main>
+</div>
+<footer class="sitefoot"><div class="wrap">
+  <span>thunc() · beta · MIT</span>
+  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+</div></footer>
+<script src="../site.js"></script>
+</body>
+</html>

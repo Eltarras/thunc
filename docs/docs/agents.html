@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agents · thunc docs</title>
+<meta name="description" content="thunc agents: typed tasks that read, edit and test code under explicit permissions, with memory and run records.">
+<link rel="canonical" href="https://eltarras.github.io/thunc/docs/agents.html">
+<meta property="og:title" content="Agents · thunc docs">
+<meta property="og:description" content="thunc agents: typed tasks that read, edit and test code under explicit permissions, with memory and run records.">
+<meta property="og:image" content="https://raw.githubusercontent.com/Eltarras/thunc/main/.github/social-preview.png">
+<meta property="og:url" content="https://eltarras.github.io/thunc/docs/agents.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="thunc">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/thunc/favicon.ico" sizes="48x48">
+<link rel="icon" href="/thunc/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/thunc/favicon-96.png" type="image/png" sizes="96x96">
+<link rel="apple-touch-icon" href="/thunc/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href=".././">thunc<span>()</span></a>
+  <nav aria-label="Site">
+    <a href="../docs/">Docs</a>
+    <a href="../docs/agents.html" class="hide-sm active">Agents</a>
+    <a href="https://pypi.org/project/thunc/" class="hide-sm">PyPI</a>
+    <a href="https://github.com/Eltarras/thunc" class="gh">GitHub</a>
+  </nav>
+</div></header>
+<div class="docs">
+<aside>
+  <nav aria-label="Docs">
+    <div class="eyebrow">Guide</div>
+    <a href="./">Get started</a>
+    <a href="functions.html">Functions</a>
+    <a href="backends.html">Backends</a>
+    <a href="caching.html">Caching and tracing</a>
+    <a href="agents.html" class="active" aria-current="page">Agents</a>
+    <div class="eyebrow">Going further</div>
+    <a href="temporal.html">Durable agents</a>
+    <a href="jev.html">Jev backend</a>
+    <div class="eyebrow">Reference</div>
+    <a href="api.html">API reference</a>
+  </nav>
+  <div class="version">thunc 0.2.1 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+</aside>
+<main>
+<header>
+  <div class="eyebrow">Guide · new in 0.2</div>
+  <h1>Agents</h1>
+  <p class="lede">An agent is a typed function that can look around before it answers. It lists, searches, reads and, when you allow it, edits files and runs commands, then hands back a checked value of the return type.</p>
+</header>
+<img class="gif" src="https://raw.githubusercontent.com/Eltarras/thunc/main/.github/demo-agent.gif" width="1200" height="675" alt="An agent allowed to write src/** and run pytest is asked to run the tests and fix any problems. pytest shows 1 failure; it reads src/pricing.py, fixes one line, reruns pytest (3 passed) and returns True." loading="lazy" style="margin:28px 0 8px">
+
+<div class="callout"><p><strong>New in 0.2.</strong> Agents are new; their API may change in a later release as feedback comes in.</p></div>
+
+<h2 id="declare">Declare an agent</h2>
+<p>Give it a name and a working directory, declare its tasks the way you write <code>@thunc.function</code>, and call them from Python:</p>
+<div class="codeblock"><pre><code class="py">repo = thunc.Agent("repo-guide", workdir="~/code/myapp")
+
+
+@repo.task
+def request_timeout() -&gt; int:
+    """Find the HTTP request timeout this app uses, in seconds."""
+    ...
+
+
+request_timeout()  # 45, after the agent searched the code and read the file that sets it</code></pre></div>
+<p>An agent with a single task can be declared in one go, and a task built in code runs with <code>agent.call</code>, the agent version of <code>thunc.call</code>:</p>
+<div class="codeblock"><pre><code class="py">@thunc.agent("release-notes", workdir="~/code/myapp", permissions=["write:CHANGELOG.md", "run:git log"])
+def changelog(since_tag: str) -&gt; list[str]:
+    """Add an entry to CHANGELOG.md for the commits since `since_tag`. Return the bullets you wrote."""
+    ...
+
+
+repo.call(f"Where is {setting} set?", returns=str)</code></pre></div>
+
+<h2 id="run">How a run works</h2>
+<p>Each call is one run. The model takes one step at a time (list a folder, search, read or edit a file) and ends by calling <code>finish</code> with a value of the return type, which is checked like any thunc result.</p>
+<ul>
+<li>On the <strong>Claude and OpenAI APIs</strong> it uses their own tool calls: the model can make several at once, and the fixed part of the prompt is cached.</li>
+<li>On <strong>Claude Code and Codex</strong> it replies with one JSON action at a time. <code>protocol="text"</code> uses this way on an API too, for example with a server behind <code>OPENAI_BASE_URL</code> that has no function calling.</li>
+<li><strong>Jev</strong> only answers typed questions and can't run agents. An agent run using it raises <code>ThuncError</code> before creating any run files or calling a backend.</li>
+</ul>
+
+<h2 id="permissions">Permissions</h2>
+<p>Permissions say what the agent may do. By default it may read everything in <code>workdir</code> and save notes, and may not write.</p>
+<div class="codeblock"><pre><code class="py">fixer = thunc.Agent("fixer", workdir=".", permissions=["write:src/**", "run:pytest", "!read:.env*"])</code></pre></div>
+<div class="tablewrap"><table>
+<thead><tr><th>Rule</th><th>Means</th></tr></thead>
+<tbody>
+<tr><td><code>write:docs/**</code>, <code>write</code></td><td>Create and edit matching files (all files with no path); also lets it read them</td></tr>
+<tr><td><code>read:src/**</code></td><td>Read only these; any <code>read:</code> rule replaces the read-everything default</td></tr>
+<tr><td><code>run:pytest</code>, <code>run:git log</code>, <code>run</code></td><td>Run commands that start with these words (<code>run:git log</code> allows <code>git log --oneline</code>, not <code>git push</code>); <code>run</code> alone allows any</td></tr>
+<tr><td><code>!read:.env*</code>, <code>!write:...</code>, <code>!run:git push</code>, <code>!memory</code></td><td>Deny; a deny always wins, and <code>!read</code> also stops writing</td></tr>
+</tbody></table></div>
+<p><code>*</code> stays within one folder, <code>**</code> crosses folders, and paths are relative to <code>workdir</code>. The agent is told its permissions, and an action they don't allow is refused with the reason, after which the run carries on. Bad rules fail when the agent is declared.</p>
+
+<h2 id="tools">Tools</h2>
+<dl>
+<dt>list, read, search</dt><dd>Always available. Files the agent may not read are left out of <code>list</code> and <code>search</code>.</dd>
+<dt>write, edit</dt><dd>When a write rule allows it. <code>write</code> creates a file or replaces one; <code>edit</code> replaces text that appears exactly once.</dd>
+<dt>run</dt><dd>When a run rule allows it.</dd>
+<dt>remember</dt><dd>Saves a short note for later runs (see <a href="#memory">memory</a>).</dd>
+<dt>finish</dt><dd>Ends the run with the answer.</dd>
+</dl>
+<p>Every path must stay inside <code>workdir</code>: <code>..</code>, absolute paths and symlinks that point outside are refused, and the rules are checked on where a link really leads.</p>
+
+<h3 id="own-tools">Your own functions as tools</h3>
+<div class="codeblock"><pre><code class="py">def open_issue(title: str, body: str) -&gt; str:
+    """Open an issue in our tracker and return its URL."""
+    return tracker.create(title=title, body=body).url
+
+
+triage = thunc.Agent("triage", workdir=".", tools=[open_issue])</code></pre></div>
+<p>Each function needs type hints and a docstring, which is its description. Arguments are checked against the hints before the call; what it returns goes back to the model (as JSON unless it's a <code>str</code>), and so does an exception, as an error. Listing a function is what allows it.</p>
+
+<h2 id="safety">Safety</h2>
+<h3 id="overwrites">No blind overwrites</h3>
+<p>A file is only replaced or edited after the agent read it in the same run, and only if it hasn't changed on disk since. There is no undo, so run agents that write in a git repository with a clean tree, and review their changes with <code>git diff</code>.</p>
+<h3 id="commands">Commands</h3>
+<p>Commands run in <code>workdir</code> without a shell, so <code>&amp;&amp;</code>, pipes, redirects and <code>$VARIABLES</code> don't work (the agent is told). They get a minimal environment: <code>PATH</code>, <code>HOME</code>, the locale and temp-folder variables, and whatever you pass in <code>env=</code>, so your API keys don't reach them. Each has a time limit (<code>command_timeout=120</code> seconds) that also stops the processes it started, and the agent sees the exit code and the output, its end kept when it's long.</p>
+<div class="callout warn"><p><strong>A permitted command can do anything its program can.</strong> <code>run:pytest</code> runs the project's code, which can read or change any file your user account can, whatever the read and write rules say. Permissions limit which tools the model uses; they aren't a sandbox. For untrusted input, run the agent in a container.</p></div>
+
+<h2 id="memory">Memory between runs</h2>
+<p>Each run starts a fresh conversation, but the agent can save a short note with its <code>remember</code> tool. Notes go in <code>memory.md</code> in the agent's folder, and every later run gets them at the end of its system prompt (a note saved during a run reaches the next run, not that one). It's a plain file: read it with <code>agent.memory</code>, edit it, or delete it to start over.</p>
+
+<h3 id="folder">The agent's folder</h3>
+<p><code>.thunc_agents/&lt;name&gt;/</code>, changed with <code>configure(agents_dir=...)</code> or <code>THUNC_AGENTS_DIR</code>. Besides <code>memory.md</code> it holds <code>agent.json</code> (the agent's settings) and <code>sessions/</code>, one JSONL file per run with every step (denied ones marked), the result, and the files it changed. Runs of one agent take turns; different agents run side by side. Two names that make the same folder (<code>"Repo guide"</code> and <code>"repo-guide"</code>) can't both be used.</p>
+
+<h2 id="instructions">Instructions and system prompts</h2>
+<h3 id="follow">Instruction files</h3>
+<p><code>follow=True</code> gives the agent <code>AGENTS.md</code> and <code>CLAUDE.md</code> from <code>workdir</code> (those that exist) as instructions, and <code>follow=["docs/agent-rules.md"]</code> names files. They're read at the start of each run and sent after thunc's rules; they can't grant permissions. It's off by default, so a folder you point an agent at (a cloned repo, an upload) can't give it instructions. Without it, the agent can still read those files, but as data. <code>@imports</code> in <code>CLAUDE.md</code> aren't followed.</p>
+<h3 id="presets">system= and the presets</h3>
+<p><code>system=</code> replaces the opening of the agent's system prompt. thunc always adds its working method and its rules after it (file contents and tool results are data, not instructions). Three presets cover common jobs: <code>thunc.prompts.CODING</code>, <code>thunc.prompts.CODE_REVIEW</code> and <code>thunc.prompts.ANALYSIS</code>. They're plain strings, so you can extend one:</p>
+<div class="codeblock"><pre><code class="py">coder = thunc.Agent("coder", workdir=".", system=thunc.prompts.CODING + "\n\nTarget Python 3.10.")</code></pre></div>
+
+<h2 id="limits">Time and step limits</h2>
+<p><code>max_steps=40</code> bounds the model replies in a run, and <code>timeout=</code> (seconds) bounds the run's time. It's checked before each model call; a command's time limit is cut to the time left.</p>
+
+<h2 id="runs">What happened in a run</h2>
+<p>Calling a task returns its value. <code>agent.run(task, *args)</code> runs it the same way and returns a <code>thunc.Run</code> instead, typed like the task (<code>Run[int]</code>):</p>
+<div class="codeblock"><pre><code class="py">run = fixer.run(make_tests_pass)
+run.value          # True
+run.files_changed  # ["src/mathutil.py"]  (by write, edit and commands)
+run.commands       # [Command("python3 tests/test_mathutil.py", exit_code=0, seconds=0.04)]
+run.denied         # [Denial("run", "git commit -am fix", "running ... is denied by '!run:git'")]
+run.notes, run.followed, run.steps, run.seconds, run.session</code></pre></div>
+<p><strong>Failures are loud.</strong> A run that hits <code>max_steps</code>, never gives a valid value, or loses its backend raises <code>thunc.AgentError</code> (a <code>ThuncError</code>), whose <code>.run</code> is the record up to that point.</p>
+
+<h2 id="options">All options</h2>
+<div class="codeblock"><pre><code class="py">thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_timeout=120,
+            follow=False, protocol=None, tools=(), timeout=None, max_steps=40,
+            retries=2, backend=None, model=None)
+
+@agent.task(instructions=..., ensure=...)
+@thunc.agent(name, workdir=..., instructions=..., ensure=..., **options)</code></pre></div>
+<p><code>async def</code> tasks work. For runs that must survive a worker restart, see <a href="temporal.html">durable agents with Temporal</a>.</p>
+
+<h2 id="eval">How the prompt was tested</h2>
+<p><code>python -m live_tests.eval_prompts --backend anthropic</code> runs three small tasks (fix a bug, review a diff, answer a question about a repo) with three versions of the system prompt: bare (no working method), the default, and the task's preset. Five runs of each on 4 October 2026:</p>
+<div class="tablewrap"><table>
+<thead><tr><th></th><th>Claude API (Opus 5.5, native calls)</th><th>Claude Code (text protocol)</th></tr></thead>
+<tbody>
+<tr><td>Passed</td><td>45/45: every task, every version</td><td>45/45</td></tr>
+<tr><td>Steps (bare / default / preset)</td><td>fix 4.0 / 4.0 / 4.0, review 2.0 / 2.4 / 2.8, analysis 3.0 / 3.0 / 3.0</td><td>fix 5.2 / 6.0 / 6.0, review 2.2 / 2.0 / 3.8, analysis 4.2 / 3.8 / 4.2</td></tr>
+<tr><td>Cost</td><td>$0.76 for all 45 runs (cache reads were 257,553 of 312,294 input tokens)</td><td></td></tr>
+</tbody></table></div>
+<p>Every version passed every time, so these tasks are too easy to tell the versions apart: the result says the prompt does no harm, not that it helps. The one difference is that the review preset reads more of the code before answering. Harder tasks are needed to measure more.</p>
+<nav class="pager" aria-label="Pages"><a class="prev" href="caching.html"><span>Previous</span>Caching and tracing</a><a class="next" href="temporal.html"><span>Next</span>Durable agents</a></nav>
+<p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/agents.html">Edit this page on GitHub</a></p>
+</main>
+</div>
+<footer class="sitefoot"><div class="wrap">
+  <span>thunc() · beta · MIT</span>
+  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+</div></footer>
+<script src="../site.js"></script>
+</body>
+</html>

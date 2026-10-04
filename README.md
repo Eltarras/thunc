@@ -6,7 +6,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/thunc/)
 [![CI](https://github.com/Eltarras/thunc/actions/workflows/ci.yml/badge.svg)](https://github.com/Eltarras/thunc/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/Eltarras/thunc/blob/main/LICENSE)
-[![Website](https://img.shields.io/badge/website-eltarras.github.io%2Fthunc-f5b14c)](https://eltarras.github.io/thunc/)
+[![Docs](https://img.shields.io/badge/docs-eltarras.github.io%2Fthunc-9b481b)](https://eltarras.github.io/thunc/docs/)
 
 ```bash
 pip install thunc
@@ -33,6 +33,8 @@ dependencies, Python 3.10+.
 
 It also runs [agents](#agents): typed functions that can read, edit and test your code before they
 answer.
+
+The [docs](https://eltarras.github.io/thunc/docs/) cover everything below, a page per topic.
 
 ## Quickstart
 
@@ -180,7 +182,7 @@ or takes `--cache-dir`; it can't see a `configure(cache_dir=...)` in your code.
   CLI always uses `jev-latest`), and an answer that fails `ensure=` isn't retried, since Jev would
   give the same one. It's only used when you choose it: `backend="jev"` or `THUNC_BACKEND=jev`.
   Setup (install the CLI, log in, check it works): the
-  [Jev guide](https://eltarras.github.io/thunc/jev.html).
+  [Jev guide](https://eltarras.github.io/thunc/docs/jev.html).
 
 **Local models:** the `openai` backend works with a local server through `OPENAI_BASE_URL`. This
 has been tested with [LM Studio](https://lmstudio.ai) running `openai/gpt-oss-20b`:

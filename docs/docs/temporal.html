@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Durable agents with Temporal · thunc docs</title>
+<meta name="description" content="Durable thunc agents on Temporal: recorded model turns, recoverable tool effects and reconnectable runs.">
+<link rel="canonical" href="https://eltarras.github.io/thunc/docs/temporal.html">
+<meta property="og:title" content="Durable agents with Temporal · thunc docs">
+<meta property="og:description" content="Durable thunc agents on Temporal: recorded model turns, recoverable tool effects and reconnectable runs.">
+<meta property="og:image" content="https://raw.githubusercontent.com/Eltarras/thunc/main/.github/social-preview.png">
+<meta property="og:url" content="https://eltarras.github.io/thunc/docs/temporal.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="thunc">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/thunc/favicon.ico" sizes="48x48">
+<link rel="icon" href="/thunc/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/thunc/favicon-96.png" type="image/png" sizes="96x96">
+<link rel="apple-touch-icon" href="/thunc/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href=".././">thunc<span>()</span></a>
+  <nav aria-label="Site">
+    <a href="../docs/" class="active">Docs</a>
+    <a href="../docs/agents.html" class="hide-sm">Agents</a>
+    <a href="https://pypi.org/project/thunc/" class="hide-sm">PyPI</a>
+    <a href="https://github.com/Eltarras/thunc" class="gh">GitHub</a>
+  </nav>
+</div></header>
+<div class="docs">
+<aside>
+  <nav aria-label="Docs">
+    <div class="eyebrow">Guide</div>
+    <a href="./">Get started</a>
+    <a href="functions.html">Functions</a>
+    <a href="backends.html">Backends</a>
+    <a href="caching.html">Caching and tracing</a>
+    <a href="agents.html">Agents</a>
+    <div class="eyebrow">Going further</div>
+    <a href="temporal.html" class="active" aria-current="page">Durable agents</a>
+    <a href="jev.html">Jev backend</a>
+    <div class="eyebrow">Reference</div>
+    <a href="api.html">API reference</a>
+  </nav>
+  <div class="version">thunc 0.2.1 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+</aside>
+<main>
+<header>
+  <div class="eyebrow">Optional · new in 0.2.1</div>
+  <h1>Durable agents with Temporal</h1>
+  <p class="lede">Keep your task definitions, and run them on a separate runtime when execution needs to survive worker restarts. Each model turn and tool result is recorded in a Temporal workflow, so a restarted worker continues where it left off.</p>
+</header>
+<div class="callout"><p><strong>New in thunc 0.2.1.</strong> Durable agents are new; their API may change in a later release. Local thunc calls and <code>agent.run()</code> stay dependency-free and need no Temporal installation.</p></div>
+
+<h2 id="setup">Start the service and worker</h2>
+<p>Install thunc with the Temporal extra and the <a href="https://docs.temporal.io/cli">official Temporal CLI</a>. The service below is for local development and binds to loopback; production needs a properly operated Temporal service.</p>
+<div class="codeblock"><pre><code class="sh">pip install "thunc[temporal,openai]"
+mkdir -p .temporal-dev
+temporal server start-dev --db-filename .temporal-dev/server.sqlite
+
+# Another terminal, with provider credentials configured:
+cd examples/temporal
+python worker.py
+
+# A third terminal in examples/temporal:
+python client.py</code></pre></div>
+<p>The example creates an exclusively worker-owned workspace. Set <code>THUNC_WORKSPACE</code> to select its path and <code>THUNC_TEMPORAL_STATE</code> for persistent journal and artifact storage outside that workspace. Keep the same volume and paths across worker restarts.</p>
+
+<h2 id="register">Register and submit</h2>
+<p>Register tasks on a worker, then submit them by stable identity from any process:</p>
+<div class="codeblock"><pre><code class="py">from thunc.temporal import Registry, Runtime, Worker
+
+# Worker process; review_task is an existing @agent.task function.
+registry = Registry(state_dir="/srv/thunc-state")
+registry.agent_task("repo.review", review_task, version="1", workspace_id="repo")
+worker = await Worker.connect("localhost:7233", task_queue="repo-v1", registry=registry)
+# await worker.run() in the worker's async entry point
+
+# Client process; a reconnectable handle survives this process exiting.
+runtime = await Runtime.connect("localhost:7233", task_queue="repo-v1")
+handle = await runtime.start(
+    "repo.review",
+    version="1",
+    workspace_id="repo",
+    inputs={},
+    returns=str,
+    request_id="review-123",
+    deadline_seconds=1800,
+)
+run = await handle.result()
+print(run.value)</code></pre></div>
+<p>Use <code>registry.function(...)</code> for typed <code>@thunc.function</code> definitions. <code>runtime.get(handle.id, returns=str)</code> reconnects; <code>status()</code> inspects and <code>cancel()</code> requests cooperative cancellation. Disconnecting a client does not cancel its run.</p>
+
+<h2 id="recovers">What recovers</h2>
+<ul>
+<li>Recorded model turns and tool results replay without repeating completed provider calls. An unrecorded provider completion can still repeat and incur cost.</li>
+<li>Transient provider failures have a bounded three-attempt policy, separate from invalid-answer repair.</li>
+<li>File writes use intentions, before and after hashes, atomic replacement and completion receipts. Permission revocations narrow access on resume.</li>
+<li>Memory notes use stable operation identities; native reasoning, signatures and read hashes survive serialization.</li>
+<li>Runs against one workspace are serialized. A command with an uncertain outcome pauses the lane for operator reconciliation instead of running twice.</li>
+</ul>
+
+<h2 id="resolve">Resolve an uncertain effect</h2>
+<div class="codeblock"><pre><code class="py">status = await handle.status()
+await handle.resolve(
+    status["operation_id"],
+    "complete",
+    evidence="Verified the process exited and checked its effect",
+    output="Recovered output",
+)</code></pre></div>
+<p>Operators can complete, abort, or explicitly retry an uncertain command after checking the old process and its effects. Resolutions are deduplicated. Namespace authorization controls access; the evidence text is an audit record, not authentication. Termination or cancellation alone is not rollback.</p>
+
+<h2 id="boundaries">Boundaries</h2>
+<div class="callout warn"><p>Temporal history is not a workspace backup, and Temporal does not guarantee exactly-once external effects. Preserve the service database, worker journal, artifacts and workspace.</p></div>
+<ul>
+<li>The beta supports a persistent local filesystem and same-volume restart, not arbitrary multi-host failover.</li>
+<li>Agent permissions are not an OS sandbox. Local agent execution refuses durable-owned workspaces.</li>
+<li>Submissions and final results have a 256 KiB inline budget; immutable state snapshots have a 16 MiB ceiling. Represent larger final results with application-managed artifact references. Tombstones and artifacts are retained; there is no automatic garbage collection.</li>
+<li>Version task definitions and deployment queues, keep compatible workers until their runs drain, and replay saved histories before changing orchestration.</li>
+<li>A configured Temporal DataConverter or PayloadCodec protects service payloads as configured; local SQLite and artifacts need their own encrypted storage and filesystem permissions.</li>
+</ul>
+
+<h2 id="compose">Compose and verify</h2>
+<p><code>examples/temporal/pipeline.py</code> demonstrates classification, then agent analysis, then a typed summary, using native Temporal Workflows. <code>thunc.temporal.adapters.execute_task</code> submits and waits through stable identities; each agent still has separate model and tool Activities.</p>
+<div class="codeblock"><pre><code class="sh">pip install -e '.[anthropic,openai,dev,temporal-test]'
+pytest
+THUNC_TEMPORAL_TESTS=1 pytest -c pytest-temporal.ini tests/temporal</code></pre></div>
+<p>Integration tests use the official local service and scripted providers, including real worker termination, replay, rollover and cancellation. They make no model calls. Temporal Python SDK 1.34.0 is the tested baseline.</p>
+<p>The <a href="https://github.com/Eltarras/thunc/blob/main/examples/temporal/README.md">Temporal guide and runnable example</a> in the repository covers service setup, typed functions, composition, retries, cancellation, permissions, storage, history replay and upgrades.</p>
+<nav class="pager" aria-label="Pages"><a class="prev" href="agents.html"><span>Previous</span>Agents</a><a class="next" href="jev.html"><span>Next</span>Jev backend</a></nav>
+<p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/temporal.html">Edit this page on GitHub</a></p>
+</main>
+</div>
+<footer class="sitefoot"><div class="wrap">
+  <span>thunc() · beta · MIT</span>
+  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+</div></footer>
+<script src="../site.js"></script>
+</body>
+</html>
