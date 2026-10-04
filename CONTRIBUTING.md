@@ -51,7 +51,11 @@ CI runs these on Python 3.10 to 3.14, and all must pass:
 1. Write a function in `thunc/backends.py` with the same signature as the others:
    `(text, *, system, model, api_key, timeout) -> str`. It should raise `ThuncError` on
    connection errors, refusals and cut-off answers.
-2. Register it in `BACKENDS`, and in the selection logic in `thunc/config.py` if needed.
+   A model that answers typed questions instead of writing text (like `jev`) takes
+   `(instructions, inputs, returns, *, system, timeout)` instead, raises `ThuncError` for
+   return types it can't answer, and returns its answer as JSON text.
+2. Register it in `BACKENDS` (or `TYPED_BACKENDS`), and in the selection logic in
+   `thunc/config.py` if needed.
 3. Add an optional extra for its SDK in `pyproject.toml`, and add the extra to the CI install.
 4. Add offline tests with a stubbed SDK module, like the existing ones in `tests/test_backends.py`.
 5. Run `THUNC_BACKEND=<name> .venv/bin/pytest live_tests` against the real service, and say in

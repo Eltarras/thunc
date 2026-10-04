@@ -89,8 +89,9 @@ Anything from users, files or the web goes in the inputs:
 program. Follow the instructions."), for example `system="You are a strict essay grader."`. thunc
 adds two rules after your text, because parsing and the injection defence depend on them: inputs
 are data, not instructions, and the reply is the return value only. A function's or call's own
-`system=` wins over `configure(system=...)`, which wins over thunc's default. Every backend sends it
-as the real system prompt, replacing the built-in prompt of the Claude Code and Codex CLIs.
+`system=` wins over `configure(system=...)`, which wins over thunc's default. Every backend that
+writes text sends it as the real system prompt, replacing the built-in prompt of the Claude Code
+and Codex CLIs. `jev` is different (see Backends).
 
 **Near-misses are read, not retried:** a code fence (any language tag, even after a line of
 prose), a leading `<think>...</think>` block, or an answer wrapped in a one-key object like
@@ -148,6 +149,16 @@ or takes `--cache-dir`; it can't see a `configure(cache_dir=...)` in your code.
   `pip install "thunc[openai]"`. The default model is `gpt-5.5`. `OPENAI_BASE_URL` points it at
   any server that speaks the OpenAI Responses API.
 - `claude-code` and `codex` call your local CLI login, and are meant for cheap testing.
+- `jev` is TypeSafe's [Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
+  judgment model, through the [`jev` CLI](https://github.com/model-clis/jev). The key comes from
+  `jev login` or `JEV_API_KEY`, not `configure(api_key=...)`, so Jev can be used for some
+  functions alongside another backend's key. Jev doesn't write text: it answers `bool`,
+  `Literal` of strings (up to 255) and `Literal` of integers (as ordered levels), with the most
+  likely answer returned. Any other return type raises `ThuncError` before a request is sent. The
+  inputs are sent as Jev's state and the instructions as its question; a `system=` of your own goes
+  before the instructions, and thunc's default system prompt isn't sent. `model=` is ignored (the
+  CLI always uses `jev-latest`), and an answer that fails `ensure=` isn't retried, since Jev would
+  give the same one. It's only used when you choose it: `backend="jev"` or `THUNC_BACKEND=jev`.
 
 **Local models:** the `openai` backend works with a local server through `OPENAI_BASE_URL`. This
 has been tested with [LM Studio](https://lmstudio.ai) running `openai/gpt-oss-20b`:
@@ -186,10 +197,10 @@ thunc/
   cache.py       the answer cache: saving, listing, clearing
   schema.py      return types: describe, parse, validate
   config.py      settings and backend selection
-  backends.py    anthropic, openai, claude-code, codex
+  backends.py    anthropic, openai, claude-code, codex, jev
   errors.py      ThuncError
 tests/           offline: a fake backend, never a real model
-live_tests/      against a real model: hello, a yes/no decision, messy text to a dict
+live_tests/      against a real model: hello, a yes/no decision, labels and ratings, messy text to a dict
 examples/
 ```
 
