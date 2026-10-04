@@ -19,15 +19,25 @@ pytestmark = [
 
 
 @pytest_asyncio.fixture
-async def service(tmp_path):
+async def service(tmp_path, tmp_path_factory):
     if os.environ.get("THUNC_TEMPORAL_TESTS") != "1":
         pytest.skip("set THUNC_TEMPORAL_TESTS=1 to start the local Temporal service")
     binary = os.environ.get("THUNC_TEMPORAL_CLI")
-    async with await WorkflowEnvironment.start_local(
-        dev_server_existing_path=binary,
-        download_dest_dir=os.environ.get("THUNC_TEMPORAL_DOWNLOAD_DIR", str(tmp_path)),
-        dev_server_database_filename=str(tmp_path / "server.sqlite"),
-    ) as environment:
+    # One download for the whole session, so each test only starts the server.
+    downloads = os.environ.get("THUNC_TEMPORAL_DOWNLOAD_DIR") or str(tmp_path_factory.getbasetemp() / "temporal-cli")
+    Path(downloads).mkdir(parents=True, exist_ok=True)
+    for attempt in range(3):
+        try:
+            environment = await WorkflowEnvironment.start_local(
+                dev_server_existing_path=binary,
+                download_dest_dir=downloads,
+                dev_server_database_filename=str(tmp_path / f"server-{attempt}.sqlite"),
+            )
+            break
+        except RuntimeError as exc:  # the SDK gives the server 5 s to start; a busy CI runner can miss it
+            if "did not start" not in str(exc) or attempt == 2:
+                raise
+    async with environment:
         yield environment
 
 
