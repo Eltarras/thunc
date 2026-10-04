@@ -27,6 +27,7 @@ from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from .permissions import Denied, Permissions
+from .runs import Command
 
 # Folders that are rarely what an agent is looking for, and can be huge.
 SKIPPED_DIRS = frozenset(
@@ -92,6 +93,7 @@ class Workdir:
         self.command_timeout = command_timeout
         self.seen: dict[str, str] = {}  # real path -> sha256 of the content the agent last read or wrote
         self.changed: list[str] = []  # files created or changed in this run, as the model sees them
+        self.commands: list[Command] = []  # commands run in this run
 
     def path(self, relative: str) -> str:
         """The real path for `relative`, which must stay inside the working directory."""
@@ -242,20 +244,25 @@ class Workdir:
             raise ToolError(f"{argv[0]!r} was not found") from None
         except OSError as exc:
             raise ToolError(f"{argv[0]!r} couldn't be started: {exc.strerror or exc}") from None
+        exit_code: int | None
         try:
             output, _ = process.communicate(timeout=self.command_timeout)
-            status = f"exit code {process.returncode}"
+            exit_code = process.returncode
+            status = f"exit code {exit_code}"
         except subprocess.TimeoutExpired:
+            exit_code = None
             _stop(process)
             try:
                 output, _ = process.communicate(timeout=5)
             except subprocess.TimeoutExpired:  # something it started still holds the output open
                 output = b""
             status = f"stopped after {self.command_timeout:g}s, the time limit"
+        seconds = time.monotonic() - started
+        self.commands.append(Command(shlex.join(argv), exit_code, round(seconds, 3)))
         text = output.decode("utf-8", errors="replace") if output else ""
         if len(text) > MAX_OUTPUT:
             text = f"(the first {len(text) - MAX_OUTPUT} characters are left out)\n" + text[-MAX_OUTPUT:]
-        return f"{status} ({time.monotonic() - started:.1f}s)\n{text}".rstrip()
+        return f"{status} ({seconds:.1f}s)\n{text}".rstrip()
 
     def _unchanged_since_read(self, path: str, full: str) -> bytes:
         """The file's current content, if the agent read it in this run and it hasn't changed since."""

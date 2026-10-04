@@ -239,11 +239,23 @@ result. It runs on every backend.
   method and its rules after it (file contents and tool results are data, not instructions).
 - **Options:** `thunc.Agent(name, *, workdir, system=None, permissions=(), env=None,
   command_timeout=120, max_steps=40, retries=2, backend=None, model=None)`, and `@agent.task(instructions=..., ensure=...)`. `async def` tasks work.
-- **Failures are loud.** A run that hits `max_steps`, or never gives a valid value, raises
-  `ThuncError`. With tracing on, each run is one line with every model reply.
+- **What happened in a run.** Calling a task returns its value. `agent.run(task, *args)` runs it
+  the same way and returns a `thunc.Run` instead, typed like the task (`Run[int]`):
 
-Not yet: a record of the run returned to your code, reading AGENTS.md or CLAUDE.md, and native tool
-use on the API backends.
+  ```python
+  run = fixer.run(make_tests_pass)
+  run.value          # True
+  run.files_changed  # ["src/mathutil.py"]  (by write and edit; not by commands)
+  run.commands       # [Command("python3 tests/test_mathutil.py", exit_code=0, seconds=0.04)]
+  run.denied         # [Denial("run", "git commit -am fix", "running ... is denied by '!run:git'")]
+  run.notes, run.steps, run.seconds, run.session  # notes saved, model replies, time, the run file
+  ```
+
+- **Failures are loud.** A run that hits `max_steps`, never gives a valid value, or loses its
+  backend raises `thunc.AgentError` (a `ThuncError`), whose `.run` is the record up to that point.
+  With tracing on, each run is also one line with every model reply.
+
+Not yet: reading AGENTS.md or CLAUDE.md, and native tool use on the API backends.
 
 ## Examples
 
@@ -264,6 +276,7 @@ thunc/
   agent.py       thunc.Agent and @agent.task (preview)
   tools.py       the agent's tools: list, read, search, write, edit, run
   permissions.py the agent's permission rules
+  runs.py        thunc.Run and AgentError: what a run did
   store.py       the agent's folder: memory, settings, run records, the lock
   prompts.py     the agent's system prompt
   __main__.py    the thunc command: thunc cache list / clear

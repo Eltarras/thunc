@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Coroutine, Iterable, Mapping
 from typing import Any, ParamSpec, TypeVar, overload
 
 from . import tools
@@ -32,6 +32,7 @@ from .decorator import _read_signature, _wrap
 from .errors import ThuncError
 from .permissions import Permissions
 from .prompts import AGENT_CONTRACT, AGENT_PERSONA, method
+from .runs import AgentError, Denial, Run
 from .schema import describe, parse, shorten, validate
 from .store import Session, Store, slug
 
@@ -136,16 +137,40 @@ class Agent:
             spec = _read_signature(f, instructions, "@agent.task")
             name = f"{self.name}.{f.__qualname__}"
 
-            def run(*args: Any, **kwargs: Any) -> Any:
+            def record(*args: Any, **kwargs: Any) -> Run[Any]:
                 inputs = spec.inputs(args, kwargs)
                 return self._run(name, f.__qualname__, spec.instructions, inputs, spec.returns, ensure)
+
+            def run(*args: Any, **kwargs: Any) -> Any:
+                return record(*args, **kwargs).value
 
             wrapper = _wrap(f, spec.is_async, run)
             wrapper.__dict__["__thunc_instructions__"] = spec.instructions  # for debugging
             wrapper.__dict__["__thunc_agent__"] = self
+            wrapper.__dict__["__thunc_record__"] = record  # for agent.run(task, ...)
             return wrapper
 
         return decorate(func) if func is not None else decorate
+
+    @overload
+    def run(  # an async task's coroutine result unwraps to its value
+        self, task: Callable[P, Coroutine[Any, Any, R]], /, *args: P.args, **kwargs: P.kwargs
+    ) -> Run[R]: ...
+    @overload
+    def run(self, task: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> Run[R]: ...
+    def run(self, task: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Run[Any]:
+        """Run one of this agent's tasks and return the whole record, not just the value:
+
+            run = repo.run(changelog, "v0.1.1")
+            run.value, run.files_changed, run.commands, run.denied, run.session
+
+        It runs in this thread, async tasks too (from async code: await asyncio.to_thread(agent.run, ...)).
+        A failed run raises AgentError, whose .run holds the same record up to the failure."""
+        if getattr(task, "__thunc_agent__", None) is not self:
+            what = "another agent's task" if hasattr(task, "__thunc_agent__") else "not a task"
+            raise ValueError(f"{getattr(task, '__qualname__', task)!r} is {what}; agent.run takes this agent's tasks")
+        record: Run[Any] = task.__dict__["__thunc_record__"](*args, **kwargs)
+        return record
 
     def system_prompt(self, memory: str | None = None) -> str:
         """The system prompt a run sends: the fixed part, then the memory (read from disk if not given).
@@ -201,7 +226,7 @@ class Agent:
         inputs: dict[str, Any],
         returns: Any,
         ensure: Callable[[Any], bool] | None,
-    ) -> Any:
+    ) -> Run[Any]:
         store = Store(self.name)
         with store.lock():
             changed_from = store.save_settings(self._settings())
@@ -218,13 +243,14 @@ class Agent:
                     memory_characters=len(memory),
                     **({"settings_changed_from": changed_from} if changed_from else {}),
                 )
-                return self._loop(name, store, session, system, instructions, inputs, returns, ensure)
+                return self._loop(name, task, store, session, system, instructions, inputs, returns, ensure)
             finally:
                 session.close()
 
     def _loop(
         self,
         name: str,
+        task: str,
         store: Store,
         session: Session,
         system: str,
@@ -232,7 +258,7 @@ class Agent:
         inputs: dict[str, Any],
         returns: Any,
         ensure: Callable[[Any], bool] | None,
-    ) -> Any:
+    ) -> Run[Any]:
         workdir = tools.Workdir(self.workdir, self.permissions, env=self.env, command_timeout=self.command_timeout)
         offered = self.tools()
         request = _request(instructions, inputs, returns)
@@ -241,6 +267,23 @@ class Agent:
         started = time.monotonic()
         result: dict[str, Any] = {"value": None, "error": None, "cached": False}
         bad_finishes = 0
+        denied: list[Denial] = []
+        notes: list[str] = []
+
+        def record(value: Any, error: str | None = None) -> Run[Any]:
+            return Run(
+                task=task,
+                value=value,
+                steps=len(answers),
+                seconds=round(time.monotonic() - started, 3),
+                session=session.path,
+                files_changed=list(workdir.changed),
+                commands=list(workdir.commands),
+                denied=list(denied),
+                notes=list(notes),
+                error=error,
+            )
+
         try:
             for _ in range(self.max_steps):
                 answer = _send(_transcript(request, steps), system, self.backend, self.model)
@@ -272,14 +315,24 @@ class Agent:
                         continue
                     result["value"] = value
                     session.write("finish", n=len(steps) + 1, value=value, files_changed=workdir.changed)
-                    return value
-                output, denied = _use(tool, args, workdir, store, offered)
+                    return record(value)
+                output, was_denied = _use(tool, args, workdir, store, offered)
+                if was_denied:
+                    target = args.get("path") or args.get("command") or ""
+                    reason = output.removeprefix("error: ").removeprefix("not permitted: ")
+                    denied.append(Denial(tool, target if isinstance(target, str) else repr(target), reason))
+                elif tool == "remember":
+                    notes.append(" ".join(str(args.get("note", "")).split()))
                 steps.append(_step(len(steps) + 1, shown, output))
-                record = {"denied": True} if denied else {}
+                flag = {"denied": True} if was_denied else {}
                 session.write(
-                    "step", n=len(steps), tool=tool, args=_shortened(args), result=shorten(output, 4000), **record
+                    "step", n=len(steps), tool=tool, args=_shortened(args), result=shorten(output, 4000), **flag
                 )
             raise ThuncError(f"{name}: the agent didn't finish within max_steps={self.max_steps}")
+        except ThuncError as exc:  # the run failed: say what it did up to here
+            result["error"] = exc
+            session.write("error", error=str(exc), files_changed=workdir.changed)
+            raise AgentError(str(exc), record(None, str(exc))) from exc
         except BaseException as exc:  # Ctrl-C too, so the trace doesn't record it as a success
             result["error"] = exc
             session.write("error", error=str(exc) or type(exc).__name__, files_changed=workdir.changed)

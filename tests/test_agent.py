@@ -809,3 +809,109 @@ def test_bad_command_options_fail_at_declaration(repo):
         thunc.Agent("x", workdir=repo, command_timeout=0)
     with pytest.raises(ValueError, match="env= takes names and values that are both strings"):
         thunc.Agent("x", workdir=repo, env={"PORT": 8080})
+
+
+# --- the run record -------------------------------------------------------------------------
+
+
+def test_agent_run_returns_the_whole_record(fake, repo):
+    ok = script(repo, "ok.py", "print('fine')")
+    agent = thunc.Agent("rec", workdir=repo, permissions=["write:notes/**", f"run:{PY}"])
+
+    @agent.task
+    def tidy(topic: str) -> int:
+        """Tidy up."""
+        ...
+
+    fake.replies = [
+        act("write", path="notes/a.md", content="a"),
+        act("write", path="README.md", content="no"),
+        act("run", command=ok),
+        act("run", command="git status"),
+        act("remember", note="Notes go in   notes/."),
+        "not json",
+        finish(7),
+    ]
+    run = agent.run(tidy, "docs")
+    assert isinstance(run, thunc.Run) and run.value == 7 and run.error is None
+    assert run.task == "test_agent_run_returns_the_whole_record.<locals>.tidy"
+    assert run.steps == 7 and run.seconds > 0
+    assert run.files_changed == ["notes/a.md"]
+    assert [(c.command, c.exit_code) for c in run.commands] == [(f"{sys.executable} ok.py", 0)]
+    assert [(d.tool, d.target) for d in run.denied] == [("write", "README.md"), ("run", "git status")]
+    assert "no write rule matches it" in run.denied[0].reason and not run.denied[0].reason.startswith("error")
+    assert run.notes == ["Notes go in notes/."]
+    with open(run.session) as f:
+        assert json.loads(f.readlines()[-1])["event"] == "finish"
+
+
+def test_calling_a_task_still_returns_just_the_value(fake, repo):
+    fake.replies = [finish("ok")]
+    assert make_task(thunc.Agent("v", workdir=repo))() == "ok"
+
+
+def test_agent_run_with_an_async_task(fake, repo):
+    agent = thunc.Agent("a", workdir=repo)
+
+    @agent.task
+    async def ping() -> str:
+        """Say ok."""
+        ...
+
+    fake.replies = [finish("ok")]
+    assert agent.run(ping).value == "ok"
+
+
+def test_agent_run_only_takes_its_own_tasks(fake, repo):
+    one, other = thunc.Agent("one", workdir=repo), thunc.Agent("other", workdir=repo)
+    task = make_task(one)
+    with pytest.raises(ValueError, match="is another agent's task"):
+        other.run(task)
+    with pytest.raises(ValueError, match="is not a task"):
+        one.run(print)
+
+
+def test_a_failed_run_raises_agent_error_with_what_it_did(fake, repo):
+    agent = thunc.Agent("f", workdir=repo, permissions=["write:notes/**"], max_steps=3)
+    fake.replies = [act("write", path="notes/a.md", content="a"), act("write", path="x.py", content="x"), act("list")]
+    with pytest.raises(thunc.AgentError, match="didn't finish within max_steps=3") as caught:
+        make_task(agent)()
+    run = caught.value.run
+    assert isinstance(caught.value, thunc.ThuncError)  # existing `except ThuncError` still catches it
+    assert run.value is None and "max_steps=3" in run.error
+    assert run.steps == 3 and run.files_changed == ["notes/a.md"] and run.denied[0].target == "x.py"
+    assert os.path.exists(run.session)
+
+
+def test_agent_error_for_bad_finishes_and_backend_failures(fake, repo, monkeypatch):
+    from thunc import backends
+
+    fake.replies = [finish("x")] * 3
+    agent = thunc.Agent("f", workdir=repo, retries=2)
+
+    @agent.task
+    def number() -> int:
+        """A number."""
+        ...
+
+    with pytest.raises(thunc.AgentError, match="no valid a JSON integer after 3 finish") as caught:
+        number()
+    assert caught.value.run.steps == 3
+
+    def broken(text, **kwargs):
+        raise thunc.ThuncError("claude error: Not logged in")
+
+    monkeypatch.setitem(backends.BACKENDS, "broken", broken)
+    thunc.configure(backend="broken")
+    with pytest.raises(thunc.AgentError, match="Not logged in") as caught:
+        number()
+    assert caught.value.run.steps == 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="process groups")
+def test_a_timed_out_command_is_recorded_without_an_exit_code(fake, repo):
+    slow = script(repo, "slow.py", "import time; time.sleep(30)")
+    agent = thunc.Agent("t", workdir=repo, permissions=[f"run:{PY}"], command_timeout=0.3)
+    fake.replies = [act("run", command=slow), finish("ok")]
+    (command,) = agent.run(make_task(agent)).commands
+    assert command.exit_code is None and 0.3 <= command.seconds < 10

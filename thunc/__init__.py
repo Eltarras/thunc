@@ -20,9 +20,11 @@ from .config import configure
 from .core import call, map
 from .decorator import function
 from .errors import ThuncError
+from .runs import AgentError, Run
 
 __all__ = [
     "Agent",
+    "AgentError",
     "CacheGroup",
     "ThuncError",
     "cache_info",
@@ -32,5 +34,6 @@ __all__ = [
     "function",
     "map",
     "prompts",
+    "Run",
 ]
 __version__ = "0.1.2"
