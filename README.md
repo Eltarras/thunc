@@ -418,12 +418,14 @@ examples/
 ## Development
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[anthropic,openai,dev]"
+python3 -m venv .venv && .venv/bin/pip install -e ".[anthropic,openai,temporal-test,dev]"
 .venv/bin/pytest                    # offline tests (these run in CI)
+THUNC_TEMPORAL_TESTS=1 .venv/bin/pytest -c pytest-temporal.ini tests/temporal   # a real local Temporal service; no model calls
 .venv/bin/pytest live_tests         # real model calls through your Claude Code login; costs quota
 THUNC_BACKEND=anthropic .venv/bin/pytest live_tests   # the same, through the Claude API (needs ANTHROPIC_API_KEY)
 THUNC_BACKEND=openai .venv/bin/pytest live_tests      # the same, through the OpenAI API (needs OPENAI_API_KEY)
-.venv/bin/ruff check . && .venv/bin/mypy --strict thunc
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+.venv/bin/mypy --strict thunc && .venv/bin/mypy --strict --platform win32 thunc
 ```
 
 ## License
