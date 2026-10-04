@@ -244,10 +244,10 @@ result. It runs on every backend.
 
   ```python
   run = fixer.run(make_tests_pass)
-  run.value          # True
+  run.value  # True
   run.files_changed  # ["src/mathutil.py"]  (by write and edit; not by commands)
-  run.commands       # [Command("python3 tests/test_mathutil.py", exit_code=0, seconds=0.04)]
-  run.denied         # [Denial("run", "git commit -am fix", "running ... is denied by '!run:git'")]
+  run.commands  # [Command("python3 tests/test_mathutil.py", exit_code=0, seconds=0.04)]
+  run.denied  # [Denial("run", "git commit -am fix", "running ... is denied by '!run:git'")]
   run.notes, run.steps, run.seconds, run.session  # notes saved, model replies, time, the run file
   ```
 
