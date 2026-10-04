@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar, overload
 
-from .backends import BACKENDS, DEFAULT_MODELS
+from .backends import BACKENDS, DEFAULT_MODELS, TYPED_BACKENDS
 from .cache import get as cache_get
 from .cache import put as cache_put
 from .config import resolve_backend, setting, trace_path
@@ -126,11 +126,17 @@ def _call(
 ) -> Any:
     """thunc.call, plus the module of the @thunc.function making the call (shown by `thunc cache list`)."""
     inputs = dict(inputs or {})
-    system = system_prompt(system if system is not None else setting("system"))
+    custom = system if system is not None else setting("system")
+    system = system_prompt(custom)
     request = _build_prompt(instructions, inputs, returns)
     text, answers, started = request, [], time.monotonic()
     result: dict[str, Any] = {"value": None, "error": None, "cached": False}
+    typed = False
     try:
+        backend_name = resolve_backend(backend)
+        typed = backend_name in TYPED_BACKENDS
+        if typed:  # a typed backend's model is fixed; a configured model is meant for the other backends
+            model = DEFAULT_MODELS[backend_name]
         where = _cache_identity(request, system, backend, model, name, module) if cache else None
         if where is not None:
             saved = cache_get(where["key"])
@@ -142,8 +148,14 @@ def _call(
                 else:
                     result.update(value=value, cached=True)
                     return value
-        for _ in range(retries + 1):
-            answer = _send(text, system, backend, model)
+        # A typed backend's answer is always valid for the type, and asking again after ensure=
+        # rejects it gets the same answer: one attempt.
+        for _ in range(1 if typed else retries + 1):
+            answer = (
+                _ask_typed(instructions, inputs, returns, custom, backend)
+                if typed
+                else _send(text, system, backend, model)
+            )
             answers.append(answer)
             try:
                 value = _check(answer, returns, ensure)
@@ -160,13 +172,14 @@ def _call(
             result.update(value=value, error=None)
             return value
         raise ThuncError(
-            f"No valid {describe(returns)} after {retries + 1} attempt(s); last error: {result['error']}"
+            f"No valid {describe(returns)} after {len(answers)} attempt(s); last error: {result['error']}"
         ) from result["error"]
     except BaseException as exc:  # Ctrl-C too, so the trace doesn't record it as a success
         result["error"] = exc
         raise
     finally:
-        _trace(instructions, inputs, returns, answers, result, started, system, backend, model, name)
+        sent = custom if typed else system  # a typed backend gets only the program's own system prompt
+        _trace(instructions, inputs, returns, answers, result, started, sent, backend, model, name)
 
 
 def map(func: Callable[[A], T], items: Iterable[A], *, workers: int = 8) -> list[T]:
@@ -203,6 +216,20 @@ def _send(text: str, system: str, backend: str | None, model: str | None) -> str
     name = resolve_backend(backend)
     answer = BACKENDS[name](
         text, system=system, model=model or setting("model"), api_key=setting("api_key"), timeout=setting("timeout")
+    )
+    if not isinstance(answer, str):
+        raise ThuncError(f"The {name} backend returned {type(answer).__name__}, not text.")
+    return answer
+
+
+def _ask_typed(instructions: str, inputs: dict[str, Any], returns: Any, system: str | None, backend: str | None) -> str:
+    name = resolve_backend(backend)
+    answer = TYPED_BACKENDS[name](
+        instructions.strip(),
+        {key: _plain(value) for key, value in inputs.items()},
+        returns,
+        system=system,
+        timeout=setting("timeout"),
     )
     if not isinstance(answer, str):
         raise ThuncError(f"The {name} backend returned {type(answer).__name__}, not text.")
@@ -264,7 +291,7 @@ def _trace(
     answers: list[str],
     result: dict[str, Any],
     started: float,
-    system: str,
+    system: str | None,
     backend: str | None,
     model: str | None,
     name: str | None,

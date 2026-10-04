@@ -4,6 +4,7 @@ pytest live_tests                          # through your local Claude Code logi
 THUNC_BACKEND=codex pytest live_tests
 THUNC_BACKEND=anthropic pytest live_tests  # needs ANTHROPIC_API_KEY and `pip install anthropic`
 THUNC_BACKEND=openai pytest live_tests     # needs OPENAI_API_KEY and `pip install openai`
+THUNC_BACKEND=jev pytest live_tests        # needs the jev CLI (`jev login` or JEV_API_KEY)
 """
 
 import os
@@ -14,7 +15,16 @@ import pytest
 import thunc
 
 BACKEND = os.environ.get("THUNC_BACKEND", "claude-code")
-CLI = {"claude-code": "claude", "codex": "codex"}
+CLI = {"claude-code": "claude", "codex": "codex", "jev": "jev"}
+# Jev can't write text, so with THUNC_BACKEND=jev only the tests of bool and Literal answers run.
+JEV_TESTS = {"test_bool_decision.py", "test_literal_choice.py"}
+
+
+def pytest_collection_modifyitems(items):
+    if BACKEND == "jev":
+        for item in items:
+            if item.path.name not in JEV_TESTS:
+                item.add_marker(pytest.mark.skip(reason="jev answers only bool and Literal[...]"))
 
 
 @pytest.fixture(autouse=True, scope="session")

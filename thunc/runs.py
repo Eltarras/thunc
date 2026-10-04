@@ -38,6 +38,7 @@ class Run(Generic[T]):
     commands:      every command it ran, with its exit code
     denied:        actions the permissions refused
     notes:         notes it saved to memory with remember
+    followed:      instruction files it was given with follow=
     session:       the run's record on disk, a JSONL file with every step
     error:         why the run failed, or None
     """
@@ -51,6 +52,7 @@ class Run(Generic[T]):
     commands: list[Command] = field(default_factory=list)
     denied: list[Denial] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    followed: list[str] = field(default_factory=list)
     error: str | None = None
 
 
