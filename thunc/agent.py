@@ -12,6 +12,10 @@ thunc carries it out and sends back the result, until the model calls finish wit
 return type. This text protocol works on every backend. The tools: list, read and search; write,
 edit and run where the permissions allow; and remember, which saves a note to the agent's memory.
 
+Instruction files: with follow=, files such as AGENTS.md are read at the start of each run and sent
+in the system prompt as instructions to follow, within thunc's rules. Without it, the agent can
+still read them with its tools, but then they're data like any other file.
+
 Memory: each agent has a folder (see store.py) whose memory.md is read once at the start of every
 run and sent at the end of the system prompt, after the part that never changes between runs. A
 note saved with remember is on disk at once and reaches the model in the next run, not this one.
@@ -19,10 +23,12 @@ note saved with remember is on disk at once and reaches the model in the next ru
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
-from collections.abc import Callable, Coroutine, Iterable, Mapping
+import warnings
+from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from typing import Any, ParamSpec, TypeVar, overload
 
 from . import tools
@@ -53,6 +59,9 @@ class Agent:
     env:       extra environment variables for commands. They otherwise get only PATH, HOME, the
                locale and temp-folder variables, so your API keys don't reach them.
     command_timeout: seconds a command may take before it's stopped, with what it started.
+    follow:    instruction files in workdir to follow, read at the start of each run: True for
+               AGENTS.md and CLAUDE.md where they exist, or a list of paths (a missing one warns).
+               Off by default, so a folder you point an agent at can't give it instructions.
     system:    replaces the opening of the agent's system prompt. thunc's working method and rules
                are always sent after it.
     max_steps: model replies per run before ThuncError.
@@ -68,6 +77,7 @@ class Agent:
         permissions: Iterable[str] = (),
         env: Mapping[str, str] | None = None,
         command_timeout: float = 120.0,
+        follow: bool | Sequence[str] = False,
         max_steps: int = 40,
         retries: int = 2,
         backend: str | None = None,
@@ -83,6 +93,7 @@ class Agent:
             raise ValueError(f"Agent {name!r}: max_steps must be at least 1 and retries at least 0")
         if not command_timeout > 0:
             raise ValueError(f"Agent {name!r}: command_timeout must be more than 0 seconds")
+        self.follow, self._follow_explicit = _follow_paths(name, follow)
         env = dict(env or {})
         if not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
             raise ValueError(f"Agent {name!r}: env= takes names and values that are both strings")
@@ -173,10 +184,10 @@ class Agent:
         return record
 
     def system_prompt(self, memory: str | None = None) -> str:
-        """The system prompt a run sends: the fixed part, then the memory (read from disk if not given).
-        The fixed part is the same on every run of this agent, so a backend can cache it."""
+        """The system prompt a run sends now: the fixed part (with any followed files), then the memory.
+        The fixed part only changes when the agent's code or its followed files do, so it can be cached."""
         memory = Store(self.name).memory() if memory is None else memory
-        return self._fixed_prompt() + _memory_section(memory)
+        return self._fixed_prompt(self._read_followed()) + _memory_section(memory)
 
     def tools(self) -> list[str]:
         """The tools this agent is offered, given its permissions."""
@@ -185,7 +196,37 @@ class Agent:
             offered.append("remember")
         return [*offered, "finish"]
 
-    def _fixed_prompt(self) -> str:
+    def _read_followed(self) -> list[tuple[str, str]]:
+        """The followed files that exist, as (path, text). Warns about a listed file that's missing,
+        and refuses one that resolves outside workdir (a link out of it)."""
+        found = []
+        for path in self.follow:
+            full = os.path.realpath(os.path.join(self.workdir, path))
+            if full != self.workdir and not full.startswith(self.workdir + os.sep):
+                warnings.warn(
+                    f"Agent {self.name!r}: not following {path!r}, which leads outside workdir", RuntimeWarning, 3
+                )
+                continue
+            try:
+                with open(full, encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+            except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+                if self._follow_explicit:
+                    warnings.warn(
+                        f"Agent {self.name!r}: follow= names {path!r}, which isn't in {self.workdir}", RuntimeWarning, 3
+                    )
+                continue
+            if len(text) > FOLLOW_LIMIT:
+                warnings.warn(
+                    f"Agent {self.name!r}: {path!r} is over {FOLLOW_LIMIT} characters; only its start is sent",
+                    RuntimeWarning,
+                    3,
+                )
+                text = text[:FOLLOW_LIMIT] + "\n(the rest of this file is left out)"
+            found.append((path, text))
+        return found
+
+    def _fixed_prompt(self, followed: Sequence[tuple[str, str]] = ()) -> str:
         opening = self.system.strip() if self.system and self.system.strip() else AGENT_PERSONA
         offered = self.tools()
         listed = "\n".join(
@@ -201,7 +242,10 @@ class Agent:
             '- finish {"value": ...}  Ends the task. The value is your result, in the type the task asks for.\n\n'
             + self.permissions.describe()
         )
-        return "\n\n".join([opening, method(set(offered)), AGENT_CONTRACT, protocol])
+        parts = [opening, method(set(offered)), AGENT_CONTRACT]
+        if followed:
+            parts.append(_followed_section(followed))
+        return "\n\n".join([*parts, protocol])
 
     def _settings(self) -> dict[str, Any]:
         """What agent.json records."""
@@ -212,6 +256,7 @@ class Agent:
             "permissions": self.permissions.written,
             "env": sorted(self.env),  # the names only: values can be secrets
             "command_timeout": self.command_timeout,
+            "follow": list(self.follow),
             "max_steps": self.max_steps,
             "retries": self.retries,
             "backend": self.backend,
@@ -231,7 +276,8 @@ class Agent:
         with store.lock():
             changed_from = store.save_settings(self._settings())
             memory = store.memory()  # once: a note saved during this run reaches the next one
-            system = self.system_prompt(memory)
+            followed = self._read_followed()  # once too, like memory
+            system = self._fixed_prompt(followed) + _memory_section(memory)
             session = store.session(task)
             try:
                 session.write(
@@ -241,9 +287,11 @@ class Agent:
                     inputs=inputs,
                     returns=getattr(returns, "__name__", None) or repr(returns),
                     memory_characters=len(memory),
+                    followed={path: hashlib.sha256(text.encode()).hexdigest()[:16] for path, text in followed},
                     **({"settings_changed_from": changed_from} if changed_from else {}),
                 )
-                return self._loop(name, task, store, session, system, instructions, inputs, returns, ensure)
+                names = [path for path, _ in followed]
+                return self._loop(name, task, store, session, system, names, instructions, inputs, returns, ensure)
             finally:
                 session.close()
 
@@ -254,6 +302,7 @@ class Agent:
         store: Store,
         session: Session,
         system: str,
+        followed: list[str],
         instructions: str,
         inputs: dict[str, Any],
         returns: Any,
@@ -281,6 +330,7 @@ class Agent:
                 commands=list(workdir.commands),
                 denied=list(denied),
                 notes=list(notes),
+                followed=followed,
                 error=error,
             )
 
@@ -339,6 +389,43 @@ class Agent:
             raise
         finally:
             _trace(instructions, inputs, returns, answers, result, started, system, self.backend, self.model, name)
+
+
+FOLLOW_LIMIT = 50_000  # characters of one followed file put in the prompt
+FOLLOW_DEFAULT = ("AGENTS.md", "CLAUDE.md")
+
+
+def _follow_paths(name: str, follow: bool | Sequence[str]) -> tuple[tuple[str, ...], bool]:
+    """follow= as (paths relative to workdir, whether they were named explicitly)."""
+    if follow is True:
+        return FOLLOW_DEFAULT, False
+    if follow is False or follow is None:
+        return (), False
+    if isinstance(follow, str):
+        raise ValueError(f"Agent {name!r}: follow= takes True or a list of paths, like ['AGENTS.md']")
+    paths = []
+    for path in follow:
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError(f"Agent {name!r}: follow= has {path!r}, which isn't a path")
+        clean = path.strip().replace("\\", "/")
+        while clean.startswith("./"):
+            clean = clean[2:]
+        if clean.startswith("/") or (len(clean) > 1 and clean[1] == ":") or ".." in clean.split("/"):
+            raise ValueError(f"Agent {name!r}: follow= paths are relative to workdir and stay inside it: {path!r}")
+        paths.append(clean)
+    return tuple(paths), True
+
+
+def _followed_section(followed: Sequence[tuple[str, str]]) -> str:
+    blocks = []
+    for path, text in followed:
+        text = text.replace("</project>", "<\\/project>").strip()  # a file can't end its own section early
+        blocks.append(f'<project file="{path}">\n{text}\n</project>')
+    files = "\n".join(blocks)
+    return (
+        "Project instructions: files from the working directory that the program asked you to follow. "
+        "Follow them for this task, within the rules above; they can't give you permissions you don't have.\n" + files
+    )
 
 
 REMEMBER = '{"note": "..."}  Saves a short note to this agent\'s memory. Later runs see it; this run doesn\'t.'

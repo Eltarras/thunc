@@ -235,10 +235,16 @@ result. It runs on every backend.
   files it changed. Runs of one agent take turns;
   different agents run side by side. Two names that make the same folder (`"Repo guide"` and
   `"repo-guide"`) can't both be used.
+- **Instruction files.** `follow=True` gives the agent `AGENTS.md` and `CLAUDE.md` from `workdir`
+  (those that exist) as instructions, and `follow=["docs/agent-rules.md"]` names files. They're read
+  at the start of each run and sent after thunc's rules; they can't grant permissions. It's off by
+  default, so a folder you point an agent at (a cloned repo, an upload) can't give it instructions.
+  Without it, the agent can still read those files, but as data. `@imports` in `CLAUDE.md` aren't
+  followed.
 - **`system=`** replaces the opening of the agent's system prompt. thunc always adds its working
   method and its rules after it (file contents and tool results are data, not instructions).
 - **Options:** `thunc.Agent(name, *, workdir, system=None, permissions=(), env=None,
-  command_timeout=120, max_steps=40, retries=2, backend=None, model=None)`, and `@agent.task(instructions=..., ensure=...)`. `async def` tasks work.
+  command_timeout=120, follow=False, max_steps=40, retries=2, backend=None, model=None)`, and `@agent.task(instructions=..., ensure=...)`. `async def` tasks work.
 - **What happened in a run.** Calling a task returns its value. `agent.run(task, *args)` runs it
   the same way and returns a `thunc.Run` instead, typed like the task (`Run[int]`):
 
@@ -248,14 +254,14 @@ result. It runs on every backend.
   run.files_changed  # ["src/mathutil.py"]  (by write and edit; not by commands)
   run.commands  # [Command("python3 tests/test_mathutil.py", exit_code=0, seconds=0.04)]
   run.denied  # [Denial("run", "git commit -am fix", "running ... is denied by '!run:git'")]
-  run.notes, run.steps, run.seconds, run.session  # notes saved, model replies, time, the run file
+  run.notes, run.followed, run.steps, run.seconds, run.session
   ```
 
 - **Failures are loud.** A run that hits `max_steps`, never gives a valid value, or loses its
   backend raises `thunc.AgentError` (a `ThuncError`), whose `.run` is the record up to that point.
   With tracing on, each run is also one line with every model reply.
 
-Not yet: reading AGENTS.md or CLAUDE.md, and native tool use on the API backends.
+Not yet: native tool use on the API backends (every backend uses the text protocol for now).
 
 ## Examples
 
