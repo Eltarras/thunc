@@ -97,7 +97,10 @@ def test_claude_code_error(monkeypatch):
         thunc.call("ping")
 
 
-@pytest.mark.parametrize("stdout", ["[1, 2]", '"4"', "null", "42", "[" * 100_000 + "]" * 100_000, "Not JSON"])
+@pytest.mark.parametrize(
+    "stdout",
+    ["[1, 2]", '"4"', "null", "42", pytest.param("[" * 100_000 + "]" * 100_000, id="nested-100000"), "Not JSON"],
+)
 def test_claude_code_output_that_is_not_its_json_object(monkeypatch, stdout):
     stub_cli(monkeypatch, stdout)
     thunc.configure(backend="claude-code")
