@@ -195,7 +195,11 @@ def _sendable(text: str) -> str:
 
 
 def _check(answer: str, returns: Any, ensure: Callable[[Any], bool] | None) -> Any:
-    value = parse(answer, returns)
+    return _ensured(parse(answer, returns), ensure)
+
+
+def _ensured(value: Any, ensure: Callable[[Any], bool] | None) -> Any:
+    """The value, if it passes the program's ensure= check. Raises ValueError otherwise."""
     if ensure is None:
         return value
     try:

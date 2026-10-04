@@ -182,6 +182,149 @@ The backend can also be set with `THUNC_BACKEND`. With none set, `ANTHROPIC_API_
 **Type checking:** signatures and return types are visible to mypy and Pyright. mypy reports
 empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
+## Agents (preview)
+
+> **Unreleased, on the 0.2 branch.** The API may change before 0.2.
+
+An agent is a typed function that can look around before it answers. Give it a name and a working
+directory, declare its tasks the way you write `@thunc.function`, and call them from Python:
+
+```python
+repo = thunc.Agent("repo-guide", workdir="~/code/myapp")
+
+
+@repo.task
+def request_timeout() -> int:
+    """Find the HTTP request timeout this app uses, in seconds."""
+    ...
+
+
+request_timeout()  # -> 45, after the agent searched the code and read the file that sets it
+```
+
+An agent with a single task can be declared in one go, and a task built in code runs with
+`agent.call`, the agent version of `thunc.call`:
+
+```python
+@thunc.agent("release-notes", workdir="~/code/myapp", permissions=["write:CHANGELOG.md", "run:git log"])
+def changelog(since_tag: str) -> list[str]:
+    """Add an entry to CHANGELOG.md for the commits since `since_tag`. Return the bullets you wrote."""
+    ...
+
+
+repo.call(f"Where is {setting} set?", returns=str)
+```
+
+Each call is one run. The model takes one step at a time (list a folder, search, read or edit a
+file) and ends by calling `finish` with a value of the return type, which is checked like any thunc
+result. It runs on the Claude and OpenAI APIs through their own tool calls (the
+model can make several at once, and the fixed part of the prompt is cached), and on Claude Code and
+Codex by replying with one JSON action at a time. `protocol="text"` uses the second way on an API
+too, for example with a server behind `OPENAI_BASE_URL` that has no function calling.
+The `jev` backend only answers typed questions and cannot run agents, even for a task returning
+`bool` or `Literal[...]`. An agent run using it raises `ThuncError` before creating any run files
+or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
+
+- **Permissions** say what the agent may do. By default it may read everything in `workdir` and
+  save notes, and may not write:
+
+  ```python
+  fixer = thunc.Agent("fixer", workdir=".", permissions=["write:src/**", "run:pytest", "!read:.env*"])
+  ```
+
+  | Rule | Means |
+  |---|---|
+  | `write:docs/**`, `write` | create and edit matching files (all files with no path); also lets it read them |
+  | `read:src/**` | read only these; any `read:` rule replaces the read-everything default |
+  | `run:pytest`, `run:git log`, `run` | run commands that start with these words (`run:git log` allows `git log --oneline`, not `git push`); `run` alone allows any |
+  | `!read:.env*`, `!write:...`, `!run:git push`, `!memory` | deny; a deny always wins, and `!read` also stops writing |
+
+  `*` stays within one folder, `**` crosses folders, and paths are relative to `workdir`. The agent
+  is told its permissions, and an action they don't allow is refused with the reason, after which
+  the run carries on. Bad rules fail when the agent is declared.
+- **Tools:** `list`, `read` and `search`; `write` (create a file, or replace one) and `edit`
+  (replace text that appears exactly once) when a write rule allows it; `run` when a run rule
+  allows it; and `remember`. Every path
+  must stay inside `workdir`: `..`, absolute paths and symlinks that point outside are refused, and
+  the rules are checked on where a link really leads. Files the agent may not read are left out of
+  `list` and `search`.
+- **No blind overwrites.** A file is only replaced or edited after the agent read it in the same
+  run, and only if it hasn't changed on disk since. There is no undo, so run agents that write in a
+  git repository with a clean tree, and review their changes with `git diff`.
+- **Commands** run in `workdir` without a shell, so `&&`, pipes, redirects and `$VARIABLES` don't
+  work (the agent is told). They get a minimal environment: `PATH`, `HOME`, the locale and
+  temp-folder variables, and whatever you pass in `env=`, so your API keys don't reach them. Each
+  has a time limit (`command_timeout=120` seconds) that also stops the processes it started, and
+  the agent sees the exit code and the output, its end kept when it's long.
+- **A permitted command can do anything its program can.** `run:pytest` runs the project's code,
+  which can read or change any file your user account can, whatever the read and write rules say.
+  Permissions limit which tools the model uses; they aren't a sandbox. For untrusted input, run the
+  agent in a container.
+- **Your own functions as tools.** `tools=[open_issue]` lets the agent call your Python functions.
+  Each needs type hints and a docstring, which is its description. Arguments are checked against
+  the hints before the call; what it returns goes back to the model (as JSON unless it's a `str`),
+  and so does an exception, as an error. Listing a function is what allows it.
+- **Memory between runs.** Each run starts a fresh conversation, but the agent can save a short note
+  with its `remember` tool. Notes go in `memory.md` in the agent's folder, and every later run gets
+  them at the end of its system prompt (a note saved during a run reaches the next run, not that
+  one). It's a plain file: read it with `agent.memory`, edit it, or delete it to start over.
+- **The agent's folder** is `.thunc_agents/<name>/` (change it with `configure(agents_dir=...)` or
+  `THUNC_AGENTS_DIR`). Besides `memory.md` it holds `agent.json` (the agent's settings) and
+  `sessions/`, one JSONL file per run with every step (denied ones marked), the result, and the
+  files it changed. Runs of one agent take turns;
+  different agents run side by side. Two names that make the same folder (`"Repo guide"` and
+  `"repo-guide"`) can't both be used.
+- **Instruction files.** `follow=True` gives the agent `AGENTS.md` and `CLAUDE.md` from `workdir`
+  (those that exist) as instructions, and `follow=["docs/agent-rules.md"]` names files. They're read
+  at the start of each run and sent after thunc's rules; they can't grant permissions. It's off by
+  default, so a folder you point an agent at (a cloned repo, an upload) can't give it instructions.
+  Without it, the agent can still read those files, but as data. `@imports` in `CLAUDE.md` aren't
+  followed.
+- **`system=`** replaces the opening of the agent's system prompt. thunc always adds its working
+  method and its rules after it (file contents and tool results are data, not instructions).
+  Three presets cover common jobs: `thunc.prompts.CODING`, `thunc.prompts.CODE_REVIEW` and
+  `thunc.prompts.ANALYSIS`. They're plain strings, so you can extend one:
+  `system=thunc.prompts.CODING + "\n\nTarget Python 3.10."`.
+- **Time:** `max_steps=40` bounds the model replies in a run, and `timeout=` (seconds) bounds the
+  run's time. It's checked before each model call; a command's time limit is cut to the time left.
+- **Options:** `thunc.Agent(name, *, workdir, system=None, permissions=(), env=None,
+  command_timeout=120, follow=False, protocol=None, tools=(), timeout=None, max_steps=40,
+  retries=2, backend=None, model=None)`, and `@agent.task(instructions=..., ensure=...)`.
+  `@thunc.agent(name, workdir=..., instructions=..., ensure=..., **options)` takes the same options.
+  `async def` tasks work.
+- **What happened in a run.** Calling a task returns its value. `agent.run(task, *args)` runs it
+  the same way and returns a `thunc.Run` instead, typed like the task (`Run[int]`):
+
+  ```python
+  run = fixer.run(make_tests_pass)
+  run.value  # True
+  run.files_changed  # ["src/mathutil.py"]  (by write, edit and commands)
+  run.commands  # [Command("python3 tests/test_mathutil.py", exit_code=0, seconds=0.04)]
+  run.denied  # [Denial("run", "git commit -am fix", "running ... is denied by '!run:git'")]
+  run.notes, run.followed, run.steps, run.seconds, run.session
+  ```
+
+- **Failures are loud.** A run that hits `max_steps`, never gives a valid value, or loses its
+  backend raises `thunc.AgentError` (a `ThuncError`), whose `.run` is the record up to that point.
+  With tracing on, each run is also one line with every model reply.
+
+**How the prompt was tested.** `python -m live_tests.eval_prompts --backend anthropic` runs three
+small tasks (fix a bug, review a diff, answer a question about a repo) with three versions of the
+system prompt: bare (no working method), the default, and the task's preset. Five runs of each on
+4 October 2026:
+
+| | Claude API (Opus 5.5, native calls) | Claude Code (text protocol) |
+|---|---|---|
+| Passed | 45/45: every task, every version | 45/45 |
+| Steps (bare / default / preset) | fix 4.0 / 4.0 / 4.0, review 2.0 / 2.4 / 2.8, analysis 3.0 / 3.0 / 3.0 | fix 5.2 / 6.0 / 6.0, review 2.2 / 2.0 / 3.8, analysis 4.2 / 3.8 / 4.2 |
+| Cost | $0.76 for all 45 runs (cache reads were 257,553 of 312,294 input tokens) | |
+
+Every version passed every time, so these tasks are too easy to tell the versions apart: the result
+says the prompt does no harm, not that it helps. The one difference is that the review preset reads
+more of the code before answering. Each review flagged the renamed function as a minor issue
+(outside code importing the old name breaks), never as blocking. Harder tasks are needed to measure
+more.
+
 ## Examples
 
 | | |
@@ -190,6 +333,7 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 | [support_inbox.py](https://github.com/Eltarras/thunc/blob/main/examples/support_inbox.py) | Docstring functions returning a `Literal`, an `int` with `ensure=`, a dataclass, and a reply; tickets processed in parallel |
 | [dynamic_prompts.py](https://github.com/Eltarras/thunc/blob/main/examples/dynamic_prompts.py) | Prompts built from a style guide with `thunc.call`, and a grading function generated from a rubric |
 | [log_triage.py](https://github.com/Eltarras/thunc/blob/main/examples/log_triage.py) | Plain Python and AI functions mixed, with tracing |
+| [repo_guide.py](https://github.com/Eltarras/thunc/blob/main/examples/repo_guide.py) | Agents (preview): read-only tasks over this repo returning a dataclass and lists, on the Codex backend, with each run's steps read from the trace |
 | [jev_hello.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_hello.py) | The smallest Jev calls: a yes/no, a label and a rating |
 | [jev_inbox.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_inbox.py) | A support inbox triaged on Jev: spam, team and urgency for 8 tickets in about a second |
 | [jev_with_claude.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_with_claude.py) | Jev decides which messages need a reply; Claude writes only those replies |
@@ -200,6 +344,13 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 thunc/
   __init__.py    public API
   decorator.py   @thunc.function
+  agent.py       thunc.Agent and @agent.task (preview)
+  tools.py       the agent's tools: list, read, search, write, edit, run
+  permissions.py the agent's permission rules
+  runs.py        thunc.Run and AgentError: what a run did
+  native.py      how a run talks to its backend: native tool calls or the text protocol
+  store.py       the agent's folder: memory, settings, run records, the lock
+  prompts.py     the agent's system prompt
   __main__.py    the thunc command: thunc cache list / clear
   core.py        thunc.call, thunc.map, tracing
   cache.py       the answer cache: saving, listing, clearing

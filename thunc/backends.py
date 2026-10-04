@@ -165,6 +165,21 @@ def claude_code(text: str, *, system: str, model: str | None, api_key: str | Non
     return str(data["result"])
 
 
+# Notes Codex adds to every request besides thunc's prompt. The permissions note says the sandbox is
+# read-only, which led agents to refuse edits they were allowed to make with thunc's own write tools;
+# the others describe its working directory (a temp folder) and its collaboration and apps features.
+_CODEX_QUIET = tuple(
+    arg
+    for setting in (
+        "include_permissions_instructions",
+        "include_environment_context",
+        "include_collaboration_mode_instructions",
+        "include_apps_instructions",
+    )
+    for arg in ("--config", f"{setting}=false")
+)
+
+
 # Codex's own tools and the user's Codex setup stay out of thunc's calls, as `--tools ""` and
 # --strict-mcp-config do for claude: no shell (exec_command, write_stdin), no images, plugins, apps,
 # hooks, sub-agents or web search, and no MCP servers, model settings or notify command from
@@ -217,6 +232,7 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
             out_path,
             "--config",
             f"model_instructions_file={json.dumps(system_path)}",  # a TOML string (JSON escapes are valid TOML)
+            *_CODEX_QUIET,
             *_CODEX_LOCKDOWN,
         ]
         if model:

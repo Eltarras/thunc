@@ -48,6 +48,9 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "UP", "I"]
 
+[tool.ruff.lint.per-file-ignores]
+"thunc/prompts.py" = ["E501"]  # prompt text: one bullet per line, as the model reads it
+
 [tool.mypy]
 # AI functions have empty bodies (docstring + `...`) by design: the model is the implementation.
 disable_error_code = ["empty-body"]

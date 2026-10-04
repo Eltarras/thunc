@@ -8,3 +8,4 @@ dist/
 .env
 *.jsonl
 .thunc_cache/
+.thunc_agents/

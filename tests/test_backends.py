@@ -97,7 +97,10 @@ def test_claude_code_error(monkeypatch):
         thunc.call("ping")
 
 
-@pytest.mark.parametrize("stdout", ["[1, 2]", '"4"', "null", "42", "[" * 100_000 + "]" * 100_000, "Not JSON"])
+@pytest.mark.parametrize(
+    "stdout",
+    ["[1, 2]", '"4"', "null", "42", pytest.param("[" * 100_000 + "]" * 100_000, id="nested-100000"), "Not JSON"],
+)
 def test_claude_code_output_that_is_not_its_json_object(monkeypatch, stdout):
     stub_cli(monkeypatch, stdout)
     thunc.configure(backend="claude-code")
@@ -171,6 +174,18 @@ def test_codex(monkeypatch):
     stub_cli(monkeypatch, write_file="pong\n")
     thunc.configure(backend="codex")
     assert thunc.call("ping") == "pong"
+
+
+def test_codex_leaves_out_its_own_notes(monkeypatch):
+    calls = []
+    stub_cli(monkeypatch, write_file="pong\n", calls=calls)
+    thunc.configure(backend="codex")
+    thunc.call("ping")
+    args, _ = calls[0]
+    settings = [args[i + 1] for i, a in enumerate(args) if a == "--config"]
+    assert settings[0].startswith("model_instructions_file=")  # still the first --config
+    assert "include_permissions_instructions=false" in settings
+    assert "include_environment_context=false" in settings
 
 
 def test_codex_runs_without_its_own_tools_or_the_users_config(monkeypatch):
