@@ -1,17 +1,21 @@
-![thunc: call an LLM like a typed Python function](https://raw.githubusercontent.com/Eltarras/thunc/main/.github/social-preview.png)
-
-[![CI](https://github.com/Eltarras/thunc/actions/workflows/ci.yml/badge.svg)](https://github.com/Eltarras/thunc/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/thunc)](https://pypi.org/project/thunc/)
-[![Website](https://img.shields.io/badge/website-eltarras.github.io%2Fthunc-f5b14c)](https://eltarras.github.io/thunc/)
+![A thunc function returning list[Item] is called with "2 oat lattes and a croissant pls. oh, one more latte!" and returns two Item dataclasses: oat latte ×3 and croissant ×1.](https://raw.githubusercontent.com/Eltarras/thunc/main/.github/demo-function.gif)
 
 **think + function.** Call an LLM like a typed Python function.
 
-> **Status: beta (v0.2).** Expect bugs; the API may change. Feedback and issues are welcome.
+[![PyPI](https://img.shields.io/pypi/v/thunc)](https://pypi.org/project/thunc/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/thunc/)
+[![CI](https://github.com/Eltarras/thunc/actions/workflows/ci.yml/badge.svg)](https://github.com/Eltarras/thunc/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/Eltarras/thunc/blob/main/LICENSE)
+[![Website](https://img.shields.io/badge/website-eltarras.github.io%2Fthunc-f5b14c)](https://eltarras.github.io/thunc/)
+
+```bash
+pip install thunc
+```
 
 ```python
 import thunc
 
-thunc.configure(backend="claude-code")
+thunc.configure(backend="claude-code")  # or "codex", "anthropic", "openai"
 
 
 @thunc.function
@@ -23,26 +27,41 @@ def urgency(ticket: str) -> int:
 urgency("I was charged twice!")  # -> 4, a checked int
 ```
 
-The answer is parsed into the declared type. If it doesn't fit, the model is asked again, and
-after that `thunc.ThuncError` is raised. The library uses the standard library only and needs
-Python 3.10+.
+The docstring is the prompt and the return annotation is the type. The answer is parsed into that
+type; if it doesn't fit, the model is asked again, and after that `thunc.ThuncError` is raised. No
+dependencies, Python 3.10+.
 
-It runs on the Claude API, the OpenAI API, a local model (LM Studio, or any server that speaks the
-OpenAI API), or your Claude Code or Codex login.
+It also runs [agents](#agents): typed functions that can read, edit and test your code before they
+answer.
 
-## Install
+## Quickstart
+
+No API key needed if you have Claude Code or Codex installed: thunc can use their login.
 
 ```bash
-pip install thunc               # standard library only
-pip install "thunc[anthropic]"  # adds the Claude API backend
-pip install "thunc[openai]"     # adds the OpenAI API backend
-pip install "thunc[temporal]"   # adds durable agents on Temporal
+pip install thunc
+THUNC_BACKEND=claude-code python3 -c 'import thunc; print(thunc.call("Say hello in five words or fewer."))'
 ```
 
-## Try it
+Swap in the backend you have:
 
-Clone the repo and run the examples from its root. No install is needed; the examples run through
-your local [Claude Code](https://claude.com/claude-code) login:
+| You have | Set | Install |
+|---|---|---|
+| [Claude Code](https://claude.com/claude-code), logged in | `THUNC_BACKEND=claude-code` | `pip install thunc` |
+| [Codex](https://github.com/openai/codex), logged in | `THUNC_BACKEND=codex` | `pip install thunc` |
+| An Anthropic API key | `ANTHROPIC_API_KEY` | `pip install "thunc[anthropic]"` |
+| An OpenAI API key | `OPENAI_API_KEY` | `pip install "thunc[openai]"` |
+| A local model (LM Studio) | `OPENAI_BASE_URL` (see **Local models** below) | `pip install "thunc[openai]"` |
+
+With an API key set, thunc picks that backend on its own, so `THUNC_BACKEND` isn't needed. In code,
+`thunc.configure(backend=...)` does the same. Durable agents on Temporal add
+`pip install "thunc[temporal]"`.
+
+> **Beta (v0.2).** The API may still change. Bug reports and feedback are welcome in
+> [issues](https://github.com/Eltarras/thunc/issues).
+
+**More examples.** Clone the repo and run them from its root, with no install, through your
+Claude Code login:
 
 ```bash
 git clone https://github.com/Eltarras/thunc && cd thunc
@@ -50,9 +69,6 @@ python3 -m examples.hello
 python3 -m examples.support_inbox
 THUNC_BACKEND=codex python3 -m examples.log_triage
 ```
-
-With an API key instead, install the SDK and pick the backend: `THUNC_BACKEND=openai` with
-`OPENAI_API_KEY`, or `THUNC_BACKEND=anthropic` with `ANTHROPIC_API_KEY`.
 
 ## Two ways to write a prompt
 
@@ -186,6 +202,8 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 ## Agents
 
 > **New in 0.2.** Agents are new; their API may change in a later release as feedback comes in.
+
+![An agent allowed to write src/** and run pytest is asked to run the tests and fix any problems. pytest shows 1 failure; it reads src/pricing.py, fixes one line, reruns pytest (3 passed) and returns True.](https://raw.githubusercontent.com/Eltarras/thunc/main/.github/demo-agent.gif)
 
 An agent is a typed function that can look around before it answers. Give it a name and a working
 directory, declare its tasks the way you write `@thunc.function`, and call them from Python:
