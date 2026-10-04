@@ -48,7 +48,9 @@ def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | N
 
     model = model or DEFAULT_ANTHROPIC_MODEL
     # api_key=None lets the SDK resolve ANTHROPIC_API_KEY or an `ant auth login` profile.
-    client = anthropic.Anthropic(api_key=api_key, timeout=timeout)
+    from .config import setting
+
+    client = anthropic.Anthropic(api_key=api_key, timeout=timeout, **(setting("sdk_options") or {}))
     try:
         if model in _FALLBACK_MODELS:
             response = client.beta.messages.create(
@@ -87,7 +89,9 @@ def openai_api(text: str, *, system: str, model: str | None, api_key: str | None
         raise ThuncError("The openai backend needs the SDK: pip install 'thunc[openai]'") from exc
 
     # api_key=None lets the SDK resolve OPENAI_API_KEY (and OPENAI_BASE_URL for compatible servers).
-    client = openai.OpenAI(api_key=api_key, timeout=timeout)
+    from .config import setting
+
+    client = openai.OpenAI(api_key=api_key, timeout=timeout, **(setting("sdk_options") or {}))
     try:
         response = client.responses.create(
             model=model or DEFAULT_OPENAI_MODEL,

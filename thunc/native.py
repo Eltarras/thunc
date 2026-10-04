@@ -56,6 +56,31 @@ class Conversation(Protocol):
     def nudge(self, reply: Reply) -> None: ...
 
 
+def snapshot(conversation: Conversation) -> dict[str, Any]:
+    """Lossless provider wire data; never serialize clients or Python SDK objects."""
+    if isinstance(conversation, TextConversation):
+        data = dict(kind="text", steps=conversation.steps)
+    elif isinstance(conversation, AnthropicConversation):
+        data = dict(kind="anthropic", messages=conversation.messages)
+    elif isinstance(conversation, OpenAIConversation):
+        data = dict(kind="openai", input=conversation.input)
+    else:
+        raise TypeError("This conversation does not support snapshots")
+    return typing.cast(dict[str, Any], json.loads(json.dumps(data, default=lambda x: x.model_dump(mode="json"))))
+
+
+def restore(conversation: Conversation, data: dict[str, Any]) -> None:
+    """Restore wire messages, including opaque reasoning/signature blocks."""
+    if isinstance(conversation, TextConversation) and data["kind"] == "text":
+        conversation.steps = data["steps"]
+    elif isinstance(conversation, AnthropicConversation) and data["kind"] == "anthropic":
+        conversation.messages = data["messages"]
+    elif isinstance(conversation, OpenAIConversation) and data["kind"] == "openai":
+        conversation.input = data["input"]
+    else:
+        raise ValueError("Conversation snapshot protocol mismatch")
+
+
 # --- the text protocol --------------------------------------------------------------------------
 
 
@@ -127,7 +152,9 @@ class AnthropicConversation:
             raise ThuncError("The anthropic backend needs the SDK: pip install 'thunc[anthropic]'") from exc
         self._anthropic = anthropic
         # api_key=None lets the SDK resolve ANTHROPIC_API_KEY or an `ant auth login` profile.
-        self.client = anthropic.Anthropic(api_key=setting("api_key"), timeout=setting("timeout"))
+        self.client = anthropic.Anthropic(
+            api_key=setting("api_key"), timeout=setting("timeout"), **(setting("sdk_options") or {})
+        )
         self.model = model or setting("model") or DEFAULT_ANTHROPIC_MODEL
         self.system: list[Any] = [{"type": "text", "text": fixed, "cache_control": {"type": "ephemeral"}}]
         if memory:
@@ -201,7 +228,9 @@ class OpenAIConversation:
             raise ThuncError("The openai backend needs the SDK: pip install 'thunc[openai]'") from exc
         self._openai = openai
         # api_key=None lets the SDK resolve OPENAI_API_KEY (and OPENAI_BASE_URL for compatible servers).
-        self.client = openai.OpenAI(api_key=setting("api_key"), timeout=setting("timeout"))
+        self.client = openai.OpenAI(
+            api_key=setting("api_key"), timeout=setting("timeout"), **(setting("sdk_options") or {})
+        )
         self.model = model or setting("model") or DEFAULT_OPENAI_MODEL
         self.system = system
         self.tools: list[Any] = [

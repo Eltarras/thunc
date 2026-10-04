@@ -339,3 +339,32 @@ def test_claude_custom_tool(claude, repo):
     }
     (result,) = claude.requests[1]["messages"][2]["content"]
     assert result["content"] == '{"total": 49.0}' and "is_error" not in result
+
+
+def test_anthropic_snapshot_preserves_thinking_and_tool_ids(claude):
+    claude.replies = [message(THINKING, use("read", "t1", path="config.py")), message(use("finish", "t2", value="ok"))]
+    original = native.AnthropicConversation("fixed", "memory", "request", [], None)
+    reply = original.next()
+    snapshot = native.snapshot(original)
+    restored = native.AnthropicConversation("fixed", "memory", "request", [], None)
+    native.restore(restored, json.loads(json.dumps(snapshot)))
+    restored.results([(reply.calls[0], "file contents", False)])
+    restored.next()
+    assistant = claude.requests[1]["messages"][1]
+    assert assistant["content"][0] == THINKING
+    assert claude.requests[1]["messages"][2]["content"][0]["tool_use_id"] == "t1"
+
+
+def test_openai_snapshot_preserves_encrypted_reasoning(gpt):
+    gpt.replies = [
+        response(REASONING, call("read", "c1", '{"path":"config.py"}')),
+        response(call("finish", "c2", '{"value":"ok"}')),
+    ]
+    original = native.OpenAIConversation("fixed", "request", [], None)
+    reply = original.next()
+    restored = native.OpenAIConversation("fixed", "request", [], None)
+    native.restore(restored, json.loads(json.dumps(native.snapshot(original))))
+    restored.results([(reply.calls[0], "contents", False)])
+    restored.next()
+    assert gpt.requests[1]["input"][1]["encrypted_content"] == "enc"
+    assert gpt.requests[1]["input"][-1]["call_id"] == "c1"
