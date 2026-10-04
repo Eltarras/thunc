@@ -159,6 +159,8 @@ or takes `--cache-dir`; it can't see a `configure(cache_dir=...)` in your code.
   before the instructions, and thunc's default system prompt isn't sent. `model=` is ignored (the
   CLI always uses `jev-latest`), and an answer that fails `ensure=` isn't retried, since Jev would
   give the same one. It's only used when you choose it: `backend="jev"` or `THUNC_BACKEND=jev`.
+  Setup (install the CLI, log in, check it works): the
+  [Jev guide](https://eltarras.github.io/thunc/jev.html).
 
 **Local models:** the `openai` backend works with a local server through `OPENAI_BASE_URL`. This
 has been tested with [LM Studio](https://lmstudio.ai) running `openai/gpt-oss-20b`:
@@ -185,6 +187,9 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 | [support_inbox.py](https://github.com/Eltarras/thunc/blob/main/examples/support_inbox.py) | Docstring functions returning a `Literal`, an `int` with `ensure=`, a dataclass, and a reply; tickets processed in parallel |
 | [dynamic_prompts.py](https://github.com/Eltarras/thunc/blob/main/examples/dynamic_prompts.py) | Prompts built from a style guide with `thunc.call`, and a grading function generated from a rubric |
 | [log_triage.py](https://github.com/Eltarras/thunc/blob/main/examples/log_triage.py) | Plain Python and AI functions mixed, with tracing |
+| [jev_hello.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_hello.py) | The smallest Jev calls: a yes/no, a label and a rating |
+| [jev_inbox.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_inbox.py) | A support inbox triaged on Jev: spam, team and urgency for 8 tickets in about a second |
+| [jev_with_claude.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_with_claude.py) | Jev decides which messages need a reply; Claude writes only those replies |
 
 ## Code
 
