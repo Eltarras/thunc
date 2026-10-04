@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import subprocess
 import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -83,7 +84,7 @@ class Permissions:
 
     def check_run(self, argv: Sequence[str]) -> None:
         """Raise Denied unless this command (already split into words) may run."""
-        command = shlex.join(argv)
+        command = join_command(argv)
         for rule in self.rules:
             if rule.deny and rule.kind == "run" and rule.matches_command(argv):
                 raise Denied(f"running {command!r} is denied by {rule.source!r}")
@@ -155,7 +156,7 @@ def _parse(text: str) -> Rule:
             raise ValueError(f"{source!r}: {exc}") from None
         if not words:
             raise ValueError(f"{source!r} has no command after the colon")
-        return Rule(deny, kind, shlex.join(words), source)
+        return Rule(deny, kind, join_command(words), source)
     pattern = pattern.strip().replace("\\", "/")
     while pattern.startswith("./"):
         pattern = pattern[2:]
@@ -176,6 +177,11 @@ def split_command(text: str) -> list[str]:
         return shlex.split(text)
     words = shlex.split(text, posix=False)
     return [w[1:-1] if len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'" else w for w in words]
+
+
+def join_command(words: Sequence[str]) -> str:
+    """Words as one command line, quoted for split_command (and for this platform's shell)."""
+    return subprocess.list2cmdline(list(words)) if sys.platform == "win32" else shlex.join(words)
 
 
 def _show(rule: Rule) -> str:

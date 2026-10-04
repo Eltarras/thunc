@@ -18,7 +18,6 @@ import contextlib
 import hashlib
 import os
 import re
-import shlex
 import signal
 import subprocess
 import sys
@@ -26,7 +25,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
-from .permissions import Denied, Permissions, split_command
+from .permissions import Denied, Permissions, join_command, split_command
 from .runs import Command
 
 # Folders that are rarely what an agent is looking for, and can be huge.
@@ -268,7 +267,7 @@ class Workdir:
                 output = b""
             status = f"stopped after {limit:g}s, the time limit"
         seconds = time.monotonic() - started
-        self.commands.append(Command(shlex.join(argv), exit_code, round(seconds, 3)))
+        self.commands.append(Command(join_command(argv), exit_code, round(seconds, 3)))
         self._note_changes(before, self._snapshot())
         text = output.decode("utf-8", errors="replace") if output else ""
         if len(text) > MAX_OUTPUT:

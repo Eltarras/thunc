@@ -32,3 +32,5 @@ jobs:
           python-version: "3.13"
       - run: pip install -e ".[anthropic,openai,dev]"
       - run: pytest
+        env:
+          PYTHONIOENCODING: utf-8  # the console's own code page can't print every test id and message
