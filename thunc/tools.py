@@ -18,7 +18,6 @@ import contextlib
 import hashlib
 import os
 import re
-import shlex
 import signal
 import subprocess
 import sys
@@ -26,7 +25,8 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
-from .permissions import Denied, Permissions
+from .permissions import Denied, Permissions, join_command, split_command
+from .runs import Command
 
 # Folders that are rarely what an agent is looking for, and can be huge.
 SKIPPED_DIRS = frozenset(
@@ -36,6 +36,7 @@ MAX_RESULT = 20_000  # characters of one tool result sent back to the model
 MAX_LIST = 300  # entries
 MAX_MATCHES = 100
 MAX_SEARCH_FILE = 1_000_000  # bytes; bigger files are skipped by search
+MAX_TRACKED = 20_000  # files; past this, changes made by commands aren't tracked
 MAX_OUTPUT = 18_000  # characters of a command's output sent back; the end is kept
 # Environment variables a command gets by default: enough to find programs and run them, nothing else.
 PASSED_ENV = (
@@ -85,13 +86,16 @@ class Workdir:
         *,
         env: Mapping[str, str] | None = None,
         command_timeout: float = 120.0,
+        deadline: float | None = None,
     ) -> None:
         self.root = os.path.realpath(root)
         self.permissions = permissions or Permissions()
         self.env = command_env(env)
         self.command_timeout = command_timeout
+        self.deadline = deadline  # time.monotonic() when the run's own time limit is up, if it has one
         self.seen: dict[str, str] = {}  # real path -> sha256 of the content the agent last read or wrote
         self.changed: list[str] = []  # files created or changed in this run, as the model sees them
+        self.commands: list[Command] = []  # commands run in this run
 
     def path(self, relative: str) -> str:
         """The real path for `relative`, which must stay inside the working directory."""
@@ -212,7 +216,7 @@ class Workdir:
 
     def run(self, command: str) -> str:
         try:
-            argv = shlex.split(command)
+            argv = split_command(command)
         except ValueError as exc:
             raise ToolError(f"can't read the command: {exc}") from None
         if not argv:
@@ -227,6 +231,13 @@ class Workdir:
             self.permissions.check_run(argv)
         except Denied as exc:
             raise NotPermitted(f"not permitted: {exc}") from None
+        limit = self.command_timeout
+        if self.deadline is not None:
+            left = self.deadline - time.monotonic()
+            if left <= 0:
+                raise ToolError("the run's time limit is up; call finish with what you have")
+            limit = min(limit, left)
+        before = self._snapshot()
         started = time.monotonic()
         try:
             process = subprocess.Popen(
@@ -242,20 +253,54 @@ class Workdir:
             raise ToolError(f"{argv[0]!r} was not found") from None
         except OSError as exc:
             raise ToolError(f"{argv[0]!r} couldn't be started: {exc.strerror or exc}") from None
+        exit_code: int | None
         try:
-            output, _ = process.communicate(timeout=self.command_timeout)
-            status = f"exit code {process.returncode}"
+            output, _ = process.communicate(timeout=limit)
+            exit_code = process.returncode
+            status = f"exit code {exit_code}"
         except subprocess.TimeoutExpired:
+            exit_code = None
             _stop(process)
             try:
                 output, _ = process.communicate(timeout=5)
             except subprocess.TimeoutExpired:  # something it started still holds the output open
                 output = b""
-            status = f"stopped after {self.command_timeout:g}s, the time limit"
+            status = f"stopped after {limit:g}s, the time limit"
+        seconds = time.monotonic() - started
+        self.commands.append(Command(join_command(argv), exit_code, round(seconds, 3)))
+        self._note_changes(before, self._snapshot())
         text = output.decode("utf-8", errors="replace") if output else ""
         if len(text) > MAX_OUTPUT:
             text = f"(the first {len(text) - MAX_OUTPUT} characters are left out)\n" + text[-MAX_OUTPUT:]
-        return f"{status} ({time.monotonic() - started:.1f}s)\n{text}".rstrip()
+        return f"{status} ({seconds:.1f}s)\n{text}".rstrip()
+
+    def _snapshot(self) -> dict[str, tuple[int, int]] | None:
+        """(modification time, size) of every file in the workdir, to see what a command changed.
+        None for a workdir too big to scan for every command."""
+        found: dict[str, tuple[int, int]] = {}
+        for full, is_dir in self._walk(self.root):
+            if is_dir:
+                continue
+            try:
+                info = os.stat(full)
+            except OSError:
+                continue
+            found[full] = (info.st_mtime_ns, info.st_size)
+            if len(found) > MAX_TRACKED:
+                return None
+        return found
+
+    def _note_changes(
+        self, before: dict[str, tuple[int, int]] | None, after: dict[str, tuple[int, int]] | None
+    ) -> None:
+        """Add the files a command created, changed or deleted to the run's changed files."""
+        if before is None or after is None:
+            return
+        for full in sorted(set(before) | set(after)):
+            if before.get(full) != after.get(full):
+                shown = self.show(full)
+                if shown not in self.changed:
+                    self.changed.append(shown)
 
     def _unchanged_since_read(self, path: str, full: str) -> bytes:
         """The file's current content, if the agent read it in this run and it hasn't changed since."""
