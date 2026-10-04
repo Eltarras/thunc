@@ -3,28 +3,33 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
-## Unreleased
+## 0.2.1 (beta)
 
 **Durable agents with Temporal.** An optional `thunc[temporal]` runtime records each model turn
 and tool call in a Temporal workflow, so a run survives worker restarts and can be reattached
 from another process. Local thunc stays dependency-free. See the
-[Temporal guide](examples/temporal/README.md).
+[Temporal guide](https://github.com/Eltarras/thunc/blob/main/examples/temporal/README.md).
 
 ### Added
 
 - **`thunc.temporal`**: `Registry`, `Worker`, `Runtime` and `Handle` to register versioned tasks
   and start, reattach to, inspect, cancel and resolve durable runs. One coordinator per
-  workspace runs requests in order; a repeated request ID reattaches to the same run.
+  workspace runs requests in order; a repeated request ID reattaches to the same run. Agents
+  with `tools=` or `timeout=` can't be registered for durable runs yet
+  ([#37](https://github.com/Eltarras/thunc/pull/37)).
 - **Recoverable tool effects**: file writes and memory notes go through an intent and receipt
   journal with atomic replacement and content hashes. A command whose outcome is uncertain is
-  never rerun automatically: the run waits for an operator's `resolve()`.
+  never rerun automatically: the run waits for an operator's `resolve()`
+  ([#37](https://github.com/Eltarras/thunc/pull/37)).
 - **`thunc.temporal.adapters.execute_task`** composes registered tasks from native Temporal
-  workflows, with a classify → agent analysis → typed summary example.
+  workflows, with a classify → agent analysis → typed summary example
+  ([#38](https://github.com/Eltarras/thunc/pull/38)).
 
 ### Changed
 
 - The agent loop's decisions moved into a shared engine (`thunc/execution.py`) that local and
-  durable runs both use. A `remember` call that fails no longer appears in `Run.notes`.
+  durable runs both use. A `remember` call that fails no longer appears in `Run.notes`
+  ([#36](https://github.com/Eltarras/thunc/pull/36)).
 
 ## 0.2.0 (beta)
 

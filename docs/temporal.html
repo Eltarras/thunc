@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Durable execution · thunc</title><style>
 :root{color-scheme:light dark}body{max-width:880px;margin:50px auto;padding:0 24px;font:16px/1.65 system-ui,sans-serif}h1{font-size:42px;line-height:1.1}h2{margin-top:38px}a{color:light-dark(#9b481b,#edb16e)}pre{padding:20px;border:1px solid #8886;border-radius:8px;overflow:auto}code{font-size:.88em}.note{border-left:3px solid #bf7b32;padding:15px 20px;background:#bf7b3214}li{margin:9px 0}
-</style></head><body><a href="index.html">← thunc</a><p>Unreleased · optional integration</p><h1>Durable agents with Temporal</h1><p>Keep task definitions. Use a separate runtime when execution needs to survive worker restarts.</p><div class="note">Durable agents are on main and not yet in a PyPI release; install from a checkout. Local thunc calls remain dependency-free.</div>
-<h2>Start the service and worker</h2><p>Install the development checkout and the <a href="https://docs.temporal.io/cli">official Temporal CLI</a>. The service below is for local development and binds to loopback; production needs a properly operated Temporal service.</p><pre><code>pip install -e '.[temporal,openai]'
+</style></head><body><a href="index.html">← thunc</a><p>New in 0.2.1 · optional integration</p><h1>Durable agents with Temporal</h1><p>Keep task definitions. Use a separate runtime when execution needs to survive worker restarts.</p><div class="note">New in thunc 0.2.1. Durable agents are new; their API may change in a later release. Local thunc calls remain dependency-free.</div>
+<h2>Start the service and worker</h2><p>Install thunc with the Temporal extra and the <a href="https://docs.temporal.io/cli">official Temporal CLI</a>. The service below is for local development and binds to loopback; production needs a properly operated Temporal service.</p><pre><code>pip install "thunc[temporal,openai]"
 mkdir -p .temporal-dev
 temporal server start-dev --db-filename .temporal-dev/server.sqlite
 

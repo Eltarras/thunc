@@ -36,6 +36,7 @@ OpenAI API), or your Claude Code or Codex login.
 pip install thunc               # standard library only
 pip install "thunc[anthropic]"  # adds the Claude API backend
 pip install "thunc[openai]"     # adds the OpenAI API backend
+pip install "thunc[temporal]"   # adds durable agents on Temporal
 ```
 
 ## Try it
@@ -327,8 +328,8 @@ more.
 
 ## Durable agents with Temporal
 
-> **Unreleased.** On `main`, not yet in a PyPI release. Install from a checkout with
-> `pip install -e ".[temporal]"`. The API may change before it ships.
+> **New in 0.2.1.** Install with `pip install "thunc[temporal]"`. Durable agents are new; their
+> API may change in a later release as feedback comes in.
 
 The optional `thunc.temporal` runtime records each agent model turn and tool result
 in a Temporal workflow. Workers can restart and continue recorded progress. Existing
