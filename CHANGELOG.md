@@ -1,0 +1,89 @@
+# Changelog
+
+All notable changes to thunc. The full notes for each release are on the
+[releases page](https://github.com/Eltarras/thunc/releases).
+
+## 0.2.0 (beta)
+
+**Agents.** An agent is a typed function that can look around before it answers: it lists,
+reads and searches files in a working directory, and, when its permissions allow, writes, edits
+and runs commands, then returns a checked value of the task's return type.
+See the [Agents section](https://github.com/Eltarras/thunc#agents) of the README.
+
+### Added
+
+- **`thunc.Agent(name, workdir=...)` and `@agent.task`**: declare tasks like `@thunc.function`.
+  Read-only by default, with `list`, `read`, `search` and `remember` tools. Sync and async tasks
+  ([#23](https://github.com/Eltarras/thunc/pull/23)).
+- **Memory and run files** in `.thunc_agents/<name>/`: `memory.md` (notes kept between runs),
+  `agent.json`, and one JSONL record per run. Runs of one agent take turns through an OS file
+  lock ([#23](https://github.com/Eltarras/thunc/pull/23)).
+- **Permission rules**: `write:`, `read:`, `run:` and `!` denies with globs, plus the `write` and
+  `edit` tools. Edits need a fresh read of the file in the same run
+  ([#26](https://github.com/Eltarras/thunc/pull/26)).
+- **The `run` tool**: commands allowed by `run:` rules run without a shell, with a minimal
+  environment and a time limit that also stops their child processes
+  ([#28](https://github.com/Eltarras/thunc/pull/28)).
+- **`agent.run(task, ...)`** returns a `thunc.Run` with the value, files changed, commands,
+  denials, notes and steps. A failed run raises `thunc.AgentError` with the partial record
+  ([#29](https://github.com/Eltarras/thunc/pull/29)).
+- **`follow=`** gives the agent `AGENTS.md` / `CLAUDE.md`, or files you name, as instructions.
+  Off by default ([#31](https://github.com/Eltarras/thunc/pull/31)).
+- **Native tool calls** on the Claude and OpenAI APIs, with the fixed part of the prompt cached.
+  Claude Code and Codex use a JSON text protocol; `protocol="text"` picks it on an API too
+  ([#32](https://github.com/Eltarras/thunc/pull/32)).
+- **System prompt presets**: `thunc.prompts.CODING`, `CODE_REVIEW` and `ANALYSIS`, for `system=`
+  ([#34](https://github.com/Eltarras/thunc/pull/34)).
+- **`tools=`**: your own typed, documented Python functions as agent tools
+  ([#34](https://github.com/Eltarras/thunc/pull/34)).
+- **`agent.call(...)`**, the agent version of `thunc.call`, and the **`@thunc.agent(...)`**
+  shorthand for a one-task agent ([#34](https://github.com/Eltarras/thunc/pull/34)).
+- **`timeout=`** bounds a run's time; command limits are cut to the time left
+  ([#34](https://github.com/Eltarras/thunc/pull/34)).
+- **Files changed by commands** are included in `Run.files_changed`
+  ([#34](https://github.com/Eltarras/thunc/pull/34)).
+- `live_tests/eval_prompts.py`, an evaluation of the agent system prompt (bare / default /
+  preset). 90/90 runs passed on the Claude API and Claude Code
+  ([#34](https://github.com/Eltarras/thunc/pull/34)).
+- CI now also runs the offline tests on Windows ([#34](https://github.com/Eltarras/thunc/pull/34)).
+
+### Changed
+
+- **`thunc.agent` is the decorator** for one-task agents. `from thunc.agent import Agent` still
+  works; only `import thunc.agent as m` now gives the decorator rather than the module.
+- The `codex` backend leaves out Codex's own permission notes, which made it refuse allowed edits
+  ([#26](https://github.com/Eltarras/thunc/pull/26)).
+- Agents refuse the `jev` backend with a `ThuncError` before a run starts; it only answers typed
+  questions ([#33](https://github.com/Eltarras/thunc/pull/33)).
+
+Nothing changes for `@thunc.function` and `thunc.call`.
+
+## 0.1.3 (beta)
+
+- **`jev` backend** for TypeSafe's Jev judgment model: `bool` and `Literal` answers in about
+  0.3 s ([#27](https://github.com/Eltarras/thunc/pull/27)).
+- The **`codex` backend** runs with Codex's own tools off and ignores `~/.codex/config.toml`
+  ([#25](https://github.com/Eltarras/thunc/pull/25)).
+- `@thunc.function` bodies like `return 1` now raise `TypeError` at definition
+  ([#24](https://github.com/Eltarras/thunc/pull/24)).
+
+## 0.1.2 (beta)
+
+- **`cache=True`** saves valid answers on disk; `thunc.clear_cache()`, `thunc.cache_info()` and
+  the `thunc cache` command manage them ([#18](https://github.com/Eltarras/thunc/pull/18),
+  [#19](https://github.com/Eltarras/thunc/pull/19)).
+- **`system=`** replaces the opening of the default system prompt; Codex gets it as its
+  instructions file ([#21](https://github.com/Eltarras/thunc/pull/21)).
+- **Sturdier parsing**: common near-misses are read, and wrong values are retried instead of
+  returned. Only `ThuncError` escapes ([#20](https://github.com/Eltarras/thunc/pull/20)).
+- An empty reply is no longer a valid `str`.
+
+## 0.1.1 (beta)
+
+- **`openai` backend** on the Responses API, and local models through `OPENAI_BASE_URL`.
+- The Claude API backend tested live; CONTRIBUTING.md and Discussions added.
+
+## 0.1.0 (beta)
+
+- First release: `@thunc.function`, `thunc.call`, typed and validated results with retries and
+  `ensure=`, `thunc.map`, JSONL tracing; the `anthropic`, `claude-code` and `codex` backends.

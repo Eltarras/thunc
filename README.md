@@ -6,7 +6,7 @@
 
 **think + function.** Call an LLM like a typed Python function.
 
-> **Status: beta (v0.1).** Expect bugs; the API may change. Feedback and issues are welcome.
+> **Status: beta (v0.2).** Expect bugs; the API may change. Feedback and issues are welcome.
 
 ```python
 import thunc
@@ -182,9 +182,9 @@ The backend can also be set with `THUNC_BACKEND`. With none set, `ANTHROPIC_API_
 **Type checking:** signatures and return types are visible to mypy and Pyright. mypy reports
 empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
-## Agents (preview)
+## Agents
 
-> **Unreleased, on the 0.2 branch.** The API may change before 0.2.
+> **New in 0.2.** Agents are new; their API may change in a later release as feedback comes in.
 
 An agent is a typed function that can look around before it answers. Give it a name and a working
 directory, declare its tasks the way you write `@thunc.function`, and call them from Python:
@@ -333,7 +333,7 @@ more.
 | [support_inbox.py](https://github.com/Eltarras/thunc/blob/main/examples/support_inbox.py) | Docstring functions returning a `Literal`, an `int` with `ensure=`, a dataclass, and a reply; tickets processed in parallel |
 | [dynamic_prompts.py](https://github.com/Eltarras/thunc/blob/main/examples/dynamic_prompts.py) | Prompts built from a style guide with `thunc.call`, and a grading function generated from a rubric |
 | [log_triage.py](https://github.com/Eltarras/thunc/blob/main/examples/log_triage.py) | Plain Python and AI functions mixed, with tracing |
-| [repo_guide.py](https://github.com/Eltarras/thunc/blob/main/examples/repo_guide.py) | Agents (preview): read-only tasks over this repo returning a dataclass and lists, on the Codex backend, with each run's steps read from the trace |
+| [repo_guide.py](https://github.com/Eltarras/thunc/blob/main/examples/repo_guide.py) | Agents: read-only tasks over this repo returning a dataclass and lists, on the Codex backend, with each run's steps read from the trace |
 | [jev_hello.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_hello.py) | The smallest Jev calls: a yes/no, a label and a rating |
 | [jev_inbox.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_inbox.py) | A support inbox triaged on Jev: spam, team and urgency for 8 tickets in about a second |
 | [jev_with_claude.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_with_claude.py) | Jev decides which messages need a reply; Claude writes only those replies |
@@ -344,7 +344,7 @@ more.
 thunc/
   __init__.py    public API
   decorator.py   @thunc.function
-  agent.py       thunc.Agent and @agent.task (preview)
+  agent.py       thunc.Agent, @agent.task, @thunc.agent
   tools.py       the agent's tools: list, read, search, write, edit, run
   permissions.py the agent's permission rules
   runs.py        thunc.Run and AgentError: what a run did
