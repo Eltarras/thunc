@@ -3,9 +3,12 @@
 import asyncio
 import json
 import os
+import re
+import shlex
 import signal
 import subprocess
 import sys
+import textwrap
 import threading
 import time
 from dataclasses import dataclass
@@ -655,8 +658,8 @@ def test_no_memory_permission(fake, repo):
 
 
 def test_bad_rules_fail_at_declaration(repo):
-    with pytest.raises(ValueError, match=r"Agent 'w': Unknown permission 'run:pytest' \(running commands"):
-        thunc.Agent("w", workdir=repo, permissions=["run:pytest"])
+    with pytest.raises(ValueError, match=r"Agent 'w': Unknown permission 'exec:pytest'"):
+        thunc.Agent("w", workdir=repo, permissions=["exec:pytest"])
 
 
 def test_the_run_record_lists_changes_and_denials(fake, repo):
@@ -676,3 +679,133 @@ def test_the_run_record_lists_changes_and_denials(fake, repo):
     assert done["files_changed"] == ["notes/a.md"]
     with open(os.path.join(agent.folder, "agent.json")) as f:
         assert json.load(f)["permissions"] == ["write:notes/**"]
+
+
+# --- running commands -----------------------------------------------------------------------
+
+PY = shlex.quote(sys.executable)
+
+
+def script(repo, name, code):
+    (repo / name).write_text(textwrap.dedent(code))
+    return f"{PY} {name}"
+
+
+def runner(repo, *rules, **options):
+    return make_task(thunc.Agent("x", workdir=repo, permissions=list(rules), **options))
+
+
+def test_run_is_offered_only_with_a_run_rule(fake, repo):
+    fake.replies = [finish("a"), finish("b")]
+    make_task(thunc.Agent("r", workdir=repo))()
+    runner(repo, f"run:{PY}")()
+    without, with_run = fake.systems
+    assert "- run " not in without and "If you're allowed to run commands" not in without
+    assert "- run " in with_run and "If you're allowed to run commands" in with_run
+    assert f"- Run commands: {sys.executable} ...." in with_run
+
+
+def test_a_command_runs_in_the_workdir_and_reports_exit_code_and_output(fake, repo):
+    ok = script(repo, "ok.py", "import os; print('cwd ok' if os.path.exists('config.py') else 'wrong cwd')")
+    bad = script(repo, "bad.py", "import sys; print('boom', file=sys.stderr); sys.exit(3)")
+    fake.replies = [act("run", command=ok), act("run", command=bad), finish("done")]
+    runner(repo, f"run:{PY}")()
+    assert re.search(r"exit code 0 \(\d+\.\ds\)\ncwd ok", fake.prompts[1])
+    assert re.search(r"exit code 3 \(\d+\.\ds\)\nboom", fake.prompts[2])  # stderr is included
+
+
+def test_commands_outside_the_rules_are_denied_and_never_start(fake, repo):
+    marker = repo / "ran.txt"
+    command = script(repo, "touch.py", "open('ran.txt', 'w').write('x')")
+    fake.replies = [act("run", command=command), finish("ok")]
+    runner(repo, "run:git log")()
+    assert "error: not permitted: running" in fake.prompts[-1] and "this agent may run: run:git log" in fake.prompts[-1]
+    assert not marker.exists()
+
+    fake.replies = [act("run", command=command), finish("ok")]
+    make_task(thunc.Agent("r", workdir=repo))()  # no run rule at all
+    assert "error: not permitted: this agent may not run commands" in fake.prompts[-1]
+    assert not marker.exists()
+
+
+def test_there_is_no_shell(fake, repo):
+    command = script(repo, "touch.py", "open('ran.txt', 'w').write('x')")
+    fake.replies = [
+        act("run", command=f"{command} && rm config.py"),
+        act("run", command="echo $HOME | cat"),
+        finish("ok"),
+    ]
+    runner(repo, "run")()
+    assert "commands run without a shell, so '&&' doesn't work" in fake.prompts[1]
+    assert "so '|' doesn't work" in fake.prompts[2]
+    assert not (repo / "ran.txt").exists() and (repo / "config.py").exists()
+
+
+def test_commands_get_a_minimal_environment(fake, repo, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
+    command = script(repo, "env.py", "import os; print(sorted(k for k in os.environ if not k.startswith('__')))")
+    fake.replies = [act("run", command=command), finish("ok")]
+    agent = thunc.Agent("x", workdir=repo, permissions=[f"run:{PY}"], env={"APP_MODE": "test", "TOKEN": "t0"})
+    make_task(agent)()
+    output = fake.prompts[1]
+    assert "ANTHROPIC_API_KEY" not in output and "sk-secret" not in output
+    assert "'APP_MODE'" in output and "'PATH'" in output
+    with open(os.path.join(agent.folder, "agent.json")) as f:
+        saved = json.load(f)
+    assert saved["env"] == ["APP_MODE", "TOKEN"] and "t0" not in json.dumps(saved)  # names, not values
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="process groups")
+def test_a_timeout_stops_the_command_and_what_it_started(fake, repo):
+    command = script(
+        repo,
+        "slow.py",
+        """
+        import subprocess, sys, time
+        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1); open('late.txt', 'w').write('x')"])
+        time.sleep(30)
+        """,
+    )
+    fake.replies = [act("run", command=command), finish("ok")]
+    started = time.monotonic()
+    runner(repo, f"run:{PY}", command_timeout=0.5)()
+    assert time.monotonic() - started < 10
+    assert "stopped after 0.5s, the time limit" in fake.prompts[1]
+    time.sleep(1.5)
+    assert not (repo / "late.txt").exists()  # the child it started was stopped too
+
+
+def test_long_output_keeps_the_end(fake, repo):
+    command = script(repo, "loud.py", "for n in range(5000): print(f'line {n:04d} ' + 'x' * 20)\nprint('THE ERROR')")
+    fake.replies = [act("run", command=command), finish("ok")]
+    runner(repo, f"run:{PY}")()
+    result = fake.prompts[1].split("<result>\n")[-1]
+    assert "characters are left out)" in result and "THE ERROR" in result and "line 0000" not in result
+
+
+def test_a_missing_program(fake, repo):
+    fake.replies = [act("run", command="no-such-program-xyz --help"), finish("ok")]
+    runner(repo, "run")()
+    assert "error: 'no-such-program-xyz' was not found" in fake.prompts[-1]
+
+
+def test_a_file_a_command_changed_must_be_read_again(fake, repo):
+    command = script(repo, "fmt.py", "open('config.py', 'a').write('RETRIES = 3\\n')")
+    fake.replies = [
+        act("read", path="config.py"),
+        act("run", command=command),
+        act("edit", path="config.py", old="TIMEOUT = 30", new="TIMEOUT = 45"),
+        act("read", path="config.py"),
+        act("edit", path="config.py", old="TIMEOUT = 30", new="TIMEOUT = 45"),
+        finish("ok"),
+    ]
+    runner(repo, f"run:{PY}", "write:config.py")()
+    assert "changed on disk since you read it" in fake.prompts[3]
+    assert (repo / "config.py").read_text() == "NAME = 'demo'\nTIMEOUT = 45\nRETRIES = 3\n"
+
+
+def test_bad_command_options_fail_at_declaration(repo):
+    with pytest.raises(ValueError, match="command_timeout must be more than 0"):
+        thunc.Agent("x", workdir=repo, command_timeout=0)
+    with pytest.raises(ValueError, match="env= takes names and values that are both strings"):
+        thunc.Agent("x", workdir=repo, env={"PORT": 8080})

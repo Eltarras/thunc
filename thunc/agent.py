@@ -9,8 +9,8 @@
 
 Each call is one run: the model replies with one action at a time (a JSON object naming a tool),
 thunc carries it out and sends back the result, until the model calls finish with a value of the
-return type. This text protocol works on every backend. The tools: list, read and search; write and
-edit where the permissions allow; and remember, which saves a note to the agent's memory.
+return type. This text protocol works on every backend. The tools: list, read and search; write,
+edit and run where the permissions allow; and remember, which saves a note to the agent's memory.
 
 Memory: each agent has a folder (see store.py) whose memory.md is read once at the start of every
 run and sent at the end of the system prompt, after the part that never changes between runs. A
@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, ParamSpec, TypeVar, overload
 
 from . import tools
@@ -47,7 +47,11 @@ class Agent:
     workdir:   the folder its tools work in. Paths outside it are refused.
     permissions: rules like ["write:CHANGELOG.md", "write:docs/**", "!read:.env*"]. By default the
                agent may read everything in workdir and save notes, and may not write. See
-               thunc/permissions.py; a deny ("!...") always wins.
+               thunc/permissions.py; a deny ("!...") always wins. "run:pytest" lets it run commands
+               that start with pytest; a command can do anything its program can.
+    env:       extra environment variables for commands. They otherwise get only PATH, HOME, the
+               locale and temp-folder variables, so your API keys don't reach them.
+    command_timeout: seconds a command may take before it's stopped, with what it started.
     system:    replaces the opening of the agent's system prompt. thunc's working method and rules
                are always sent after it.
     max_steps: model replies per run before ThuncError.
@@ -61,6 +65,8 @@ class Agent:
         workdir: str | os.PathLike[str],
         system: str | None = None,
         permissions: Iterable[str] = (),
+        env: Mapping[str, str] | None = None,
+        command_timeout: float = 120.0,
         max_steps: int = 40,
         retries: int = 2,
         backend: str | None = None,
@@ -74,6 +80,11 @@ class Agent:
             raise ValueError(f"Agent {name!r}: workdir {os.fspath(workdir)!r} is not an existing folder")
         if max_steps < 1 or retries < 0:
             raise ValueError(f"Agent {name!r}: max_steps must be at least 1 and retries at least 0")
+        if not command_timeout > 0:
+            raise ValueError(f"Agent {name!r}: command_timeout must be more than 0 seconds")
+        env = dict(env or {})
+        if not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
+            raise ValueError(f"Agent {name!r}: env= takes names and values that are both strings")
         if backend is not None:
             _check_backend(backend)
         try:
@@ -83,6 +94,8 @@ class Agent:
         self.name = name
         self.workdir = folder
         self.system = system
+        self.env = env
+        self.command_timeout = command_timeout
         self.max_steps = max_steps
         self.retries = retries
         self.backend = backend
@@ -142,7 +155,7 @@ class Agent:
 
     def tools(self) -> list[str]:
         """The tools this agent is offered, given its permissions."""
-        offered = [name for name in tools.TOOLS if name not in tools.WRITE_TOOLS or self.permissions.may("write")]
+        offered = [name for name in tools.TOOLS if name not in tools.NEEDS or self.permissions.may(tools.NEEDS[name])]
         if self.permissions.may("memory"):
             offered.append("remember")
         return [*offered, "finish"]
@@ -172,6 +185,8 @@ class Agent:
             "workdir": self.workdir,
             "system": self.system,
             "permissions": self.permissions.written,
+            "env": sorted(self.env),  # the names only: values can be secrets
+            "command_timeout": self.command_timeout,
             "max_steps": self.max_steps,
             "retries": self.retries,
             "backend": self.backend,
@@ -218,7 +233,7 @@ class Agent:
         returns: Any,
         ensure: Callable[[Any], bool] | None,
     ) -> Any:
-        workdir = tools.Workdir(self.workdir, self.permissions)
+        workdir = tools.Workdir(self.workdir, self.permissions, env=self.env, command_timeout=self.command_timeout)
         offered = self.tools()
         request = _request(instructions, inputs, returns)
         steps: list[str] = []
@@ -291,7 +306,7 @@ def _use(tool: str, args: dict[str, Any], workdir: tools.Workdir, store: Store, 
     """Carry out a tool other than finish. Returns what the model is told, and whether it was denied."""
     try:
         if tool not in offered:
-            what = "save notes" if tool == "remember" else "write files"
+            what = {"remember": "save notes", "run": "run commands"}.get(tool, "write files")
             raise tools.NotPermitted(f"not permitted: this agent may not {what}")
         if tool == "remember":
             if set(args) != {"note"} or not isinstance(args["note"], str):

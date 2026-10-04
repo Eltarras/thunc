@@ -5,31 +5,43 @@
 - read, read:<glob>     read files (list and search only show readable files). Allowed everywhere
                         by default; giving any read: rule replaces that default with your rules.
 - write, write:<glob>   create and edit files. Writing a file also lets the agent read it.
+- run, run:<command>    run commands that start with these words: "run:git log" allows
+                        "git log --oneline" but not "git push". run alone allows any command.
 - memory                save notes with remember. Allowed by default.
 - !<rule>               deny. A deny always wins over an allow. !read also stops writing.
 
 Globs match the path relative to the working directory, with / separators: * stays within one
 folder, ** crosses folders, ? is one character. "docs/" means everything under docs/.
+
+Commands run without a shell, and a command can do anything its program can: "run:pytest" runs the
+project's code. Permissions limit which tools the model uses, not what a permitted command does.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+import shlex
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-KINDS = ("read", "write", "memory")
+KINDS = ("read", "write", "run", "memory")
 
 
 @dataclass(frozen=True)
 class Rule:
     deny: bool
     kind: str
-    pattern: str | None  # None: every path
+    pattern: str | None  # None: every path, or every command
     source: str  # as written, for messages
 
     def matches(self, path: str) -> bool:
         return self.pattern is None or _glob(self.pattern).fullmatch(path) is not None
+
+    def matches_command(self, argv: Sequence[str]) -> bool:
+        if self.pattern is None:
+            return True
+        words = shlex.split(self.pattern)
+        return list(argv[: len(words)]) == words
 
 
 class Denied(Exception):
@@ -68,6 +80,17 @@ class Permissions:
             hint = f"; this agent may write: {', '.join(allowed)}" if allowed else ""
             raise Denied(f"writing {path!r} isn't allowed: no write rule matches it{hint}")
 
+    def check_run(self, argv: Sequence[str]) -> None:
+        """Raise Denied unless this command (already split into words) may run."""
+        command = shlex.join(argv)
+        for rule in self.rules:
+            if rule.deny and rule.kind == "run" and rule.matches_command(argv):
+                raise Denied(f"running {command!r} is denied by {rule.source!r}")
+        if not any(not r.deny and r.kind == "run" and r.matches_command(argv) for r in self.rules):
+            allowed = [r.source for r in self.rules if r.kind == "run" and not r.deny]
+            hint = f"; this agent may run: {', '.join(allowed)}" if allowed else ""
+            raise Denied(f"running {command!r} isn't allowed: no run rule matches it{hint}")
+
     def may(self, kind: str) -> bool:
         """Whether any action of this kind could be allowed, which decides the tools an agent is offered."""
         if any(r.deny and r.kind == kind and r.pattern is None for r in self.rules):
@@ -88,6 +111,18 @@ class Permissions:
                 where += " (and anything you may write)"
             except_ = f", except {', '.join(_show(r) for r in denied)}" if denied else ""
             lines.append(f"- {verb}: {where}{except_}.")
+        if self.may("run"):
+            allowed = [r for r in self.rules if r.kind == "run" and not r.deny]
+            denied = [r for r in self.rules if r.kind == "run" and r.deny]
+            which = (
+                "any command"
+                if any(r.pattern is None for r in allowed)
+                else ", ".join(f"{r.pattern} ..." for r in allowed)
+            )
+            except_ = f", except {', '.join(f'{r.pattern} ...' for r in denied)}" if denied else ""
+            lines.append(f"- Run commands: {which}{except_}.")
+        else:
+            lines.append("- Run commands: none.")
         lines.append("- Save notes with remember: " + ("yes." if self.may("memory") else "no."))
         return "Your permissions:\n" + "\n".join(lines)
 
@@ -107,12 +142,19 @@ def _parse(text: str) -> Rule:
     kind, colon, pattern = body.partition(":")
     kind = kind.strip()
     if kind not in KINDS:
-        hint = " (running commands isn't supported yet)" if kind == "run" else ""
-        raise ValueError(f"Unknown permission {source!r}{hint}; rules start with {', '.join(KINDS)}")
+        raise ValueError(f"Unknown permission {source!r}; rules start with {', '.join(KINDS)}")
     if not colon:
         return Rule(deny, kind, None, source)
     if kind == "memory":
         raise ValueError(f"{source!r}: memory takes no path; use 'memory' or '!memory'")
+    if kind == "run":
+        try:
+            words = shlex.split(pattern)
+        except ValueError as exc:
+            raise ValueError(f"{source!r}: {exc}") from None
+        if not words:
+            raise ValueError(f"{source!r} has no command after the colon")
+        return Rule(deny, kind, shlex.join(words), source)
     pattern = pattern.strip().replace("\\", "/")
     while pattern.startswith("./"):
         pattern = pattern[2:]

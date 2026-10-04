@@ -194,26 +194,37 @@ result. It runs on every backend.
   save notes, and may not write:
 
   ```python
-  fixer = thunc.Agent("fixer", workdir=".", permissions=["write:src/**", "write:CHANGELOG.md", "!read:.env*"])
+  fixer = thunc.Agent("fixer", workdir=".", permissions=["write:src/**", "run:pytest", "!read:.env*"])
   ```
 
   | Rule | Means |
   |---|---|
   | `write:docs/**`, `write` | create and edit matching files (all files with no path); also lets it read them |
   | `read:src/**` | read only these; any `read:` rule replaces the read-everything default |
-  | `!read:.env*`, `!write:...`, `!memory` | deny; a deny always wins, and `!read` also stops writing |
+  | `run:pytest`, `run:git log`, `run` | run commands that start with these words (`run:git log` allows `git log --oneline`, not `git push`); `run` alone allows any |
+  | `!read:.env*`, `!write:...`, `!run:git push`, `!memory` | deny; a deny always wins, and `!read` also stops writing |
 
   `*` stays within one folder, `**` crosses folders, and paths are relative to `workdir`. The agent
   is told its permissions, and an action they don't allow is refused with the reason, after which
   the run carries on. Bad rules fail when the agent is declared.
 - **Tools:** `list`, `read` and `search`; `write` (create a file, or replace one) and `edit`
-  (replace text that appears exactly once) when a write rule allows it; and `remember`. Every path
+  (replace text that appears exactly once) when a write rule allows it; `run` when a run rule
+  allows it; and `remember`. Every path
   must stay inside `workdir`: `..`, absolute paths and symlinks that point outside are refused, and
   the rules are checked on where a link really leads. Files the agent may not read are left out of
   `list` and `search`.
 - **No blind overwrites.** A file is only replaced or edited after the agent read it in the same
   run, and only if it hasn't changed on disk since. There is no undo, so run agents that write in a
   git repository with a clean tree, and review their changes with `git diff`.
+- **Commands** run in `workdir` without a shell, so `&&`, pipes, redirects and `$VARIABLES` don't
+  work (the agent is told). They get a minimal environment: `PATH`, `HOME`, the locale and
+  temp-folder variables, and whatever you pass in `env=`, so your API keys don't reach them. Each
+  has a time limit (`command_timeout=120` seconds) that also stops the processes it started, and
+  the agent sees the exit code and the output, its end kept when it's long.
+- **A permitted command can do anything its program can.** `run:pytest` runs the project's code,
+  which can read or change any file your user account can, whatever the read and write rules say,
+  and files a command changes aren't in the run record's list. Permissions limit which tools the
+  model uses; they aren't a sandbox. For untrusted input, run the agent in a container.
 - **Memory between runs.** Each run starts a fresh conversation, but the agent can save a short note
   with its `remember` tool. Notes go in `memory.md` in the agent's folder, and every later run gets
   them at the end of its system prompt (a note saved during a run reaches the next run, not that
@@ -226,13 +237,13 @@ result. It runs on every backend.
   `"repo-guide"`) can't both be used.
 - **`system=`** replaces the opening of the agent's system prompt. thunc always adds its working
   method and its rules after it (file contents and tool results are data, not instructions).
-- **Options:** `thunc.Agent(name, *, workdir, system=None, permissions=(), max_steps=40, retries=2,
-  backend=None, model=None)`, and `@agent.task(instructions=..., ensure=...)`. `async def` tasks work.
+- **Options:** `thunc.Agent(name, *, workdir, system=None, permissions=(), env=None,
+  command_timeout=120, max_steps=40, retries=2, backend=None, model=None)`, and `@agent.task(instructions=..., ensure=...)`. `async def` tasks work.
 - **Failures are loud.** A run that hits `max_steps`, or never gives a valid value, raises
   `ThuncError`. With tracing on, each run is one line with every model reply.
 
-Not yet: running commands (so an agent can't run your tests), a record of the run returned to your
-code, and native tool use on the API backends.
+Not yet: a record of the run returned to your code, reading AGENTS.md or CLAUDE.md, and native tool
+use on the API backends.
 
 ## Examples
 
@@ -251,7 +262,7 @@ thunc/
   __init__.py    public API
   decorator.py   @thunc.function
   agent.py       thunc.Agent and @agent.task (preview)
-  tools.py       the agent's tools: list, read, search, write, edit
+  tools.py       the agent's tools: list, read, search, write, edit, run
   permissions.py the agent's permission rules
   store.py       the agent's folder: memory, settings, run records, the lock
   prompts.py     the agent's system prompt
