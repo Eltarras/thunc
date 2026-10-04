@@ -27,7 +27,7 @@ import tempfile
 from collections.abc import Callable
 from typing import Any, Literal, get_args, get_origin
 
-from .errors import ThuncError
+from .errors import ThuncError, TransientError, transient_status
 from .schema import describe
 
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
@@ -69,9 +69,10 @@ def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | N
                 messages=[{"role": "user", "content": text}],
             )
     except anthropic.APIConnectionError as exc:
-        raise ThuncError(f"Could not reach the Claude API: {exc}") from exc
+        raise TransientError(f"Could not reach the Claude API: {exc}") from exc
     except anthropic.APIStatusError as exc:
-        raise ThuncError(f"Claude API error {exc.status_code}: {exc.message}") from exc
+        error = TransientError if transient_status(exc.status_code) else ThuncError
+        raise error(f"Claude API error {exc.status_code}: {exc.message}") from exc
 
     if response.stop_reason == "refusal":
         raise ThuncError("The model declined this request.")
@@ -100,9 +101,10 @@ def openai_api(text: str, *, system: str, model: str | None, api_key: str | None
             store=False,
         )
     except openai.APIConnectionError as exc:
-        raise ThuncError(f"Could not reach the OpenAI API: {exc}") from exc
+        raise TransientError(f"Could not reach the OpenAI API: {exc}") from exc
     except openai.APIStatusError as exc:
-        raise ThuncError(f"OpenAI API error {exc.status_code}: {exc.message}") from exc
+        error = TransientError if transient_status(exc.status_code) else ThuncError
+        raise error(f"OpenAI API error {exc.status_code}: {exc.message}") from exc
 
     if response.status == "incomplete":
         reason = response.incomplete_details.reason if response.incomplete_details else None
@@ -135,7 +137,7 @@ def _run_cli(args: list[str], text: str, timeout: float) -> subprocess.Completed
             cwd=tempfile.gettempdir(),
         )
     except subprocess.TimeoutExpired as exc:
-        raise ThuncError(f"`{exe}` timed out after {timeout:.0f}s.") from exc
+        raise TransientError(f"`{exe}` timed out after {timeout:.0f}s.") from exc
 
 
 def claude_code(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
@@ -162,8 +164,8 @@ def claude_code(text: str, *, system: str, model: str | None, api_key: str | Non
         data = None
     if not isinstance(data, dict):  # not the JSON object `--output-format json` prints
         raise ThuncError(f"claude exited {proc.returncode}: {_printable(proc.stderr or proc.stdout).strip()[-500:]}")
-    if data.get("is_error") or proc.returncode != 0:
-        raise ThuncError(f"claude error: {data.get('result') or _printable(proc.stderr).strip()[-500:]}")
+    if data.get("is_error") or proc.returncode != 0:  # e.g. a tool call it couldn't parse: asking again may work
+        raise TransientError(f"claude error: {data.get('result') or _printable(proc.stderr).strip()[-500:]}")
     if not isinstance(data.get("result"), str):
         raise ThuncError(f"claude returned no text: {proc.stdout.strip()[-500:]}")
     return str(data["result"])
@@ -244,7 +246,7 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
         args.append("-")  # read the prompt from stdin
         proc = _run_cli(args, text, timeout)
         if proc.returncode != 0:
-            raise ThuncError(f"codex exited {proc.returncode}: {_printable(proc.stderr).strip()[-500:]}")
+            raise TransientError(f"codex exited {proc.returncode}: {_printable(proc.stderr).strip()[-500:]}")
         try:
             with open(out_path, encoding="utf-8") as f:
                 return f.read().strip()

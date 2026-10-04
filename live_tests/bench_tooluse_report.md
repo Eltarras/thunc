@@ -3,17 +3,109 @@
 **Question.** When a thunc agent fails or runs slowly, how much of that comes from thunc rather
 than the model? Same model, same tasks, compared with Claude Code as the reference harness.
 
-**Answer.** Most of it. On Claude Sonnet 5.5, thunc agents passed **12 of 24** runs and Claude
-Code passed **24 of 24**. Every thunc failure traces to the harness: the text protocol thunc uses
-on the `claude-code` backend, and the fact that one failed model call ends the whole run. With
-thunc's own tools, permissions and prompt delivered as *native* tool calls instead, the same
-tasks went **24 of 24**, at about Claude Code's speed and **58% below its cost**. What still
-separates the two harnesses is the tool set: thunc agents make about twice as many tool calls on
-fix-and-test tasks, because `run` has no shell and no working directory.
+**Answer.** Most of it, and the three fixes below close the gap. On Claude Sonnet 5.5, thunc
+agents on the `claude-code` backend first passed **12 of 24** runs, against **24 of 24** for
+Claude Code. After the fixes they pass **24 of 24**, slightly faster than Claude Code and at
+**about a third of its cost**. The original findings follow the rerun below; findings 1, 2, 5 and 6
+are now fixed, and finding 3 is reduced.
 
 Reproduce with `python -m live_tests.bench_tooluse` (see its docstring).
 
-## The benchmark
+## Rerun after the fixes
+
+Three changes, in the same branch as this report:
+
+1. **Native tool calls on `claude-code`** (`thunc/claude_code.py`, `thunc/mcp_relay.py`). The
+   agent's tools are an MCP server that one `claude -p` process per run calls; the relay forwards
+   each call back to the run, which carries it out with thunc's own tools, permissions and records.
+   The CLI runs in the agent's `workdir`. `protocol="text"` keeps the old way, and durable runs on
+   Claude Code still use it.
+2. **Failed steps are retried.** A `TransientError` (timeout, lost connection, rate limit, server
+   error, a CLI call that ended in an error) is retried twice, with a note in the run record. A
+   text-protocol step on a CLI may take 120 s, not the whole 300 s `timeout`. On the MCP path,
+   a turn that ends in an error gets a second chance inside the same CLI session.
+3. **Tool set gaps.** `run` takes `cwd`; an opt-in `shell` permission runs command lines in a shell;
+   long output keeps its start and its end; `list` and `search` leave out what git ignores; `search`
+   takes a `glob`.
+
+Claude Sonnet 5.5, 3 runs of each task (24 runs per harness):
+
+| Harness | Passed | Turns per task | Seconds per task | $ per task | Cache-read share | Tool errors and rejected replies |
+|---|---|---|---|---|---|---|
+| thunc, before | 12/24 | 5.4 | 99 | 0.084 | 34% | 32 |
+| **thunc, after** (native calls) | **24/24** | 4.3 | **10** | **0.022** | 82% | **1** |
+| thunc, after, `shell` permission | 24/24 | 4.4 | 11 | 0.023 | 82% | 7 |
+| thunc, after, `protocol="text"` | 20/24 | 7.2 | 47 | 0.084 | 48% | 44 |
+| claude-code | 24/24 | 3.9 | 11 | 0.069 | 91% | 0 |
+
+Claude Opus 5.5, 1 run of each task:
+
+| Harness | Passed | Turns per task | Seconds per task | $ per task | Cache-read share | Errors |
+|---|---|---|---|---|---|---|
+| thunc, before | 8/8 | 8.5 | 44 | 0.264 | 25% | 12 |
+| **thunc, after** | **8/8** | 4.8 | **15** | **0.051** | 80% | **0** |
+| thunc, after, `protocol="text"` | 8/8 | 8.1 | 43 | 0.263 | 26% | 7 |
+| claude-code | 8/8 | 4.0 | 15 | 0.123 | 91% | 2 |
+
+Per task (Sonnet 5.5, passed out of 3; seconds per task in brackets):
+
+| Task | thunc before | thunc after | `shell` | `protocol="text"` | claude-code |
+|---|---|---|---|---|---|
+| needle | 3 (45) | 3 (12) | 3 (11) | 3 (83) | 3 (14) |
+| deep_fix | 0 (213) | 3 (17) | 3 (15) | 3 (53) | 3 (14) |
+| rename | 0 (10) | 3 (7) | 3 (7) | 0 (29) | 3 (9) |
+| write_tricky | 1 (210) | 3 (8) | 3 (8) | 3 (36) | 3 (11) |
+| tabs | 3 (22) | 3 (7) | 3 (7) | 3 (25) | 3 (10) |
+| noisy_build | 3 (43) | 3 (9) | 3 (12) | 3 (35) | 3 (9) |
+| subdir | 2 (132) | 3 (12) | 3 (15) | 3 (49) | 3 (12) |
+| routes | 0 (121) | 3 (10) | 3 (9) | 2 (63) | 3 (13) |
+
+What each fix did:
+
+- **Native calls carry the result.** Same prompt, same tools, same model: only the protocol
+  changed, and the pass rate went from 12/24 to 24/24, time per task from 99 s to 10 s, and cost
+  from $0.084 to $0.022. Cost is about a third of Claude Code's, because thunc's prompt is about a
+  fifth of its size (about 24,000 input tokens per task against 122,000).
+- **Retries rescue flaky steps, not the text protocol.** `protocol="text"` went from 12/24 to
+  20/24: 15 steps were retried (14 for the CLI's "tool call could not be parsed", 1 timeout), and
+  runs that used to die on a single bad call recovered. `rename` still failed 3 of 3: the parse
+  error comes back every time, because the model keeps trying to make the parallel native calls
+  the text protocol can't express.
+- **Git-aware search fixed the navigation noise.** On `needle`, the first search now returns only
+  real source (the stale `build/` copy is left out), and runs need 5.7 turns instead of 10.
+- **`cwd` and the start of long output were used as intended.** On `subdir`, the agent ran
+  `python test_api.py` with `cwd: services/api` instead of the `os.chdir` workaround (12 s,
+  against 132 s before). On `noisy_build`, the first error is visible in the output: 3.3 turns,
+  against 10 before (Claude Code: 3).
+- **The `shell` permission made little difference here.** It saved two turns on `deep_fix` (6
+  against 8), but cost 7 errors: the agent read files with `cat`, and `edit` then refused because
+  the file hadn't been read with `read` (see "Still open").
+
+Checks: 526 offline tests pass, with new tests for each change, including an end-to-end test of
+the MCP path through a fake `claude` that starts the real relay. Each safety rule was broken on
+purpose to see its test fail. `ruff` and `mypy --strict` pass on Linux and Windows. The Temporal
+integration tests couldn't run here: the network policy blocks downloading the Temporal dev server.
+Durable runs keep the text protocol, so the change they see is the shorter CLI step timeout; the
+Temporal unit tests pass.
+
+### Still open
+
+- **Reading with the shell doesn't count for `edit`.** With the `shell` permission, the agent
+  often reads files with `cat`, and `edit` refuses until it reads the file again with `read` (7
+  times in 24 runs). Options: tell the agent in the shell's tool description, or accept a file
+  as seen when its content hasn't changed since the agent's last command. The rule exists to stop
+  blind overwrites, so this needs a design decision.
+- **More tool calls than Claude Code on fix-and-test tasks** (`deep_fix`: 8 turns against 4).
+  Claude Code edits with a script and runs the tests in one turn; thunc reads around a 1,900-line
+  file in pages. Something like an `edit` with `replace_all`, or a multi-edit, would help.
+- **The text protocol is still weak.** It now matters only for `codex`, `protocol="text"` and
+  durable runs on Claude Code. The `thunc-fixed` prototype (finding 1) is the next step there, and
+  Codex could get native calls the same way, since it supports MCP servers.
+- **The native API path (finding 7) is still unverified**, and the CLI text backend still passes
+  the system prompt as a command-line argument (finding 8).
+
+## The original benchmark run
+### The benchmark
 
 Eight small repositories. Each one presses on a single part of a harness:
 
@@ -39,7 +131,7 @@ permission rule held anything back.
   as an MCP server so the model makes native tool calls. Claude Code's built-in tools are off.
 - **claude-code**: Claude Code (`claude -p` with Read, Edit, Write, Bash, Grep, Glob).
 
-## Results
+### Results
 
 Claude Sonnet 5.5, 3 runs of each task (24 runs per harness):
 
@@ -73,7 +165,7 @@ Results per task (Sonnet 5.5, passed out of 3):
 On Opus, thunc passes, but at 2.1× Claude Code's cost and 2.4× its wall time. On Sonnet, it fails
 half the runs. The model is the same in every column; only the harness changes.
 
-## Findings, by impact
+## Findings from the original run, by impact
 
 ### 1. The text protocol works against the model's trained tool use (critical)
 
@@ -260,7 +352,7 @@ exercised live. From the code, checked against current Messages API guidance:
 - **Missing tools compared with other harnesses.** Find by file name (glob), web fetch, a plan
   or to-do tool, and sub-agents. Lower priority than the items above.
 
-## Recommended order of work
+## Recommended order of work (from the original run)
 
 1. Native tool calls for the `claude-code` (and `codex`) backend through an MCP server (finding
    1). The prototype shows this is enough to match Claude Code on these tasks, at lower cost.

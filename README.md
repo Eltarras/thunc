@@ -168,7 +168,8 @@ or takes `--cache-dir`; it can't see a `configure(cache_dir=...)` in your code.
   `pip install "thunc[openai]"`. The default model is `gpt-5.5`. `OPENAI_BASE_URL` points it at
   any server that speaks the OpenAI Responses API.
 - `claude-code` and `codex` call your local CLI login, and are meant for cheap testing.
-  Both run with their own tools turned off, so the model can only answer. `codex` also ignores
+  Both run with their own tools turned off, so the model can only answer; an agent on
+  `claude-code` gets only its thunc tools, as native calls (see Agents). `codex` also ignores
   `~/.codex/config.toml` (your MCP servers, plugins, `notify` command and model settings); your
   login still works. Pick the model with `configure(model=...)` or `model=`.
 - `jev` is TypeSafe's [Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
@@ -239,9 +240,12 @@ repo.call(f"Where is {setting} set?", returns=str)
 Each call is one run. The model takes one step at a time (list a folder, search, read or edit a
 file) and ends by calling `finish` with a value of the return type, which is checked like any thunc
 result. It runs on the Claude and OpenAI APIs through their own tool calls (the
-model can make several at once, and the fixed part of the prompt is cached), and on Claude Code and
-Codex by replying with one JSON action at a time. `protocol="text"` uses the second way on an API
-too, for example with a server behind `OPENAI_BASE_URL` that has no function calling.
+model can make several at once, and the fixed part of the prompt is cached). On Claude Code the
+calls are native too: the agent's tools are an MCP server that one `claude -p` process per run
+calls, while thunc carries out each call with its own tools, permissions and records. On Codex the
+model replies with one JSON action at a time. `protocol="text"` uses that way on any backend, for
+example with a server behind `OPENAI_BASE_URL` that has no function calling. (Durable runs on
+Claude Code use it too.)
 The `jev` backend only answers typed questions and cannot run agents, even for a task returning
 `bool` or `Literal[...]`. An agent run using it raises `ThuncError` before creating any run files
 or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
@@ -258,25 +262,29 @@ or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
   | `write:docs/**`, `write` | create and edit matching files (all files with no path); also lets it read them |
   | `read:src/**` | read only these; any `read:` rule replaces the read-everything default |
   | `run:pytest`, `run:git log`, `run` | run commands that start with these words (`run:git log` allows `git log --oneline`, not `git push`); `run` alone allows any |
+  | `shell` | run any command line in a shell (`sh -c`, or `cmd /c` on Windows), so pipes, `&&`, `cd` and redirects work; off by default, and it can't be combined with `!run:` rules |
   | `!read:.env*`, `!write:...`, `!run:git push`, `!memory` | deny; a deny always wins, and `!read` also stops writing |
 
   `*` stays within one folder, `**` crosses folders, and paths are relative to `workdir`. The agent
   is told its permissions, and an action they don't allow is refused with the reason, after which
   the run carries on. Bad rules fail when the agent is declared.
-- **Tools:** `list`, `read` and `search`; `write` (create a file, or replace one) and `edit`
-  (replace text that appears exactly once) when a write rule allows it; `run` when a run rule
-  allows it; and `remember`. Every path
-  must stay inside `workdir`: `..`, absolute paths and symlinks that point outside are refused, and
-  the rules are checked on where a link really leads. Files the agent may not read are left out of
-  `list` and `search`.
+- **Tools:** `list`, `read` and `search` (a regular expression, optionally limited with a `glob`
+  such as `*.py`); `write` (create a file, or replace one) and `edit` (replace text that appears
+  exactly once) when a write rule allows it; `run` when a run or shell rule allows it; and
+  `remember`. Every path must stay inside `workdir`: `..`, absolute paths and symlinks that point
+  outside are refused, and the rules are checked on where a link really leads. Files the agent may
+  not read are left out of `list` and `search`, and so is what git ignores, in a git repository
+  (build output, caches, vendored code); a folder named explicitly is still listed and searched.
 - **No blind overwrites.** A file is only replaced or edited after the agent read it in the same
   run, and only if it hasn't changed on disk since. There is no undo, so run agents that write in a
   git repository with a clean tree, and review their changes with `git diff`.
-- **Commands** run in `workdir` without a shell, so `&&`, pipes, redirects and `$VARIABLES` don't
-  work (the agent is told). They get a minimal environment: `PATH`, `HOME`, the locale and
-  temp-folder variables, and whatever you pass in `env=`, so your API keys don't reach them. Each
-  has a time limit (`command_timeout=120` seconds) that also stops the processes it started, and
-  the agent sees the exit code and the output, its end kept when it's long.
+- **Commands** run in `workdir`, or in a folder inside it given as `cwd`. Without the `shell`
+  permission there's no shell, so `&&`, pipes, `cd`, redirects and `$VARIABLES` don't work (the
+  agent is told). They get a minimal environment: `PATH`, `HOME`, the locale and temp-folder
+  variables, and whatever you pass in `env=`, so your API keys don't reach them. Each has a time
+  limit (`command_timeout=120` seconds) that also stops the processes it started, and the agent
+  sees the exit code and the output: the start and the end when it's long, since the first error is
+  often at the start and the summary at the end.
 - **A permitted command can do anything its program can.** `run:pytest` runs the project's code,
   which can read or change any file your user account can, whatever the read and write rules say.
   Permissions limit which tools the model uses; they aren't a sandbox. For untrusted input, run the
@@ -327,7 +335,10 @@ or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
 
 - **Failures are loud.** A run that hits `max_steps`, never gives a valid value, or loses its
   backend raises `thunc.AgentError` (a `ThuncError`), whose `.run` is the record up to that point.
-  With tracing on, each run is also one line with every model reply.
+  A step that fails for a reason asking again may fix (a timeout, a lost connection, a rate limit,
+  a server error, a CLI call that ended in an error) is retried twice, after 2 and 4 seconds, and
+  each retry is in the run's record. A text-protocol step on Claude Code or Codex may take 120
+  seconds before it's retried. With tracing on, each run is also one line with every model reply.
 
 **How the prompt was tested.** `python -m live_tests.eval_prompts --backend anthropic` runs three
 small tasks (fix a bug, review a diff, answer a question about a repo) with three versions of the
@@ -414,6 +425,7 @@ thunc/
   permissions.py the agent's permission rules
   runs.py        thunc.Run and AgentError: what a run did
   native.py      how a run talks to its backend: native tool calls or the text protocol
+  claude_code.py native tool calls on Claude Code, through an MCP server (mcp_relay.py)
   store.py       the agent's folder: memory, settings, run records, the lock
   prompts.py     the agent's system prompt
   __main__.py    the thunc command: thunc cache list / clear
@@ -422,7 +434,7 @@ thunc/
   schema.py      return types: describe, parse, validate
   config.py      settings and backend selection
   backends.py    anthropic, openai, claude-code, codex, jev
-  errors.py      ThuncError
+  errors.py      ThuncError, and TransientError for failures worth asking again
 tests/           offline: a fake backend, never a real model
 live_tests/      against a real model: hello, a yes/no decision, labels and ratings, messy text to a dict
 examples/

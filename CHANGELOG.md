@@ -3,6 +3,36 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
+## Unreleased
+
+**Agents on Claude Code make native tool calls.** On the `claude-code` backend the model wrote each
+action as JSON text, and current models drift back to their trained tool calls: they invented tool
+results and ran on to the timeout, or the CLI refused a tool call it couldn't parse. In a tool-use
+benchmark (`live_tests/bench_tooluse.py`), agents on Claude Sonnet 5.5 passed 12 of 24 runs this
+way, against 24 of 24 for Claude Code itself.
+
+### Added
+
+- **Native calls on `claude-code`**: the agent's tools are an MCP server that one `claude -p`
+  process per run calls; thunc carries out each call with its own tools, permissions and run
+  record. The CLI runs in the agent's `workdir`. `protocol="text"` keeps the old way, and durable
+  runs on Claude Code still use it.
+- **`run` takes `cwd`**, a folder inside `workdir` to run the command in.
+- **The `shell` permission** runs command lines through the system shell, so pipes, `&&`, `cd`
+  and redirects work. Off by default; it can't be combined with `!run:` rules.
+- **`search` takes `glob`** (`*.py` by file name, `src/**/*.ts` by path) to limit the files searched.
+
+### Changed
+
+- **A failed step is retried.** A timeout, lost connection, rate limit, server error or CLI call
+  that ended in an error (`thunc.errors.TransientError`) is retried twice in an agent run, with a
+  note in the run record, before the run fails. A text-protocol step on Claude Code or Codex may
+  take 120 seconds before it's retried, instead of the whole `timeout`.
+- **`list` and `search` leave out what git ignores** in a git repository; a folder named
+  explicitly is still listed and searched.
+- **Long command output keeps its start and its end** (the first error and the summary), not only
+  the end.
+
 ## 0.2.1 (beta)
 
 **Durable agents with Temporal.** An optional `thunc[temporal]` runtime records each model turn

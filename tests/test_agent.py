@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -834,12 +835,47 @@ def test_a_timeout_stops_the_command_and_what_it_started(fake, repo):
     assert not (repo / "late.txt").exists()  # the child it started was stopped too
 
 
-def test_long_output_keeps_the_end(fake, repo):
-    command = script(repo, "loud.py", "for n in range(5000): print(f'line {n:04d} ' + 'x' * 20)\nprint('THE ERROR')")
+def test_long_output_keeps_the_start_and_the_end(fake, repo):
+    code = "print('FIRST ERROR')\nfor n in range(5000): print(f'line {n:04d} ' + 'x' * 20)\nprint('SUMMARY')"
+    command = script(repo, "loud.py", code)
     fake.replies = [act("run", command=command), finish("ok")]
     runner(repo, f"run:{PY}")()
     result = fake.prompts[1].split("<result>\n")[-1]
-    assert "characters are left out)" in result and "THE ERROR" in result and "line 0000" not in result
+    assert "characters left out ...)" in result and "FIRST ERROR" in result and "SUMMARY" in result
+    assert "line 2500" not in result  # the middle is what's dropped
+
+
+def test_a_command_runs_in_the_folder_given_as_cwd(fake, repo):
+    (repo / "src" / "here.txt").write_text("found\n")
+    command = f"{PY} -c \"print(open('here.txt').read())\""
+    fake.replies = [act("run", command=command, cwd="src"), finish("ok")]
+    agent = thunc.Agent("x", workdir=repo, permissions=[f"run:{PY}"])
+    record = agent.run(make_task(agent))
+    assert "found" in fake.prompts[1].split("<result>\n")[-1]
+    assert record.commands[0].command.endswith("(in src)")
+
+
+@pytest.mark.parametrize("cwd", ["..", "/", "config.py", "missing"])
+def test_cwd_must_be_a_folder_inside_the_workdir(fake, repo, cwd):
+    fake.replies = [act("run", command=f"{PY} -c 1", cwd=cwd), finish("ok")]
+    runner(repo, f"run:{PY}")()
+    result = fake.prompts[1].split("<result>\n")[-1]
+    assert result.startswith("error: ") and "exit code" not in result
+
+
+def test_without_the_shell_permission_operators_and_cd_are_refused(fake, repo):
+    fake.replies = [act("run", command=f"{PY} -c 1 && touch made.txt"), act("run", command="cd src"), finish("ok")]
+    runner(repo, "run")()
+    assert "doesn't work" in fake.prompts[1] and not (repo / "made.txt").exists()
+    assert "There is no shell" in fake.systems[0]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="sh -c")
+def test_the_shell_permission_runs_command_lines_in_a_shell(fake, repo):
+    fake.replies = [act("run", command="cd src && ls | grep app > ../found.txt"), finish("ok")]
+    runner(repo, "shell")()
+    assert (repo / "found.txt").read_text().strip() == "app.py"
+    assert "It runs in a shell" in fake.systems[0] and "any command line, in a shell" in fake.systems[0]
 
 
 def test_a_missing_program(fake, repo):
@@ -1287,3 +1323,127 @@ def test_no_command_starts_once_the_run_is_out_of_time(repo):
     with pytest.raises(ToolError, match="the run's time limit is up"):
         workdir.run("echo hi")
     assert workdir.commands == []
+
+
+# --- list and search in a git repository ----------------------------------------------------------
+
+
+@pytest.fixture
+def git_repo(tmp_path):
+    if not shutil.which("git"):
+        pytest.skip("git isn't installed")
+    (tmp_path / ".gitignore").write_text("build/\n*.log\n")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "rates.py").write_text("RATE = 0.137\n")
+    (tmp_path / "build" / "lib").mkdir(parents=True)
+    (tmp_path / "build" / "lib" / "rates.py").write_text("RATE = 0.09\n")
+    (tmp_path / "debug.log").write_text("RATE = 0.5\n")
+    (tmp_path / "notes.md").write_text("RATE is set in src/rates.py\n")  # untracked, not ignored
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", ".gitignore", "src"], cwd=tmp_path, check=True)
+    return tmp_path
+
+
+def test_list_and_search_leave_out_what_git_ignores(fake, git_repo):
+    fake.replies = [act("list"), act("search", pattern="RATE"), finish("ok")]
+    make_task(thunc.Agent("x", workdir=git_repo))()
+    listed = fake.prompts[1].split("<result>\n")[-1]
+    found = fake.prompts[2].split("<result>\n")[-1]
+    assert "src/rates.py" in listed and "notes.md" in listed and "build/lib" not in listed
+    assert "left out because git ignores them: build/" in listed
+    assert "src/rates.py:1: RATE = 0.137" in found and "notes.md" in found
+    assert "0.09" not in found and "debug.log" not in found
+
+
+def test_an_ignored_folder_named_explicitly_is_searched(fake, git_repo):
+    fake.replies = [act("search", pattern="RATE", path="build"), act("list", path="build"), finish("ok")]
+    make_task(thunc.Agent("x", workdir=git_repo))()
+    assert "build/lib/rates.py:1: RATE = 0.09" in fake.prompts[1]
+    assert "build/lib/rates.py" in fake.prompts[2]
+
+
+def test_files_the_agent_may_not_read_stay_hidden_in_a_git_repository(fake, git_repo):
+    fake.replies = [act("list"), act("search", pattern="RATE"), finish("ok")]
+    make_task(thunc.Agent("x", workdir=git_repo, permissions=["!read:src/**"]))()
+    assert "src/rates.py" not in fake.prompts[1].split("<result>\n")[-1]
+    assert "0.137" not in fake.prompts[2]
+
+
+def test_search_glob_matches_file_names_or_paths(fake, repo):
+    (repo / "src" / "notes.md").write_text("TIMEOUT is in config.py\n")
+    fake.replies = [
+        act("search", pattern="TIMEOUT", glob="*.py"),
+        act("search", pattern="TIMEOUT", glob="src/*.md"),
+        act("search", pattern="(?i)timeout", glob="config.py"),
+        finish("ok"),
+    ]
+    make_task(thunc.Agent("x", workdir=repo))()
+    by_name, by_path, ignoring_case = (p.split("<result>\n")[-1].split("</result>")[0] for p in fake.prompts[1:])
+    assert "config.py:2" in by_name and "src/app.py:1" in by_name and "notes.md" not in by_name
+    assert by_path.strip() == "src/notes.md:1: TIMEOUT is in config.py"
+    assert ignoring_case.strip() == "config.py:2: TIMEOUT = 30"
+
+
+# --- a step that fails ---------------------------------------------------------------------------
+
+
+def flaky(monkeypatch, fake, failures):
+    """The fake backend, failing with these errors (in order) before its scripted replies."""
+    from thunc import backends
+
+    agent_module = sys.modules["thunc.agent"]
+    monkeypatch.setattr(agent_module, "RETRY_DELAY", 0.0)
+    calls = []
+
+    def backend(text, **kwargs):
+        calls.append(text)
+        if failures:
+            raise failures.pop(0)
+        return fake(text, **kwargs)
+
+    monkeypatch.setitem(backends.BACKENDS, "fake", backend)
+    return calls
+
+
+def test_a_step_that_fails_for_a_temporary_reason_is_retried(monkeypatch, fake, repo):
+    from thunc.errors import TransientError
+
+    calls = flaky(monkeypatch, fake, [TransientError("`claude` timed out"), TransientError("claude error")])
+    fake.replies = [act("list"), finish("done")]
+    agent = thunc.Agent("x", workdir=repo)
+    run = agent.run(make_task(agent))
+    assert run.value == "done" and run.steps == 2 and len(calls) == 4
+    with open(run.session, encoding="utf-8") as f:
+        retries = [json.loads(line) for line in f if '"event": "retry"' in line]
+    assert [r["attempt"] for r in retries] == [1, 2] and "timed out" in retries[0]["error"]
+
+
+def test_a_step_that_keeps_failing_ends_the_run(monkeypatch, fake, repo):
+    from thunc.errors import TransientError
+
+    calls = flaky(monkeypatch, fake, [TransientError(f"try {n}") for n in range(3)])
+    with pytest.raises(thunc.AgentError, match="try 2"):
+        make_task(thunc.Agent("x", workdir=repo))()
+    assert len(calls) == 3  # the first try and two retries
+
+
+def test_a_failure_asking_again_wont_fix_is_not_retried(monkeypatch, fake, repo):
+    calls = flaky(monkeypatch, fake, [thunc.ThuncError("Claude API error 400: bad request")])
+    with pytest.raises(thunc.AgentError, match="400"):
+        make_task(thunc.Agent("x", workdir=repo))()
+    assert len(calls) == 1
+
+
+def test_a_cli_step_has_a_shorter_time_limit(monkeypatch, repo):
+    from thunc import backends, native
+
+    seen = []
+
+    def cli(text, **kwargs):
+        seen.append(kwargs["timeout"])
+        return finish("ok")
+
+    monkeypatch.setitem(backends.BACKENDS, "codex", cli)
+    thunc.configure(backend="codex", timeout=600)
+    make_task(thunc.Agent("x", workdir=repo))()
+    assert seen == [native.CLI_STEP_TIMEOUT]

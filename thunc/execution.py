@@ -49,6 +49,10 @@ class AgentState:
             raise ThuncError(f"{name + ': ' if name else ''}the agent didn't finish within max_steps={limit}")
         self.turns += 1
 
+    def same_turn(self) -> None:
+        """The reply just received continues the previous model reply: don't count it as another."""
+        self.turns -= 1
+
     def receive(self, reply: Reply) -> bool:
         """Take a reply's calls. False when the reply has none to carry out: nudge the model instead."""
         self.calls = [] if reply.problem else list(reply.calls)

@@ -1,7 +1,7 @@
 """Tool-use benchmark: where does the harness, not the model, cost an agent the task?
 
     python -m live_tests.bench_tooluse --harness thunc,claude-code --runs 3 --model claude-sonnet-5-5
-    python -m live_tests.bench_tooluse --harness thunc-mcp --runs 3     # each prototype on its own
+    python -m live_tests.bench_tooluse --harness thunc-fixed --runs 3   # the prototype on its own
     python -m live_tests.bench_tooluse --report results.json
 
 Needs a logged-in `claude` CLI. Findings from the first runs: live_tests/bench_tooluse_report.md.
@@ -13,12 +13,13 @@ running tests that need another working directory, renaming across many files, a
 nested structured result.
 
 Harnesses, on the same model:
-- thunc:       a thunc.Agent on the claude-code backend (the text protocol), permissions
-               ["write", "run"] so nothing is held back by rules.
-- thunc-fixed: the same, with three text-protocol fixes patched in (lenient reading of the first
-               action, stopping the CLI once an action has arrived, arrays of actions). A prototype.
-- thunc-mcp:   thunc's own tools, permissions and prompt served to `claude -p` as an MCP server,
-               so the model makes native tool calls. A prototype.
+- thunc:       a thunc.Agent on the claude-code backend with its defaults (native tool calls
+               through an MCP server), permissions ["write", "run"] so nothing is held back by rules.
+- thunc-text:  the same with protocol="text" (one JSON action per reply as text).
+- thunc-shell: the default, with permissions ["write", "shell"]: commands run in a shell.
+- thunc-fixed: the text protocol with three fixes patched in (lenient reading of the first action,
+               stopping the CLI once an action has arrived, arrays of actions). A prototype; it
+               patches the text protocol for the whole process, so run it on its own.
 - claude-code: Claude Code itself (`claude -p` with Read, Edit, Write, Bash, Grep, Glob), as the
                reference harness.
 
@@ -32,6 +33,7 @@ from __future__ import annotations
 import argparse
 import collections
 import contextlib
+import functools
 import json
 import os
 import re
@@ -48,7 +50,8 @@ from typing import Any
 
 import thunc
 from thunc import backends
-from thunc.schema import describe, parse, validate
+from thunc.claude_code import ClaudeCodeConversation
+from thunc.schema import describe, parse
 
 PY = sys.executable
 
@@ -486,14 +489,16 @@ def _counting_run_cli(args: list[str], text: str, timeout: float) -> subprocess.
     return proc
 
 
-def run_thunc(task: Task, root: str, model: str, max_steps: int, n: int) -> dict[str, Any]:
+def run_thunc(task: Task, root: str, model: str, max_steps: int, n: int, variant: str = "thunc") -> dict[str, Any]:
     meter = collections.Counter()  # type: ignore[var-annotated]
     meter["call_seconds"], meter["prompt_chars"] = [], []  # type: ignore[assignment]
     _local.meter = meter
+    protocol, permissions = THUNC_VARIANTS[variant]
     agent = thunc.Agent(
         f"bench-{task.name}-{n}-{os.getpid()}-{threading.get_ident()}",
         workdir=root,
-        permissions=["write", "run"],
+        permissions=permissions,
+        protocol=protocol,
         backend="claude-code",
         model=model,
         max_steps=max_steps,
@@ -521,6 +526,22 @@ def run_thunc(task: Task, root: str, model: str, max_steps: int, n: int) -> dict
         "call_seconds": meter["call_seconds"],
         "prompt_chars": meter["prompt_chars"],
     }
+
+
+def _counting_close(self: Any) -> None:
+    """ClaudeCodeConversation.close, also adding up the cost and tokens its CLI reported."""
+    meter = getattr(_local, "meter", None)
+    if meter is not None:
+        usage = self.usage
+        prices = _PRICES.get(self.model or "", _PRICES["claude-sonnet-5-5"])
+        meter["calls"] += len(self.replies)
+        meter["cost"] += sum(usage[key] * price for key, price in zip(TOKEN_KEYS, prices, strict=True)) / 1e6
+        for key in TOKEN_KEYS:
+            meter[key] += usage[key]
+    _real_close(self)
+
+
+_real_close = ClaudeCodeConversation.close
 
 
 def _retyped(agent: thunc.Agent, task: Task) -> Callable[..., Any]:
@@ -793,104 +814,17 @@ def _claude_stream(args: list[str], prompt: str, cwd: str) -> dict[str, Any]:
     }
 
 
-# --- harness: thunc-mcp (a prototype: thunc's own tools as native calls through Claude Code) -----
-#
-# The same tools, permissions and checks as a thunc agent (list, read, search, write, edit, run,
-# finish, with thunc's prompt), served to `claude -p` as an MCP server, so the model calls them as
-# native tool calls: several per turn, no JSON-in-text, one process per run, and the CLI's own
-# caching of a conversation that grows by appending. Claude Code's built-in tools are turned off.
-
-
-def run_thunc_mcp(task: Task, root: str, model: str, max_steps: int, n: int) -> dict[str, Any]:
-    agent_module = sys.modules["thunc.agent"]
-    agent = thunc.Agent(f"mcp-{task.name}-{n}", workdir=root, permissions=["write", "run"], backend="claude-code")
-    system = agent._fixed_prompt((), True)
-    request = agent_module._request(task.instructions, {}, task.returns)
-    state = tempfile.mkdtemp(prefix="mcp-", dir=os.path.dirname(root))
-    config = {"mcpServers": {"thunc": {"command": PY, "args": ["-m", "live_tests.bench_tooluse", "--mcp-server",
-              json.dumps({"root": root, "task": task.name, "out": os.path.join(state, "value.json")})],
-              "env": {"PYTHONPATH": os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}}}}  # fmt: skip
-    allowed = [f"mcp__thunc__{name}" for name in agent.tools()]
-    args = [
-        "claude", "-p", "--output-format", "stream-json", "--verbose", "--model", model,
-        "--system-prompt", system, "--tools", "", "--mcp-config", json.dumps(config), "--strict-mcp-config",
-        "--allowedTools", *allowed, "--no-session-persistence", "--max-turns", str(max_steps),
-    ]  # fmt: skip
-    out = _claude_stream(args, request, root)
-    out.pop("result")
-    value_file = os.path.join(state, "value.json")
-    if os.path.exists(value_file):
-        with open(value_file, encoding="utf-8") as f:
-            out["value"] = validate(json.load(f), task.returns)
-        out["error"] = None  # finished; what the model said after finish doesn't matter
-    elif not out["error"]:
-        out["error"] = "the run ended without a valid finish"
-    for call in out["tool_calls"]:
-        call["tool"] = call["tool"].removeprefix("mcp__thunc__")
-    return out
-
-
-def mcp_server(spec_json: str) -> None:
-    """A minimal MCP server (JSON-RPC over stdio) exposing a thunc agent's tools for one task."""
-    from thunc import tools as thunc_tools
-    from thunc.execution import _finished
-
-    agent_module = sys.modules["thunc.agent"]
-    spec = json.loads(spec_json)
-    task = TASKS[spec["task"]]
-    agent = thunc.Agent("mcp-server", workdir=spec["root"], permissions=["write", "run"], backend="claude-code")
-    offered = agent.tools()
-    specs = agent_module._tool_specs(offered, task.returns, agent.custom)
-    workdir = thunc_tools.Workdir(agent.workdir, agent.permissions, command_timeout=120)
-
-    def call(name: str, args: dict[str, Any]) -> tuple[str, bool]:
-        if name == "finish":
-            try:
-                value = _finished(args, task.returns, None)
-            except ValueError as problem:
-                return f"error: that value is invalid ({problem}). Call finish again.", True
-            with open(spec["out"], "w", encoding="utf-8") as f:
-                json.dump(value, f, default=asdict)
-            return "finished. The program has your result; stop now.", False
-        if name not in offered:
-            return f"error: unknown tool {name!r}", True
-        try:
-            return thunc_tools.run(workdir, name, args), False
-        except (thunc_tools.ToolError, ValueError) as problem:
-            return f"error: {problem}", True
-        except OSError as problem:
-            return f"error: {problem.strerror or problem}", True
-
-    for line in sys.stdin:
-        try:
-            message = json.loads(line)
-        except ValueError:
-            continue
-        method, ident = message.get("method"), message.get("id")
-        if ident is None:
-            continue  # a notification
-        if method == "initialize":
-            result: Any = {
-                "protocolVersion": message.get("params", {}).get("protocolVersion", "2025-06-18"),
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "thunc", "version": "0"},
-            }
-        elif method == "tools/list":
-            result = {"tools": [{"name": t.name, "description": t.description, "inputSchema": t.schema} for t in specs]}
-        elif method == "tools/call":
-            params = message.get("params") or {}
-            text, failed = call(params.get("name", ""), params.get("arguments") or {})
-            result = {"content": [{"type": "text", "text": text}], "isError": failed}
-        elif method == "ping":
-            result = {}
-        else:
-            reply = {"jsonrpc": "2.0", "id": ident, "error": {"code": -32601, "message": f"no method {method}"}}
-            print(json.dumps(reply), flush=True)
-            continue
-        print(json.dumps({"jsonrpc": "2.0", "id": ident, "result": result}), flush=True)
-
-
-HARNESSES = {"thunc": run_thunc, "thunc-fixed": run_thunc, "thunc-mcp": run_thunc_mcp, "claude-code": run_claude_code}
+# thunc variants: (protocol, permissions)
+THUNC_VARIANTS = {
+    "thunc": (None, ["write", "run"]),
+    "thunc-text": ("text", ["write", "run"]),
+    "thunc-shell": (None, ["write", "shell"]),
+    "thunc-fixed": ("text", ["write", "run"]),
+}
+HARNESSES = {
+    **{name: functools.partial(run_thunc, variant=name) for name in THUNC_VARIANTS},
+    "claude-code": run_claude_code,
+}
 
 
 # --- running ------------------------------------------------------------------------------------
@@ -972,20 +906,17 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--out", default=None)
     parser.add_argument("--report", default=None, help="print the tables from a results file and exit")
-    parser.add_argument("--mcp-server", default=None, help=argparse.SUPPRESS)  # used by the thunc-mcp harness
     args = parser.parse_args()
-    if args.mcp_server:
-        mcp_server(args.mcp_server)
-        return
     if args.report:
         with open(args.report, encoding="utf-8") as f:
             report(json.load(f))
         return
     backends._run_cli = _counting_run_cli
+    ClaudeCodeConversation.close = _counting_close  # type: ignore[method-assign]
     harnesses = args.harness.split(",")
     if "thunc-fixed" in harnesses:
-        if "thunc" in harnesses:
-            parser.error("thunc and thunc-fixed patch the same process; run them separately")
+        if len(harnesses) > 1:
+            parser.error("thunc-fixed patches the text protocol for the whole process; run it on its own")
         patch_text_protocol()
     base = tempfile.mkdtemp(prefix="thunc-bench-")
     thunc.configure(agents_dir=os.path.join(base, "agents"))

@@ -93,7 +93,7 @@ thunc.call("Summarise this.", {"text": doc}, backend="openai", model="gpt-5.5") 
 <p>The production backends. Set the key in the environment, or pass it with <code>configure(api_key=...)</code>. <code>OPENAI_BASE_URL</code> points the <code>openai</code> backend at any server that speaks the OpenAI Responses API, which is how <a href="#local">local models</a> work.</p>
 
 <h3 id="clis">Claude Code and Codex</h3>
-<p><code>claude-code</code> and <code>codex</code> call your local CLI login, and are meant for cheap testing: no API key, no SDK. Both run with their own tools turned off, so the model can only answer. Your <code>system=</code> replaces the CLI's built-in system prompt.</p>
+<p><code>claude-code</code> and <code>codex</code> call your local CLI login, and are meant for cheap testing: no API key, no SDK. Both run with their own tools turned off, so the model can only answer; an agent on <code>claude-code</code> gets only its own thunc tools, as native calls through an MCP server. Your <code>system=</code> replaces the CLI's built-in system prompt.</p>
 <p><code>codex</code> also ignores <code>~/.codex/config.toml</code> (your MCP servers, plugins, <code>notify</code> command and model settings); your login still works.</p>
 
 <h3 id="jev">Jev</h3>
