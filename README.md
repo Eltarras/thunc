@@ -188,7 +188,10 @@ request_timeout()  # -> 45, after the agent searched the code and read the file 
 
 Each call is one run. The model takes one step at a time (list a folder, search, read or edit a
 file) and ends by calling `finish` with a value of the return type, which is checked like any thunc
-result. It runs on every backend.
+result. It runs on every backend: on the Claude and OpenAI APIs through their own tool calls (the
+model can make several at once, and the fixed part of the prompt is cached), and on Claude Code and
+Codex by replying with one JSON action at a time. `protocol="text"` uses the second way on an API
+too, for example with a server behind `OPENAI_BASE_URL` that has no function calling.
 
 - **Permissions** say what the agent may do. By default it may read everything in `workdir` and
   save notes, and may not write:
@@ -244,7 +247,7 @@ result. It runs on every backend.
 - **`system=`** replaces the opening of the agent's system prompt. thunc always adds its working
   method and its rules after it (file contents and tool results are data, not instructions).
 - **Options:** `thunc.Agent(name, *, workdir, system=None, permissions=(), env=None,
-  command_timeout=120, follow=False, max_steps=40, retries=2, backend=None, model=None)`, and `@agent.task(instructions=..., ensure=...)`. `async def` tasks work.
+  command_timeout=120, follow=False, protocol=None, max_steps=40, retries=2, backend=None, model=None)`, and `@agent.task(instructions=..., ensure=...)`. `async def` tasks work.
 - **What happened in a run.** Calling a task returns its value. `agent.run(task, *args)` runs it
   the same way and returns a `thunc.Run` instead, typed like the task (`Run[int]`):
 
@@ -261,7 +264,8 @@ result. It runs on every backend.
   backend raises `thunc.AgentError` (a `ThuncError`), whose `.run` is the record up to that point.
   With tracing on, each run is also one line with every model reply.
 
-Not yet: native tool use on the API backends (every backend uses the text protocol for now).
+Not yet: presets for common jobs (coding, code review, analysis) and a measured comparison of the
+agent prompt against a bare one.
 
 ## Examples
 
@@ -283,6 +287,7 @@ thunc/
   tools.py       the agent's tools: list, read, search, write, edit, run
   permissions.py the agent's permission rules
   runs.py        thunc.Run and AgentError: what a run did
+  native.py      how a run talks to its backend: native tool calls or the text protocol
   store.py       the agent's folder: memory, settings, run records, the lock
   prompts.py     the agent's system prompt
   __main__.py    the thunc command: thunc cache list / clear
