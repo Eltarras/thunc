@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextvars import ContextVar
 from typing import Any
 
 from .backends import BACKENDS, TYPED_BACKENDS
@@ -19,6 +20,7 @@ DEFAULTS: dict[str, Any] = {
     "agents_dir": None,
 }
 _settings: dict[str, Any] = dict(DEFAULTS)
+runtime_settings: ContextVar[dict[str, Any] | None] = ContextVar("thunc_runtime_settings", default=None)
 
 
 def configure(
@@ -63,7 +65,7 @@ def configure(
 
 
 def setting(name: str) -> Any:
-    return _settings[name]
+    return (runtime_settings.get() or {}).get(name, _settings.get(name))
 
 
 def trace_path() -> str | None:

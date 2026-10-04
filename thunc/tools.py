@@ -94,6 +94,7 @@ class Workdir:
         self.command_timeout = command_timeout
         self.deadline = deadline  # time.monotonic() when the run's own time limit is up, if it has one
         self.seen: dict[str, str] = {}  # real path -> sha256 of the content the agent last read or wrote
+        self.cancelled: Callable[[], bool] | None = None
         self.changed: list[str] = []  # files created or changed in this run, as the model sees them
         self.commands: list[Command] = []  # commands run in this run
 
@@ -255,7 +256,20 @@ class Workdir:
             raise ToolError(f"{argv[0]!r} couldn't be started: {exc.strerror or exc}") from None
         exit_code: int | None
         try:
-            output, _ = process.communicate(timeout=limit)
+            if self.cancelled is None:
+                output, _ = process.communicate(timeout=limit)
+            else:
+                while True:
+                    if self.cancelled():
+                        raise ToolError("command cancelled")
+                    remaining = limit - (time.monotonic() - started)
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(argv, limit)
+                    try:
+                        output, _ = process.communicate(timeout=min(0.25, remaining))
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
             exit_code = process.returncode
             status = f"exit code {exit_code}"
         except subprocess.TimeoutExpired:
@@ -266,6 +280,11 @@ class Workdir:
             except subprocess.TimeoutExpired:  # something it started still holds the output open
                 output = b""
             status = f"stopped after {limit:g}s, the time limit"
+        except BaseException:
+            _stop(process)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.communicate(timeout=5)
+            raise
         seconds = time.monotonic() - started
         self.commands.append(Command(join_command(argv), exit_code, round(seconds, 3)))
         self._note_changes(before, self._snapshot())

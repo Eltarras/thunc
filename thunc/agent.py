@@ -38,13 +38,14 @@ from typing import Any, ParamSpec, TypeVar, overload
 from . import native, tools
 from .backends import TYPED_BACKENDS
 from .config import _check_backend, resolve_backend
-from .core import _ensured, _plain, _render, _trace
+from .core import _plain, _render, _trace
 from .decorator import _read_signature, _wrap
 from .errors import ThuncError
+from .execution import KNOWN, AgentState
 from .permissions import Permissions
 from .prompts import AGENT_CONTRACT, AGENT_PERSONA, method
-from .runs import AgentError, Denial, Run
-from .schema import describe, json_schema, parse, resolve_strings, shorten, validate
+from .runs import AgentError, Run
+from .schema import describe, json_schema, resolve_strings, shorten, validate
 from .store import Session, Store, slug
 
 P = ParamSpec("P")
@@ -182,6 +183,8 @@ class Agent:
             wrapper.__dict__["__thunc_instructions__"] = spec.instructions  # for debugging
             wrapper.__dict__["__thunc_agent__"] = self
             wrapper.__dict__["__thunc_record__"] = record  # for agent.run(task, ...)
+            wrapper.__dict__["__thunc_spec__"] = spec  # for durable registration
+            wrapper.__dict__["__thunc_ensure__"] = ensure
             return wrapper
 
         return decorate(func) if func is not None else decorate
@@ -437,13 +440,11 @@ class Agent:
             self.workdir, self.permissions, env=self.env, command_timeout=self.command_timeout, deadline=deadline
         )
         offered = self.tools()
-        known = {*tools.TOOLS, *self.custom, "remember", "finish"}
+        known = {*KNOWN, *self.custom}
         answers: list[str] = []
         result: dict[str, Any] = {"value": None, "error": None, "cached": False}
-        bad_finishes = 0
+        state = AgentState()
         step = 0
-        denied: list[Denial] = []
-        notes: list[str] = []
 
         def record(value: Any, error: str | None = None) -> Run[Any]:
             return Run(
@@ -454,68 +455,44 @@ class Agent:
                 session=session.path,
                 files_changed=list(workdir.changed),
                 commands=list(workdir.commands),
-                denied=list(denied),
-                notes=list(notes),
+                denied=list(state.denied),
+                notes=list(state.notes),
                 followed=followed,
                 error=error,
             )
 
         try:
-            for _ in range(self.max_steps):
+            while True:
+                state.begin_turn(self.max_steps, name)
                 if deadline is not None and time.monotonic() >= deadline:
                     raise ThuncError(f"{name}: the agent didn't finish within timeout={self.timeout:g}s")
                 reply = conversation.next()
                 answers.append(reply.raw)
-                if reply.problem:  # nothing to carry out: say what's wrong and ask again
+                if not state.receive(reply):  # nothing to carry out: say what's wrong and ask again
                     step += 1
                     session.write("step", n=step, reply=reply.raw, result=f"error: {reply.problem}")
                     conversation.nudge(reply)
                     continue
-                results: list[tuple[native.Call, str, bool]] = []
-                for call in reply.calls:
+                while (call := state.pending()) is not None:
                     step += 1
-                    if call.problem or call.tool not in known:
-                        output = f"error: {call.problem or f'unknown tool {call.tool!r}'}"
-                        results.append((call, output, True))
-                        session.write("step", n=step, tool=call.tool, args=_shortened(call.args), result=output)
-                        continue
-                    if call.tool == "finish":
-                        try:
-                            value = _finished(call.args, returns, ensure)
-                        except ValueError as problem:
-                            bad_finishes += 1
-                            output = (
-                                f"error: that value is invalid ({shorten(str(problem), 1000)}). "
-                                f"Call finish again with {describe(returns, True)}."
-                            )
-                            results.append((call, output, True))
-                            session.write("step", n=step, tool="finish", args=call.args, result=output)
-                            if bad_finishes > self.retries:
-                                raise ThuncError(
-                                    f"{name}: no valid {describe(returns)} after {bad_finishes} finish attempt(s); "
-                                    f"last error: {problem}"
-                                ) from problem
-                            continue
-                        result["value"] = value
-                        session.write("finish", n=step, value=value, files_changed=workdir.changed)
-                        return record(value)
-                    if call.tool in self.custom and call.tool in offered:
+                    outcome = state.check(call, returns, ensure, self.retries, name, known)
+                    if outcome.finished:
+                        result["value"] = outcome.value
+                        session.write("finish", n=step, value=outcome.value, files_changed=workdir.changed)
+                        return record(outcome.value)
+                    if outcome.output is not None:
+                        output, was_denied = outcome.output, False
+                    elif call.tool in self.custom and call.tool in offered:
                         output, was_denied = self.custom[call.tool].call(call.args), False
                     else:
                         output, was_denied = _use(call.tool, call.args, workdir, store, offered)
-                    if was_denied:
-                        target = call.args.get("path") or call.args.get("command") or ""
-                        reason = output.removeprefix("error: ").removeprefix("not permitted: ")
-                        denied.append(Denial(call.tool, target if isinstance(target, str) else repr(target), reason))
-                    elif call.tool == "remember":
-                        notes.append(" ".join(str(call.args.get("note", "")).split()))
-                    results.append((call, output, output.startswith("error: ")))
+                    state.done(call, output, was_denied)
                     flag = {"denied": True} if was_denied else {}
-                    session.write(
-                        "step", n=step, tool=call.tool, args=_shortened(call.args), result=shorten(output, 4000), **flag
-                    )
-                conversation.results(results)
-            raise ThuncError(f"{name}: the agent didn't finish within max_steps={self.max_steps}")
+                    args = call.args if call.tool == "finish" else _shortened(call.args)
+                    session.write("step", n=step, tool=call.tool, args=args, result=shorten(output, 4000), **flag)
+                    if outcome.error:
+                        raise outcome.error
+                conversation.results(state.results)
         except ThuncError as exc:  # the run failed: say what it did up to here
             result["error"] = exc
             session.write("error", error=str(exc), files_changed=workdir.changed)
@@ -710,22 +687,6 @@ def _request(instructions: str, inputs: dict[str, Any], returns: Any) -> str:
         parts.append(f"<inputs>\n{blocks}\n</inputs>")
     parts.append(f"When you are done, call finish with a value that is {describe(returns, True)}.")
     return "\n\n".join(parts)
-
-
-def _finished(args: dict[str, Any], returns: Any, ensure: Callable[[Any], bool] | None) -> Any:
-    """The value given to finish, checked against the return type and ensure=."""
-    if "value" not in args:
-        raise ValueError('finish takes {"value": ...}')
-    value = args["value"]
-    try:
-        value = validate(value, returns)
-    except ValueError:
-        if not isinstance(value, str) or returns is str:
-            raise
-        value = parse(value, returns)  # the value sent as JSON text, like "4" for an int
-    if returns is str and not value.strip():
-        raise ValueError("the value was empty")
-    return _ensured(value, ensure)
 
 
 def agent(

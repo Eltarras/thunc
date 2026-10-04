@@ -131,6 +131,8 @@ def _build(func: Callable[..., Any], instructions: str | None, options: dict[str
     wrapper = _wrap(func, spec.is_async, run)
     wrapper.__dict__["__thunc_instructions__"] = spec.instructions  # for debugging
     wrapper.__dict__["__thunc_function__"] = name  # for thunc.clear_cache(func); also the cache key's name
+    wrapper.__dict__["__thunc_spec__"] = spec
+    wrapper.__dict__["__thunc_options__"] = options
     return wrapper
 
 
