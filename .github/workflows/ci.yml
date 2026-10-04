@@ -21,3 +21,16 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy --strict thunc
+
+  # The lock, process stopping and path handling have code just for Windows.
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[anthropic,openai,dev]"
+      - run: pytest
+        env:
+          PYTHONIOENCODING: utf-8  # the console's own code page can't print every test id and message

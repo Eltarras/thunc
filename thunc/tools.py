@@ -1,4 +1,4 @@
-"""The tools an agent uses on its working directory: list, read, search, write and edit.
+"""The tools an agent uses on its working directory: list, read, search, write, edit and run.
 
 Every path is resolved (symlinks included) and must land inside the working directory, so `..`,
 absolute paths and links that point outside are refused. Then the agent's permissions are checked
@@ -6,17 +6,27 @@ on the real path, so a link can't lead to a file the rules deny.
 
 A file is only replaced or edited after the agent read it in this run, and only if it hasn't
 changed on disk since: the agent never overwrites what it hasn't seen.
+
+Commands run in the working directory without a shell, with a minimal environment (your API keys
+aren't in it), a timeout that also stops the processes they start, and their output's end kept
+when it's long, since that's where errors are.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import re
-from collections.abc import Callable, Iterator
+import signal
+import subprocess
+import sys
+import time
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
-from .permissions import Denied, Permissions
+from .permissions import Denied, Permissions, join_command, split_command
+from .runs import Command
 
 # Folders that are rarely what an agent is looking for, and can be huge.
 SKIPPED_DIRS = frozenset(
@@ -26,6 +36,36 @@ MAX_RESULT = 20_000  # characters of one tool result sent back to the model
 MAX_LIST = 300  # entries
 MAX_MATCHES = 100
 MAX_SEARCH_FILE = 1_000_000  # bytes; bigger files are skipped by search
+MAX_TRACKED = 20_000  # files; past this, changes made by commands aren't tracked
+MAX_OUTPUT = 18_000  # characters of a command's output sent back; the end is kept
+# Environment variables a command gets by default: enough to find programs and run them, nothing else.
+PASSED_ENV = (
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",  # Windows needs these to start programs
+)
+# Words a shell would treat specially. Without a shell they'd reach the program as plain arguments.
+SHELL_OPERATORS = frozenset({"&&", "||", "|", ";", "&", ">", ">>", "<", "<<", "2>", "2>&1", "&>", "|&"})
+
+
+def command_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The environment commands run with: PASSED_ENV from this process, plus `extra`."""
+    env = {name: os.environ[name] for name in PASSED_ENV if name in os.environ}
+    env.update(extra or {})
+    return env
 
 
 class ToolError(Exception):
@@ -39,11 +79,23 @@ class NotPermitted(ToolError):
 class Workdir:
     """A working directory and the tools that act on it, within the agent's permissions."""
 
-    def __init__(self, root: str, permissions: Permissions | None = None) -> None:
+    def __init__(
+        self,
+        root: str,
+        permissions: Permissions | None = None,
+        *,
+        env: Mapping[str, str] | None = None,
+        command_timeout: float = 120.0,
+        deadline: float | None = None,
+    ) -> None:
         self.root = os.path.realpath(root)
         self.permissions = permissions or Permissions()
+        self.env = command_env(env)
+        self.command_timeout = command_timeout
+        self.deadline = deadline  # time.monotonic() when the run's own time limit is up, if it has one
         self.seen: dict[str, str] = {}  # real path -> sha256 of the content the agent last read or wrote
         self.changed: list[str] = []  # files created or changed in this run, as the model sees them
+        self.commands: list[Command] = []  # commands run in this run
 
     def path(self, relative: str) -> str:
         """The real path for `relative`, which must stay inside the working directory."""
@@ -162,6 +214,94 @@ class Workdir:
         self._save(full, text.replace(old, new, 1))
         return f"edited {self.show(full)}"
 
+    def run(self, command: str) -> str:
+        try:
+            argv = split_command(command)
+        except ValueError as exc:
+            raise ToolError(f"can't read the command: {exc}") from None
+        if not argv:
+            raise ToolError("the command is empty")
+        operators = [word for word in argv if word in SHELL_OPERATORS]
+        if operators:
+            raise ToolError(
+                f"commands run without a shell, so {operators[0]!r} doesn't work. Run one command at a time, "
+                "and read files with read instead of redirecting output"
+            )
+        try:
+            self.permissions.check_run(argv)
+        except Denied as exc:
+            raise NotPermitted(f"not permitted: {exc}") from None
+        limit = self.command_timeout
+        if self.deadline is not None:
+            left = self.deadline - time.monotonic()
+            if left <= 0:
+                raise ToolError("the run's time limit is up; call finish with what you have")
+            limit = min(limit, left)
+        before = self._snapshot()
+        started = time.monotonic()
+        try:
+            process = subprocess.Popen(
+                argv,
+                cwd=self.root,
+                env=self.env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                start_new_session=sys.platform != "win32",  # its own process group, so a timeout stops all of it
+            )
+        except FileNotFoundError:
+            raise ToolError(f"{argv[0]!r} was not found") from None
+        except OSError as exc:
+            raise ToolError(f"{argv[0]!r} couldn't be started: {exc.strerror or exc}") from None
+        exit_code: int | None
+        try:
+            output, _ = process.communicate(timeout=limit)
+            exit_code = process.returncode
+            status = f"exit code {exit_code}"
+        except subprocess.TimeoutExpired:
+            exit_code = None
+            _stop(process)
+            try:
+                output, _ = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:  # something it started still holds the output open
+                output = b""
+            status = f"stopped after {limit:g}s, the time limit"
+        seconds = time.monotonic() - started
+        self.commands.append(Command(join_command(argv), exit_code, round(seconds, 3)))
+        self._note_changes(before, self._snapshot())
+        text = output.decode("utf-8", errors="replace") if output else ""
+        if len(text) > MAX_OUTPUT:
+            text = f"(the first {len(text) - MAX_OUTPUT} characters are left out)\n" + text[-MAX_OUTPUT:]
+        return f"{status} ({seconds:.1f}s)\n{text}".rstrip()
+
+    def _snapshot(self) -> dict[str, tuple[int, int]] | None:
+        """(modification time, size) of every file in the workdir, to see what a command changed.
+        None for a workdir too big to scan for every command."""
+        found: dict[str, tuple[int, int]] = {}
+        for full, is_dir in self._walk(self.root):
+            if is_dir:
+                continue
+            try:
+                info = os.stat(full)
+            except OSError:
+                continue
+            found[full] = (info.st_mtime_ns, info.st_size)
+            if len(found) > MAX_TRACKED:
+                return None
+        return found
+
+    def _note_changes(
+        self, before: dict[str, tuple[int, int]] | None, after: dict[str, tuple[int, int]] | None
+    ) -> None:
+        """Add the files a command created, changed or deleted to the run's changed files."""
+        if before is None or after is None:
+            return
+        for full in sorted(set(before) | set(after)):
+            if before.get(full) != after.get(full):
+                shown = self.show(full)
+                if shown not in self.changed:
+                    self.changed.append(shown)
+
     def _unchanged_since_read(self, path: str, full: str) -> bytes:
         """The file's current content, if the agent read it in this run and it hasn't changed since."""
         with open(full, "rb") as f:
@@ -238,8 +378,15 @@ TOOLS: dict[str, tuple[str, dict[str, tuple[type, bool]], str]] = {
         '{"path": "src/app.py", "old": "exact text", "new": "replacement"}  Replaces text that appears exactly '
         "once in a file you read in this run.",
     ),
+    "run": (
+        "run",
+        {"command": (str, True)},
+        '{"command": "pytest -q tests/test_app.py"}  Runs a command in the working directory and returns its exit '
+        "code and output. There is no shell: no pipes, &&, redirects or $VARIABLES.",
+    ),
 }
-WRITE_TOOLS = ("write", "edit")
+# The permission each tool needs before the agent is offered it.
+NEEDS = {"write": "write", "edit": "write", "run": "run"}
 
 
 def run(workdir: Workdir, name: str, args: dict[str, Any]) -> str:
@@ -263,3 +410,12 @@ def run(workdir: Workdir, name: str, args: dict[str, Any]) -> str:
 
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _stop(process: subprocess.Popen[bytes]) -> None:
+    """Stop a command and everything it started."""
+    with contextlib.suppress(OSError):
+        if sys.platform == "win32":
+            process.kill()
+        else:
+            os.killpg(process.pid, signal.SIGKILL)

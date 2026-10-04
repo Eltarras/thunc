@@ -76,7 +76,8 @@ def test_memory_and_whole_kind_denies():
 @pytest.mark.parametrize(
     "rule, problem",
     [
-        ("run:pytest", "running commands isn't supported yet"),
+        ("run:", "no command after the colon"),
+        ("run:git commit -m 'unfinished", "No closing quotation"),
         ("delete:x", "Unknown permission"),
         ("memory:notes", "memory takes no path"),
         ("write:", "no path after the colon"),
@@ -110,5 +111,37 @@ def test_describe():
         "Your permissions:\n"
         "- Read: everything (and anything you may write), except .env*.\n"
         "- Write: CHANGELOG.md, docs/**, except .env*.\n"
+        "- Run commands: none.\n"
         "- Save notes with remember: no."
     )
+
+
+@pytest.mark.parametrize(
+    "rule, command, ok",
+    [
+        ("run:git log", ["git", "log"], True),
+        ("run:git log", ["git", "log", "--oneline", "-5"], True),
+        ("run:git log", ["git", "push"], False),
+        ("run:git log", ["git", "logx"], False),  # whole words, not a text prefix
+        ("run:git log", ["git"], False),
+        ("run:pytest", ["pytest", "-q", "tests/"], True),
+        ("run:python -m pytest", ["python", "-m", "pytest", "-x"], True),
+        ("run:python -m pytest", ["python", "evil.py"], False),
+        ("run:'my tool' --check", ["my tool", "--check"], True),  # quoting works like a shell's
+        ("run", ["anything", "at", "all"], True),
+    ],
+)
+def test_run_rules_match_leading_words(rule, command, ok):
+    assert allowed(Permissions([rule]).check_run, command) is ok
+
+
+def test_run_denies_win_and_nothing_runs_by_default():
+    assert not Permissions().may("run")
+    assert not allowed(Permissions().check_run, ["ls"])
+    p = Permissions(["run:git", "!run:git push"])
+    assert allowed(p.check_run, ["git", "status"]) and not allowed(p.check_run, ["git", "push", "origin"])
+    with pytest.raises(Denied, match=r"running 'git push origin' is denied by '!run:git push'"):
+        p.check_run(["git", "push", "origin"])
+    with pytest.raises(Denied, match=r"no run rule matches it; this agent may run: run:git"):
+        p.check_run(["rm", "-rf", "."])
+    assert "- Run commands: git ..., except git push ...." in p.describe()

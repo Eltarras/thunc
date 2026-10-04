@@ -217,16 +217,20 @@ def _thread_lock(folder: str) -> threading.Lock:
 if sys.platform == "win32":
     import msvcrt
 
+    # A byte far past the PID at the start of the file: a locked byte can't be read by other processes
+    # on Windows, and the PID must stay readable for the warning another run shows while it waits.
+    _LOCKED_BYTE = 1 << 20
+
     def _try_lock(fd: int) -> bool:
-        os.lseek(fd, 0, os.SEEK_SET)
+        os.lseek(fd, _LOCKED_BYTE, os.SEEK_SET)
         try:
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # the first byte; it needn't exist
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # it needn't exist
         except OSError:
             return False
         return True
 
     def _unlock(fd: int) -> None:
-        os.lseek(fd, 0, os.SEEK_SET)
+        os.lseek(fd, _LOCKED_BYTE, os.SEEK_SET)
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
 else:

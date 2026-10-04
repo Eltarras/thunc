@@ -7,6 +7,7 @@ Supported: str, bool, int, float, None, Any, Literal[...], list[T], dict[str, T]
 from __future__ import annotations
 
 import dataclasses
+import enum
 import functools
 import json
 import math
@@ -358,3 +359,32 @@ def resolve_strings(tp: Any, namespace: dict[str, Any]) -> Any:
     if origin in (list, dict):
         return types.GenericAlias(origin, resolved)
     return tp
+
+
+def json_schema(tp: Any, _seen: frozenset[type] = frozenset()) -> dict[str, Any]:
+    """A JSON Schema for `tp`, for tools on the native APIs. Where JSON Schema can't say it exactly
+    it's looser, never stricter: the value is checked with validate() either way."""
+    simple = {str: "string", bool: "boolean", int: "integer", float: "number", type(None): "null"}
+    if tp in simple:
+        return {"type": simple[tp]}
+    if tp is Any:
+        return {}
+    if _is_dataclass(tp):
+        if tp in _seen:  # a dataclass that contains itself
+            return {"type": "object"}
+        fields = _init_fields(tp)
+        return {
+            "type": "object",
+            "properties": {name: json_schema(hint, _seen | {tp}) for name, hint, _ in fields},
+            "required": [name for name, _, required in fields if required],
+        }
+    origin, args = typing.get_origin(tp), typing.get_args(tp)
+    if origin is Literal:
+        return {"enum": [a.value if isinstance(a, enum.Enum) else a for a in args]}
+    if origin in (Union, types.UnionType):
+        return {"anyOf": [json_schema(a, _seen) for a in args]}
+    if tp is list or origin is list:
+        return {"type": "array", **({"items": json_schema(args[0], _seen)} if args else {})}
+    if tp is dict or origin is dict:
+        return {"type": "object", **({"additionalProperties": json_schema(args[1], _seen)} if args else {})}
+    return {}
