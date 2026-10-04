@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .backends import BACKENDS
+from .backends import BACKENDS, TYPED_BACKENDS
 from .errors import ThuncError
 
 DEFAULTS: dict[str, Any] = {
@@ -35,8 +35,10 @@ def configure(
     """Set defaults for every call. Arguments left as None keep their current value.
 
     backend: "anthropic" (Claude API; needs api_key or ANTHROPIC_API_KEY), "openai" (OpenAI API;
-             needs api_key or OPENAI_API_KEY), or "claude-code" / "codex" (your local CLI login;
-             for cheap testing). An api_key with no backend means "anthropic".
+             needs api_key or OPENAI_API_KEY), "claude-code" / "codex" (your local CLI login;
+             for cheap testing), or "jev" (TypeSafe's Jev judgment model through the `jev` CLI; only
+             bool and Literal[...] return types; the key comes from JEV_API_KEY or `jev login`,
+             never api_key). An api_key with no backend means "anthropic".
     trace:   path of a JSONL file that records every call (or set THUNC_TRACE).
     cache_dir: where calls made with cache=True store their answers (or set THUNC_CACHE_DIR;
              default ".thunc_cache" in the working directory).
@@ -90,5 +92,5 @@ def resolve_backend(override: str | None = None) -> str:
 
 
 def _check_backend(name: str) -> None:
-    if name not in BACKENDS:
-        raise ThuncError(f"Unknown backend {name!r}; choose from {sorted(BACKENDS)}")
+    if name not in BACKENDS and name not in TYPED_BACKENDS:
+        raise ThuncError(f"Unknown backend {name!r}; choose from {sorted([*BACKENDS, *TYPED_BACKENDS])}")
