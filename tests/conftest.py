@@ -21,10 +21,18 @@ class FakeBackend:
 
 
 @pytest.fixture(autouse=True)
-def clean_settings(monkeypatch):
+def clean_settings(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "_settings", dict(config.DEFAULTS))
-    for var in ("THUNC_BACKEND", "THUNC_TRACE", "THUNC_CACHE_DIR", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+    for var in (
+        "THUNC_BACKEND",
+        "THUNC_TRACE",
+        "THUNC_CACHE_DIR",
+        "THUNC_AGENTS_DIR",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+    ):
         monkeypatch.delenv(var, raising=False)
+    thunc.configure(agents_dir=str(tmp_path / ".thunc_agents"))  # agents never write into the repo
 
 
 @pytest.fixture

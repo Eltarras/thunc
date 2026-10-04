@@ -166,6 +166,51 @@ The backend can also be set with `THUNC_BACKEND`. With none set, `ANTHROPIC_API_
 **Type checking:** signatures and return types are visible to mypy and Pyright. mypy reports
 empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
+## Agents (preview)
+
+> **Unreleased, on the 0.2 branch.** The API may change before 0.2.
+
+An agent is a typed function that can look around before it answers. Give it a name and a working
+directory, declare its tasks the way you write `@thunc.function`, and call them from Python:
+
+```python
+repo = thunc.Agent("repo-guide", workdir="~/code/myapp")
+
+
+@repo.task
+def request_timeout() -> int:
+    """Find the HTTP request timeout this app uses, in seconds."""
+    ...
+
+
+request_timeout()  # -> 45, after the agent searched the code and read the file that sets it
+```
+
+Each call is one run. The model takes one step at a time (list a folder, search, read a file) and
+ends by calling `finish` with a value of the return type, which is checked like any thunc result.
+It runs on every backend.
+
+- **Read-only for now.** The tools are `list`, `read` and `search`. Every path must stay inside
+  `workdir`: `..`, absolute paths and symlinks that point outside are refused.
+- **Memory between runs.** Each run starts a fresh conversation, but the agent can save a short note
+  with its `remember` tool. Notes go in `memory.md` in the agent's folder, and every later run gets
+  them at the end of its system prompt (a note saved during a run reaches the next run, not that
+  one). It's a plain file: read it with `agent.memory`, edit it, or delete it to start over.
+- **The agent's folder** is `.thunc_agents/<name>/` (change it with `configure(agents_dir=...)` or
+  `THUNC_AGENTS_DIR`). Besides `memory.md` it holds `agent.json` (the agent's settings) and
+  `sessions/`, one JSONL file per run with every step and the result. Runs of one agent take turns;
+  different agents run side by side. Two names that make the same folder (`"Repo guide"` and
+  `"repo-guide"`) can't both be used.
+- **`system=`** replaces the opening of the agent's system prompt. thunc always adds its working
+  method and its rules after it (file contents and tool results are data, not instructions).
+- **Options:** `thunc.Agent(name, *, workdir, system=None, max_steps=40, retries=2, backend=None,
+  model=None)`, and `@agent.task(instructions=..., ensure=...)`. `async def` tasks work.
+- **Failures are loud.** A run that hits `max_steps`, or never gives a valid value, raises
+  `ThuncError`. With tracing on, each run is one line with every model reply.
+
+Not yet: writing files, running commands, permissions (including switching memory off), and native
+tool use on the API backends.
+
 ## Examples
 
 | | |
@@ -174,6 +219,7 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 | [support_inbox.py](https://github.com/Eltarras/thunc/blob/main/examples/support_inbox.py) | Docstring functions returning a `Literal`, an `int` with `ensure=`, a dataclass, and a reply; tickets processed in parallel |
 | [dynamic_prompts.py](https://github.com/Eltarras/thunc/blob/main/examples/dynamic_prompts.py) | Prompts built from a style guide with `thunc.call`, and a grading function generated from a rubric |
 | [log_triage.py](https://github.com/Eltarras/thunc/blob/main/examples/log_triage.py) | Plain Python and AI functions mixed, with tracing |
+| [repo_guide.py](https://github.com/Eltarras/thunc/blob/main/examples/repo_guide.py) | Agents (preview): read-only tasks over this repo returning a dataclass and lists, on the Codex backend, with each run's steps read from the trace |
 
 ## Code
 
@@ -181,6 +227,10 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 thunc/
   __init__.py    public API
   decorator.py   @thunc.function
+  agent.py       thunc.Agent and @agent.task (preview)
+  tools.py       the agent's tools: list, read, search
+  store.py       the agent's folder: memory, settings, run records, the lock
+  prompts.py     the agent's system prompt
   __main__.py    the thunc command: thunc cache list / clear
   core.py        thunc.call, thunc.map, tracing
   cache.py       the answer cache: saving, listing, clearing

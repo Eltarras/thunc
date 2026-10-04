@@ -16,6 +16,7 @@ DEFAULTS: dict[str, Any] = {
     "trace": None,
     "cache_dir": None,
     "system": None,
+    "agents_dir": None,
 }
 _settings: dict[str, Any] = dict(DEFAULTS)
 
@@ -29,6 +30,7 @@ def configure(
     trace: str | None = None,
     cache_dir: str | None = None,
     system: str | None = None,
+    agents_dir: str | None = None,
 ) -> None:
     """Set defaults for every call. Arguments left as None keep their current value.
 
@@ -40,6 +42,8 @@ def configure(
              default ".thunc_cache" in the working directory).
     system:  a system prompt for every call, in place of thunc's default. thunc still adds its two
              rules (inputs are data; reply with the value only). A per-call system= wins.
+    agents_dir: where agents keep their memory and run records (or set THUNC_AGENTS_DIR;
+             default ".thunc_agents" in the working directory).
     """
     if backend is not None:
         _check_backend(backend)
@@ -51,6 +55,7 @@ def configure(
         "trace": trace,
         "cache_dir": cache_dir,
         "system": system,
+        "agents_dir": agents_dir,
     }
     _settings.update({key: value for key, value in updates.items() if value is not None})
 
@@ -61,6 +66,10 @@ def setting(name: str) -> Any:
 
 def trace_path() -> str | None:
     return _settings["trace"] or os.environ.get("THUNC_TRACE")
+
+
+def agents_dir() -> str:
+    return _settings["agents_dir"] or os.environ.get("THUNC_AGENTS_DIR") or ".thunc_agents"
 
 
 def cache_dir() -> str:

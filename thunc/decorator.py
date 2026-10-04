@@ -69,41 +69,67 @@ def function(
     return decorate(func) if func is not None else decorate
 
 
-def _build(func: Callable[..., Any], instructions: str | None, options: dict[str, Any]) -> Callable[..., Any]:
+class _Signature(typing.NamedTuple):
+    """What thunc reads from an empty-bodied function: the prompt, the inputs and the return type."""
+
+    instructions: str
+    sig: inspect.Signature
+    skip: str | None  # `self` or `cls`, which isn't sent as an input
+    returns: Any
+    is_async: bool
+
+    def inputs(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+        bound = self.sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+        return {k: v for k, v in bound.arguments.items() if k != self.skip}
+
+
+def _read_signature(func: Callable[..., Any], instructions: str | None, label: str) -> _Signature:
+    """Check an empty-bodied function and read its prompt, inputs and return type.
+    `label` names the decorator in error messages ("@thunc.function", "@agent.task")."""
     name = func.__qualname__
     if inspect.isgeneratorfunction(func) or inspect.isasyncgenfunction(func):
-        raise TypeError(f"@thunc.function {name}: generators are not supported.")
+        raise TypeError(f"{label} {name}: generators are not supported.")
     is_async = inspect.iscoroutinefunction(func)
     if func.__code__.co_code not in _empty_bodies(is_async):
         raise TypeError(
-            f"@thunc.function {name}: the body must be empty (a docstring and/or `...`). "
+            f"{label} {name}: the body must be empty (a docstring and/or `...`). "
             "The model replaces the body, so code there would never run."
         )
     instructions = instructions or inspect.getdoc(func)
     if not instructions:
         raise TypeError(
-            f"@thunc.function {name} needs instructions: write a docstring or pass instructions=... "
+            f"{label} {name} needs instructions: write a docstring or pass instructions=... "
             "(docstrings are removed under python -OO)."
         )
-
     sig = inspect.signature(func)
     first = next(iter(sig.parameters), None)
     skip = first if first in ("self", "cls") else None
     # resolve_strings: Python 3.10's get_type_hints leaves "Ticket" inside `-> list["Ticket"]`.
     returns = resolve_strings(typing.get_type_hints(func).get("return", str), func.__globals__)
     describe(returns)  # unsupported return types fail here, not at the first call
+    return _Signature(instructions, sig, skip, returns, is_async)
 
-    def run(*args: Any, **kwargs: Any) -> Any:
-        bound = sig.bind(*args, **kwargs)
-        bound.apply_defaults()
-        inputs = {k: v for k, v in bound.arguments.items() if k != skip}
-        return _call(instructions, inputs, returns, name=name, module=func.__module__, **options)
+
+def _wrap(func: Callable[..., Any], is_async: bool, run: Callable[..., Any]) -> Callable[..., Any]:
+    """`run` with the function's name and docstring; an awaitable if the function was `async def`."""
 
     async def run_async(*args: Any, **kwargs: Any) -> Any:
         return await asyncio.to_thread(run, *args, **kwargs)
 
-    wrapper = functools.wraps(func)(run_async if is_async else run)
-    wrapper.__dict__["__thunc_instructions__"] = instructions  # for debugging
+    return functools.wraps(func)(run_async if is_async else run)
+
+
+def _build(func: Callable[..., Any], instructions: str | None, options: dict[str, Any]) -> Callable[..., Any]:
+    name = func.__qualname__
+    spec = _read_signature(func, instructions, "@thunc.function")
+
+    def run(*args: Any, **kwargs: Any) -> Any:
+        inputs = spec.inputs(args, kwargs)
+        return _call(spec.instructions, inputs, spec.returns, name=name, module=func.__module__, **options)
+
+    wrapper = _wrap(func, spec.is_async, run)
+    wrapper.__dict__["__thunc_instructions__"] = spec.instructions  # for debugging
     wrapper.__dict__["__thunc_function__"] = name  # for thunc.clear_cache(func); also the cache key's name
     return wrapper
 
