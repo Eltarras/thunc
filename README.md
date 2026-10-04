@@ -198,6 +198,31 @@ giving it alone.
 The backend can also be set with `THUNC_BACKEND`. With none set, `ANTHROPIC_API_KEY` (or a
 `configure(api_key=...)` alone) selects `anthropic`, and otherwise `OPENAI_API_KEY` selects `openai`.
 
+**Profiling:** run your program with `thunc run --profile` to see where the time went when it ends:
+
+```bash
+thunc run --profile support_inbox.py --limit 20   # a script and its arguments
+thunc run --profile -m myapp.triage               # a module, as with python -m
+```
+
+The report goes to stderr: per function, the calls, cache hits, retries and failures, the total,
+mean, p95 and slowest time, and how much of it was the model and how much thunc's own work
+(building the prompt, parsing, the cache). Agent runs get their steps, model time and time in each
+tool. It also says what share of the program's wall time was spent in thunc, and how much calls
+overlapped under `thunc.map`. Without `--profile`, `thunc run` just runs the program, and nothing
+is recorded. The program's exit code is passed through.
+
+```
+CALLS
+FUNCTION  CALLS  CACHED  RETRIES  FAILED  TOTAL   MEAN    P95    MAX  MODEL  LOCAL
+urgency      11       1        1       0  1.70s  155ms  309ms  309ms  1.69s   12ms
+
+In thunc:      774ms of 980ms wall time (79%); the rest was the program's own code
+Model time:    1.69s, 99% of the time in calls (anthropic/default model 1.69s)
+Concurrency:   calls overlapped 2.2x on average (thunc.map or threads)
+Slowest:       urgency took 309ms
+```
+
 **Type checking:** signatures and return types are visible to mypy and Pyright. mypy reports
 empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
@@ -240,7 +265,8 @@ Each call is one run. The model takes one step at a time (list a folder, search,
 file) and ends by calling `finish` with a value of the return type, which is checked like any thunc
 result. It runs on the Claude and OpenAI APIs through their own tool calls (the
 model can make several at once, and the fixed part of the prompt is cached), and on Claude Code and
-Codex by replying with one JSON action at a time. `protocol="text"` uses the second way on an API
+Codex by replying with JSON actions as text: one at a time, or several independent ones (reading
+three files) as a JSON array, which saves turns. `protocol="text"` uses the second way on an API
 too, for example with a server behind `OPENAI_BASE_URL` that has no function calling.
 The `jev` backend only answers typed questions and cannot run agents, even for a task returning
 `bool` or `Literal[...]`. An agent run using it raises `ThuncError` before creating any run files
@@ -416,7 +442,8 @@ thunc/
   native.py      how a run talks to its backend: native tool calls or the text protocol
   store.py       the agent's folder: memory, settings, run records, the lock
   prompts.py     the agent's system prompt
-  __main__.py    the thunc command: thunc cache list / clear
+  __main__.py    the thunc command: thunc run [--profile], thunc cache list / clear
+  profiling.py   thunc run --profile: timing records and the report
   core.py        thunc.call, thunc.map, tracing
   cache.py       the answer cache: saving, listing, clearing
   schema.py      return types: describe, parse, validate

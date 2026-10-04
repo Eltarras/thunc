@@ -20,12 +20,15 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from collections.abc import Callable
-from typing import Any, Literal, get_args, get_origin
+from typing import Any, Literal, TypeVar, cast, get_args, get_origin
 
 from .errors import ThuncError
 from .schema import describe
@@ -40,6 +43,37 @@ _FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "cla
 _JEV_MAX_CHOICES = 255  # the most options a Jev choice question takes
 
 
+_clients: dict[tuple[Any, ...], Any] = {}
+_clients_lock = threading.Lock()
+_MAX_CLIENTS = 16  # different keys, sdk_options or environments in one process; past this, start over
+
+
+C = TypeVar("C")
+
+
+def sdk_client(factory: Callable[..., C], env_prefix: str, api_key: str | None, timeout: float) -> C:
+    """The SDK client for the Claude or OpenAI API, shared by every call in this process, so calls
+    reuse its connections instead of opening a new one (a TCP and TLS handshake) each time. The SDKs'
+    clients are thread-safe, so thunc.map's threads share it too.
+
+    A client is kept per everything it reads when it's made: the api_key, sdk_options, and the
+    environment variables starting with `env_prefix` (the API key, the base URL, ...), so a change
+    to any of them gets a new client. And per process, as a connection can't be shared across fork.
+    The timeout is applied per request with with_options(), which keeps the same connections."""
+    from .config import setting
+
+    options = setting("sdk_options") or {}
+    environment = tuple(sorted((k, v) for k, v in os.environ.items() if k.startswith(env_prefix)))
+    key = (factory, os.getpid(), api_key, repr(sorted(options.items())), environment)
+    with _clients_lock:
+        client: Any = _clients.get(key)
+        if client is None:
+            if len(_clients) >= _MAX_CLIENTS:
+                _clients.clear()
+            client = _clients[key] = factory(api_key=api_key, **options)
+    return cast(C, client.with_options(timeout=timeout))
+
+
 def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
     try:
         import anthropic
@@ -48,9 +82,7 @@ def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | N
 
     model = model or DEFAULT_ANTHROPIC_MODEL
     # api_key=None lets the SDK resolve ANTHROPIC_API_KEY or an `ant auth login` profile.
-    from .config import setting
-
-    client = anthropic.Anthropic(api_key=api_key, timeout=timeout, **(setting("sdk_options") or {}))
+    client = sdk_client(anthropic.Anthropic, "ANTHROPIC_", api_key, timeout)
     try:
         if model in _FALLBACK_MODELS:
             response = client.beta.messages.create(
@@ -89,9 +121,7 @@ def openai_api(text: str, *, system: str, model: str | None, api_key: str | None
         raise ThuncError("The openai backend needs the SDK: pip install 'thunc[openai]'") from exc
 
     # api_key=None lets the SDK resolve OPENAI_API_KEY (and OPENAI_BASE_URL for compatible servers).
-    from .config import setting
-
-    client = openai.OpenAI(api_key=api_key, timeout=timeout, **(setting("sdk_options") or {}))
+    client = sdk_client(openai.OpenAI, "OPENAI_", api_key, timeout)
     try:
         response = client.responses.create(
             model=model or DEFAULT_OPENAI_MODEL,
@@ -136,6 +166,75 @@ def _run_cli(args: list[str], text: str, timeout: float) -> subprocess.Completed
         )
     except subprocess.TimeoutExpired as exc:
         raise ThuncError(f"`{exe}` timed out after {timeout:.0f}s.") from exc
+
+
+Events = list[tuple[dict[str, Any], str]]  # (event, the line it was printed as)
+
+
+def _cli_events(args: list[str], text: str, timeout: float, last: str) -> tuple[Events, int | None, str]:
+    """Run a CLI that prints one JSON event per line, with `text` on stdin, and return its events
+    (each with the line it came from) up to the first of type `last`, as soon as that one arrives.
+    What the CLI does after it (codex takes about 0.4 s to shut down) finishes in the background: a
+    thread reads the rest of its output and collects the process. If the CLI ends without a `last`
+    event, returns all its events with its exit code and stderr; the exit code is None otherwise."""
+    exe = args[0]
+    if shutil.which(exe) is None:
+        raise ThuncError(f"`{exe}` was not found on PATH.")
+    stderr = tempfile.TemporaryFile()  # a file, not a pipe: the CLI never blocks on a full stderr
+    try:
+        # A neutral cwd keeps the CLI from picking up project files (CLAUDE.md, AGENTS.md, ...).
+        process = subprocess.Popen(
+            args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            encoding="utf-8",
+            errors="surrogateescape",
+            cwd=tempfile.gettempdir(),
+        )
+    except BaseException:
+        stderr.close()
+        raise
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def read() -> None:
+        assert process.stdout is not None
+        with process.stdout:
+            for line in process.stdout:
+                lines.put(line)
+        lines.put(None)
+        process.wait()  # collected even when nobody is waiting for the answer any more
+
+    threading.Thread(target=read, name=f"thunc-{exe}", daemon=True).start()
+    events: Events = []
+    try:
+        try:
+            assert process.stdin is not None
+            with process.stdin:
+                process.stdin.write(text.encode("utf-8", "backslashreplace").decode("utf-8"))  # no lone surrogates
+        except BrokenPipeError:
+            pass  # it stopped before reading the prompt: its exit code and stderr say why
+        deadline = time.monotonic() + timeout
+        while (line := lines.get(timeout=max(deadline - time.monotonic(), 0))) is not None:
+            try:
+                event = json.loads(line)
+            except (ValueError, RecursionError):
+                continue  # not an event: progress text, a warning
+            if isinstance(event, dict):
+                events.append((event, line))
+                if event.get("type") == last:
+                    return events, None, ""
+        code = process.wait()
+        stderr.seek(0)
+        return events, code, stderr.read().decode("utf-8", "surrogateescape")
+    except queue.Empty:
+        process.kill()
+        raise ThuncError(f"`{exe}` timed out after {timeout:.0f}s.") from None
+    except BaseException:  # Ctrl-C too: don't leave the CLI running
+        process.kill()
+        raise
+    finally:
+        stderr.close()  # the CLI keeps its own handle until it exits
 
 
 def claude_code(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
@@ -220,8 +319,6 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
     fd, system_path = tempfile.mkstemp(suffix=".md")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(system)
-    fd, out_path = tempfile.mkstemp(suffix=".txt")
-    os.close(fd)
     try:
         args = [
             "codex",
@@ -232,8 +329,7 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
             "--ephemeral",
             "--color",
             "never",
-            "--output-last-message",
-            out_path,
+            "--json",  # events as they happen, so the answer is read without waiting for codex to exit
             "--config",
             f"model_instructions_file={json.dumps(system_path)}",  # a TOML string (JSON escapes are valid TOML)
             *_CODEX_QUIET,
@@ -242,18 +338,38 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
         if model:
             args += ["--model", model]
         args.append("-")  # read the prompt from stdin
-        proc = _run_cli(args, text, timeout)
-        if proc.returncode != 0:
-            raise ThuncError(f"codex exited {proc.returncode}: {_printable(proc.stderr).strip()[-500:]}")
-        try:
-            with open(out_path, encoding="utf-8") as f:
-                return f.read().strip()
-        except (OSError, UnicodeDecodeError) as exc:
-            raise ThuncError(f"Could not read codex's answer: {exc}") from exc
+        events, code, stderr = _cli_events(args, text, timeout, "turn.completed")
     finally:
-        for path in (out_path, system_path):
-            with contextlib.suppress(OSError):  # gone, or not a file any more: nothing to clean up
-                os.unlink(path)
+        with contextlib.suppress(OSError):  # gone, or not a file any more: nothing to clean up
+            os.unlink(system_path)  # read when codex started
+    if code is not None:  # it ended without finishing the turn
+        problems = [_codex_problem(event) for event, _ in events]
+        problem = next((p for p in reversed(problems) if p), None) or stderr
+        raise ThuncError(f"codex exited {code}: {_printable(problem).strip()[-500:]}")
+    messages = [
+        (event["item"]["text"], line)
+        for event, line in events
+        if event.get("type") == "item.completed"
+        and isinstance(event.get("item"), dict)
+        and event["item"].get("type") == "agent_message"
+        and isinstance(event["item"].get("text"), str)
+    ]
+    if not messages:
+        raise ThuncError("codex finished its turn without an answer.")
+    answer, line = messages[-1]  # the last message is the answer, as with --output-last-message
+    if _not_utf8(line):
+        raise ThuncError(f"codex printed an answer that isn't UTF-8: {_printable(answer)[-500:]}")
+    return str(answer).strip()
+
+
+def _codex_problem(event: dict[str, Any]) -> str | None:
+    """The message of a codex `error` or `turn.failed` event."""
+    if event.get("type") == "error" and isinstance(event.get("message"), str):
+        return str(event["message"])
+    error = event.get("error")
+    if event.get("type") == "turn.failed" and isinstance(error, dict) and isinstance(error.get("message"), str):
+        return str(error["message"])
+    return None
 
 
 def jev(instructions: str, inputs: dict[str, Any], returns: Any, *, system: str | None, timeout: float) -> str:

@@ -16,6 +16,7 @@ from .cache import get as cache_get
 from .cache import put as cache_put
 from .config import resolve_backend, setting, trace_path
 from .errors import ThuncError
+from .profiling import UNNAMED, CallRecord, active, timed
 from .schema import describe, parse, short_repr, shorten
 
 T = TypeVar("T")
@@ -132,6 +133,8 @@ def _call(
     text, answers, started = request, [], time.monotonic()
     result: dict[str, Any] = {"value": None, "error": None, "cached": False}
     typed = False
+    backend_name: str | None = None
+    waits: list[float] = []  # seconds spent on each request to the model
     try:
         backend_name = resolve_backend(backend)
         typed = backend_name in TYPED_BACKENDS
@@ -152,9 +155,9 @@ def _call(
         # rejects it gets the same answer: one attempt.
         for _ in range(1 if typed else retries + 1):
             answer = (
-                _ask_typed(instructions, inputs, returns, custom, backend)
+                timed(waits, _ask_typed, instructions, inputs, returns, custom, backend)
                 if typed
-                else _send(text, system, backend, model)
+                else timed(waits, _send, text, system, backend, model)
             )
             answers.append(answer)
             try:
@@ -180,6 +183,20 @@ def _call(
     finally:
         sent = custom if typed else system  # a typed backend gets only the program's own system prompt
         _trace(instructions, inputs, returns, answers, result, started, sent, backend, model, name)
+        if (profiler := active()) is not None:
+            profiler.add(
+                CallRecord(
+                    function=name or UNNAMED,
+                    backend=backend_name,
+                    model=model or setting("model"),
+                    start=started,
+                    end=time.monotonic(),
+                    model_seconds=sum(waits),
+                    attempts=len(waits),
+                    cached=result["cached"],
+                    ok=result["error"] is None,
+                )
+            )
 
 
 def map(func: Callable[[A], T], items: Iterable[A], *, workers: int = 8) -> list[T]:

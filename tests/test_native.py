@@ -55,6 +55,9 @@ def claude(monkeypatch):
             self.messages = SimpleNamespace(create=self.create)
             self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
 
+        def with_options(self, **options):
+            return self
+
         def create(self, **kwargs):
             script.requests.append(json.loads(json.dumps(kwargs, default=lambda o: o.model_dump())))
             return script.replies.pop(0)
@@ -235,6 +238,9 @@ def gpt(monkeypatch):
     class Client:
         def __init__(self, **kwargs):
             self.responses = SimpleNamespace(create=self.create)
+
+        def with_options(self, **options):
+            return self
 
         def create(self, **kwargs):
             script.requests.append(json.loads(json.dumps(kwargs)))

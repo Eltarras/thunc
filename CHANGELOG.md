@@ -3,6 +3,36 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
+## Unreleased
+
+### Added
+
+- **`thunc run --profile`**: runs a script (or `-m module`) and prints a performance report to
+  stderr when it ends: per function, calls, cache hits, retries, failures, total/mean/p95/max time
+  and the split between model time and thunc's own; for agents, steps and time in each tool; and
+  the share of wall time spent in thunc, with the overlap from `thunc.map`.
+
+### Changed
+
+- **The `anthropic` and `openai` backends reuse their connections.** One SDK client is shared by
+  every call in the process (`thunc.map`'s threads and agent runs included), instead of a new
+  client, and so a new TCP and TLS handshake, for each call. A new client is made when the API key,
+  the SDK's environment variables (`ANTHROPIC_*`, `OPENAI_*`) or the process change. In a local
+  benchmark with 60 ms of connection setup, 20 calls in a row went from 1.47 s to 68 ms.
+- **Agents on the text protocol can act several times per reply.** On Claude Code, Codex and
+  `protocol="text"`, a reply can be a JSON array of independent actions (reading three files)
+  instead of one. They run in order, at most 16 per reply, and every result comes back together,
+  as with native tool calls. Each turn resends the whole transcript and, on the CLI backends,
+  starts the CLI, so fewer turns save both. A single JSON action works as before. On Codex, with
+  `live_tests/eval_prompts.py` (default prompt, 5 runs of each task), every run batched its first
+  reads: replies went from 6.0 / 4.8 / 5.0 to 5.0 / 3.0 / 3.6 (fix / review / analysis) and the
+  mean time from 37 / 27 / 27 s to 29 / 19 / 21 s, with the same work done and 30/30 passing.
+- **The `codex` backend returns as soon as the answer arrives.** It reads Codex's JSON events as
+  they come (`codex exec --json`) instead of waiting for the process to exit and reading the answer
+  from a file. Codex takes about 0.4 s to shut down after answering; that now happens in the
+  background. Over 8 alternating pairs of real calls the new way was faster every time, by a median
+  of 0.67 s on a call of about 4 s. Every agent turn on Codex is one call, so the saving repeats.
+
 ## 0.2.1 (beta)
 
 **Durable agents with Temporal.** An optional `thunc[temporal]` runtime records each model turn
