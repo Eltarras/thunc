@@ -15,7 +15,9 @@ model gets real tool calls instead:
   message to the same process.
 
 The CLI runs in the agent's working directory, so the environment details it adds to the prompt
-name the folder the tools work in.
+name the folder the tools work in. It loads no setting sources (--setting-sources ""): otherwise
+Claude Code would read CLAUDE.md from that folder as instructions, and the user's own settings and
+hooks, while thunc only follows instruction files the program asks for with follow=.
 """
 
 from __future__ import annotations
@@ -146,6 +148,7 @@ class ClaudeCodeConversation:
             "--system-prompt-file", system_file, "--tools", "",
             "--mcp-config", json.dumps({"mcpServers": {"thunc": relay}}), "--strict-mcp-config",
             "--allowedTools", *(PREFIX + t.name for t in self.tools), "--no-session-persistence",
+            "--setting-sources", "",  # no CLAUDE.md, settings or hooks: the workdir can't instruct the agent
         ]  # fmt: skip
         if self.model:
             args += ["--model", self.model]

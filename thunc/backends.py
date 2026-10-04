@@ -149,6 +149,8 @@ def claude_code(text: str, *, system: str, model: str | None, api_key: str | Non
         "--tools",
         "",  # plain answer only; no file or shell access
         "--strict-mcp-config",  # no MCP servers
+        "--setting-sources",
+        "",  # no CLAUDE.md, settings or hooks from the user's Claude Code setup
         "--system-prompt",
         system,  # replaces the large default coding prompt
         "--no-session-persistence",

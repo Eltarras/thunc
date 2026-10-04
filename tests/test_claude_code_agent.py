@@ -81,6 +81,7 @@ def test_a_run_uses_native_calls_through_the_relay(cli, repo):
     assert "1  TIMEOUT = 30" in log["results"][1]["text"]
     args = log["args"]
     assert args[args.index("--tools") + 1] == "" and "--strict-mcp-config" in args
+    assert args[args.index("--setting-sources") + 1] == ""  # CLAUDE.md in the workdir isn't loaded
     assert args[args.index("--model") + 1] == "claude-sonnet-5-5"
     assert "mcp__thunc__finish" in args and "mcp__thunc__write" not in args  # only the offered tools
     assert os.path.realpath(log["cwd"]) == os.path.realpath(repo)  # the CLI's environment names the workdir

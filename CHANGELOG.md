@@ -32,6 +32,9 @@ way, against 24 of 24 for Claude Code itself.
   explicitly is still listed and searched.
 - **Long command output keeps its start and its end** (the first error and the summary), not only
   the end.
+- **The `claude-code` backend loads none of your Claude Code settings** (`--setting-sources ""`):
+  no `CLAUDE.md`, settings or hooks reach thunc's calls, so an agent's `workdir` can't give it
+  instructions unless `follow=` asks for them.
 
 ## 0.2.1 (beta)
 
