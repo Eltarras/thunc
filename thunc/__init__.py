@@ -14,7 +14,7 @@ thunc.call(f"Translate into {language}.", {"text": note})
 """
 
 from . import prompts
-from .agent import Agent
+from .agent import Agent, agent
 from .cache import CacheGroup, cache_info, clear_cache
 from .config import configure
 from .core import call, map
@@ -35,5 +35,6 @@ __all__ = [
     "map",
     "prompts",
     "Run",
+    "agent",
 ]
 __version__ = "0.1.3"
