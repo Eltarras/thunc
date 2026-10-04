@@ -38,9 +38,8 @@ import warnings
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from typing import Any, ParamSpec, TypeVar, overload
 
-from . import native, tools
+from . import claude_code, native, tools
 from .backends import TYPED_BACKENDS
-from .claude_code import ClaudeCodeConversation
 from .config import _check_backend, resolve_backend, setting
 from .core import _plain, _render, _trace
 from .decorator import _read_signature, _wrap
@@ -77,8 +76,9 @@ class Agent:
                are always sent after it.
     protocol:  "native" for native tool calls, "text" for one JSON action per reply as text. By
                default native on the anthropic, openai and claude-code backends (claude-code through
-               an MCP server; durable runs on it use text), text on codex. Use "text" with a server
-               behind OPENAI_BASE_URL that has no function calling.
+               an MCP server, falling back to text with a warning when Claude Code can't start it;
+               durable runs on it use text), text on codex. Use "text" with a server behind
+               OPENAI_BASE_URL that has no function calling.
     tools:     your own Python functions the agent may call, like open_issue(title: str) -> int. Each
                needs type hints and a docstring (its description); arguments are checked against the
                hints before it runs, and what it returns (or raises) goes back to the model.
@@ -429,11 +429,29 @@ class Agent:
                     **({"settings_changed_from": changed_from} if changed_from else {}),
                 )
                 request = _request(instructions, inputs, returns)
-                if mcp:
+
+                def text_protocol() -> native.Conversation:
+                    return self._conversation(False, self._fixed_prompt(followed, False), memory_text, request, returns)
+
+                def switched(reason: str) -> None:
+                    session.write("fallback", protocol="text", reason=reason)
+                    warnings.warn(
+                        f"Agent {self.name!r}: Claude Code couldn't run thunc's tools as native calls ({reason}); "
+                        "using the text protocol. Update the claude CLI, or pass protocol='text' to skip this.",
+                        RuntimeWarning,
+                        4,
+                    )
+
+                if mcp and self.protocol is None and claude_code.unavailable is not None:
+                    session.write("fallback", protocol="text", reason=claude_code.unavailable)
+                    conversation = text_protocol()  # a run in this process already found native calls unavailable
+                elif mcp:
                     specs = _tool_specs(self.tools(), returns, self.custom, self.permissions.may("shell"))
-                    conversation = ClaudeCodeConversation(
+                    conversation = claude_code.ClaudeCodeConversation(
                         system, request, specs, self.model or setting("model"), self.workdir, setting("timeout")
                     )
+                    if self.protocol is None:  # protocol="native" asked for native calls: no fallback
+                        conversation = claude_code.WithFallback(conversation, text_protocol, switched)
                 else:
                     conversation = self._conversation(native_calls, fixed, memory_text, request, returns)
                 names = [path for path, _ in followed]

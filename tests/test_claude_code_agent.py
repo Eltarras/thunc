@@ -8,6 +8,7 @@ a scripted model instead of a real one.
 import json
 import os
 import sys
+import warnings
 from dataclasses import dataclass
 
 import pytest
@@ -15,6 +16,13 @@ import pytest
 import thunc
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the fake claude is a script with a shebang")
+
+
+@pytest.fixture(autouse=True)
+def native_calls_not_ruled_out(monkeypatch):
+    from thunc import claude_code
+
+    monkeypatch.setattr(claude_code, "unavailable", None)  # what one test learns doesn't leak into the next
 
 
 @pytest.fixture
@@ -200,3 +208,60 @@ def test_protocol_text_keeps_the_json_text_protocol(monkeypatch, cli, repo):
     monkeypatch.setitem(backends.BACKENDS, "claude-code", text_backend)
     agent = thunc.Agent("guide", workdir=repo, protocol="text")
     assert agent.run(timeout_task(agent)).value == 30 and len(sent) == 1
+
+
+@pytest.mark.parametrize(
+    "mode, reason", [("old", "unknown option '--setting-sources'"), ("no-mcp", "MCP servers turned off by a policy")]
+)
+def test_a_cli_that_cant_run_thunc_tools_falls_back_to_the_text_protocol(monkeypatch, cli, repo, mode, reason):
+    from thunc import backends
+
+    sent = []
+
+    def text_backend(text, **kwargs):
+        sent.append(kwargs["system"])
+        return json.dumps({"tool": "finish", "args": {"value": 30}})
+
+    monkeypatch.setitem(backends.BACKENDS, "claude-code", text_backend)
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
+    agent = thunc.Agent("guide", workdir=repo)
+    with pytest.warns(RuntimeWarning, match="using the text protocol"):
+        run = agent.run(timeout_task(agent))
+    assert run.value == 30 and len(sent) == 1
+    assert "reply with exactly one JSON object" in sent[0]  # the text protocol's own system prompt
+    with open(run.session, encoding="utf-8") as f:
+        events = [json.loads(line) for line in f]
+    fallback = [e for e in events if e["event"] == "fallback"]
+    assert fallback and fallback[0]["protocol"] == "text" and reason in fallback[0]["reason"]
+
+    # The next run in this process goes straight to the text protocol: no CLI start, no new warning.
+    from thunc import claude_code
+
+    def must_not_start(self, args):
+        pytest.fail("the CLI was started again")
+
+    monkeypatch.setattr(claude_code.ClaudeCodeConversation, "_popen", must_not_start)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        second = agent.run(timeout_task(agent))
+    assert second.value == 30 and len(sent) == 2
+
+
+def test_protocol_native_does_not_fall_back(monkeypatch, cli, repo):
+    from thunc import backends
+
+    monkeypatch.setitem(backends.BACKENDS, "claude-code", lambda text, **kwargs: pytest.fail("no fallback"))
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "old")
+    agent = thunc.Agent("guide", workdir=repo, protocol="native")
+    with pytest.raises(thunc.AgentError, match="claude exited 1 before the task was done: error: unknown option"):
+        agent.run(timeout_task(agent))
+
+
+def test_failures_after_the_tools_started_do_not_fall_back(monkeypatch, cli, repo):
+    from thunc import backends
+
+    monkeypatch.setitem(backends.BACKENDS, "claude-code", lambda text, **kwargs: pytest.fail("no fallback"))
+    cli(calls(("read", {"path": "config.py"})), {"exit": 3})
+    agent = thunc.Agent("guide", workdir=repo)
+    with pytest.raises(thunc.AgentError, match="claude exited 3"):
+        agent.run(timeout_task(agent))

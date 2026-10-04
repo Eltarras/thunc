@@ -16,7 +16,9 @@ way, against 24 of 24 for Claude Code itself.
 - **Native calls on `claude-code`**: the agent's tools are an MCP server that one `claude -p`
   process per run calls; thunc carries out each call with its own tools, permissions and run
   record. The CLI runs in the agent's `workdir`. `protocol="text"` keeps the old way, and durable
-  runs on Claude Code still use it.
+  runs on Claude Code still use it. When Claude Code can't start native calls (an older CLI, or MCP
+  servers turned off by a policy), a run falls back to the text protocol with a warning and a
+  `fallback` entry in its record; `protocol="native"` raises instead.
 - **`run` takes `cwd`**, a folder inside `workdir` to run the command in.
 - **The `shell` permission** runs command lines through the system shell, so pipes, `&&`, `cd`
   and redirects work. Off by default; it can't be combined with `!run:` rules.

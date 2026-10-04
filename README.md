@@ -242,7 +242,10 @@ file) and ends by calling `finish` with a value of the return type, which is che
 result. It runs on the Claude and OpenAI APIs through their own tool calls (the
 model can make several at once, and the fixed part of the prompt is cached). On Claude Code the
 calls are native too: the agent's tools are an MCP server that one `claude -p` process per run
-calls, while thunc carries out each call with its own tools, permissions and records. On Codex the
+calls, while thunc carries out each call with its own tools, permissions and records. If Claude Code
+can't start them (an older `claude` CLI, or MCP servers turned off by a policy), the run uses the
+text protocol below instead, with a warning, and so do later runs in the process;
+`protocol="native"` fails instead. On Codex the
 model replies with one JSON action at a time. `protocol="text"` uses that way on any backend, for
 example with a server behind `OPENAI_BASE_URL` that has no function calling. (Durable runs on
 Claude Code use it too.)

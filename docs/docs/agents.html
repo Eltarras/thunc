@@ -86,7 +86,7 @@ repo.call(f"Where is {setting} set?", returns=str)</code></pre></div>
 <p>Each call is one run. The model takes one step at a time (list a folder, search, read or edit a file) and ends by calling <code>finish</code> with a value of the return type, which is checked like any thunc result.</p>
 <ul>
 <li>On the <strong>Claude and OpenAI APIs</strong> it uses their own tool calls: the model can make several at once, and the fixed part of the prompt is cached.</li>
-<li>On <strong>Claude Code</strong> the calls are native too: the agent's tools are an MCP server that one <code>claude -p</code> process per run calls, while thunc carries out each call with its own tools, permissions and records.</li>
+<li>On <strong>Claude Code</strong> the calls are native too: the agent's tools are an MCP server that one <code>claude -p</code> process per run calls, while thunc carries out each call with its own tools, permissions and records. If Claude Code can't start them (an older <code>claude</code> CLI, or MCP servers turned off by a policy), the run uses the text protocol instead, with a warning; <code>protocol="native"</code> fails instead.</li>
 <li>On <strong>Codex</strong> it replies with one JSON action at a time. <code>protocol="text"</code> uses this way on any backend, for example with a server behind <code>OPENAI_BASE_URL</code> that has no function calling. Durable runs on Claude Code use it too.</li>
 <li><strong>Jev</strong> only answers typed questions and can't run agents. An agent run using it raises <code>ThuncError</code> before creating any run files or calling a backend.</li>
 </ul>

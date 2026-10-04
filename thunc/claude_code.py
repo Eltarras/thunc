@@ -36,16 +36,22 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import IO, Any
 
 from .errors import ThuncError
-from .native import NUDGE, Call, Reply, Tool, _calls_text
+from .native import NUDGE, Call, Conversation, Reply, Tool, _calls_text
 
 PREFIX = "mcp__thunc__"  # how Claude Code names the relay's tools
 RELAY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp_relay.py")
 TURN_ERRORS = 2  # CLI turns that may end in an error before the run fails
 GATHER_SECONDS = 0.05  # how long to wait for more calls of the same model reply
+unavailable: str | None = None  # why native calls couldn't start in this process, once they couldn't
+
+
+class StartupError(ThuncError):
+    """Claude Code couldn't start a run with thunc's tools: an older CLI that doesn't know the
+    options, MCP servers turned off by a policy, or a tool server that never connected."""
 
 
 class ClaudeCodeConversation:
@@ -67,8 +73,10 @@ class ClaudeCodeConversation:
         self.ids: dict[str, Any] = {}  # call id as thunc knows it -> the relay's JSON-RPC id
         self.tool_uses: list[tuple[str, str, Any]] = []  # (message id, tool, input) not yet matched to a call
         self.last_message: str | None = None
+        self.connected = threading.Event()  # the relay is connected: thunc's tools are available
         self.turn_errors = 0
         self.stderr: collections.deque[str] = collections.deque(maxlen=50)
+        self.stderr_reader: threading.Thread | None = None
         self.replies: dict[str, dict[str, int]] = {}  # model reply id -> its token usage, as the CLI printed it
         self._write = threading.Lock()
 
@@ -83,10 +91,14 @@ class ClaudeCodeConversation:
             try:
                 kind, event = self.events.get(timeout=max(left, 0.001))
             except queue.Empty:
+                if not self.connected.is_set():
+                    raise StartupError(f"thunc's tool server didn't connect within {self.timeout:g}s") from None
                 raise ThuncError(f"claude took no step within {self.timeout:g}s") from None
             if kind == "call":
                 return self._calls(event)
             if kind == "result":
+                if not self.connected.is_set():  # a turn without thunc's tools: they never started
+                    raise StartupError("the model's turn ended before thunc's tool server connected")
                 if event.get("is_error") or event.get("subtype") != "success":
                     self.turn_errors += 1
                     problem = str(event.get("result") or event.get("subtype") or "an error")[:500]
@@ -97,10 +109,13 @@ class ClaudeCodeConversation:
                     continue
                 return Reply([], str(event.get("result") or ""), "no tool call")
             if kind == "exit":
+                if self.stderr_reader is not None:
+                    self.stderr_reader.join(timeout=2)  # what it printed before exiting says why
                 tail = "".join(self.stderr).strip()[-500:]
-                raise ThuncError(f"claude exited {event} before the task was done" + (f": {tail}" if tail else ""))
+                message = f"claude exited {event} before the task was done" + (f": {tail}" if tail else "")
+                raise ThuncError(message) if self.connected.is_set() else StartupError(message)
             if kind == "relay":
-                raise ThuncError(f"claude couldn't start thunc's tools: {event}")
+                raise StartupError(f"claude couldn't start thunc's tools: {event}")
 
     def results(self, results: Sequence[tuple[Call, str, bool]]) -> None:
         for call, output, failed in results:
@@ -152,7 +167,18 @@ class ClaudeCodeConversation:
         ]  # fmt: skip
         if self.model:
             args += ["--model", self.model]
-        self.process = subprocess.Popen(
+        try:
+            self.process = self._popen(args)
+        except OSError as exc:
+            raise StartupError(f"`claude` couldn't be started: {exc.strerror or exc}") from None
+        threading.Thread(target=self._accept, args=(token,), daemon=True).start()
+        threading.Thread(target=self._read_stdout, daemon=True).start()
+        self.stderr_reader = threading.Thread(target=self._read_stderr, daemon=True)
+        self.stderr_reader.start()
+        self._say(self.request)
+
+    def _popen(self, args: list[str]) -> subprocess.Popen[str]:
+        return subprocess.Popen(
             args,
             cwd=self.workdir,
             stdin=subprocess.PIPE,
@@ -162,10 +188,6 @@ class ClaudeCodeConversation:
             errors="replace",
             start_new_session=sys.platform != "win32",  # its own process group, so close() stops the relay too
         )
-        threading.Thread(target=self._accept, args=(token,), daemon=True).start()
-        threading.Thread(target=self._read_stdout, daemon=True).start()
-        threading.Thread(target=self._read_stderr, daemon=True).start()
-        self._say(self.request)
 
     def _accept(self, token: str) -> None:
         """Take the relay's connection (checking its token), then queue the calls it forwards."""
@@ -185,6 +207,7 @@ class ClaudeCodeConversation:
             return
         connection.settimeout(None)
         self.relay_out = connection.makefile("w", encoding="utf-8")
+        self.connected.set()
         for line in reader:
             with contextlib.suppress(ValueError):
                 self.events.put(("call", json.loads(line)))
@@ -208,9 +231,12 @@ class ClaudeCodeConversation:
             elif kind == "result":
                 self.events.put(("result", event))
             elif kind == "system" and event.get("subtype") == "init":
-                for server in event.get("mcp_servers") or []:
-                    if server.get("name") == "thunc" and server.get("status") not in ("connected", "pending"):
-                        self.events.put(("relay", f"the tool server is {server.get('status')}"))
+                listed = [s for s in event.get("mcp_servers") or [] if isinstance(s, dict)]
+                servers = {s.get("name"): s.get("status") for s in listed}
+                if "thunc" not in servers:
+                    self.events.put(("relay", "Claude Code didn't load it (are MCP servers turned off by a policy?)"))
+                elif servers["thunc"] not in ("connected", "pending"):
+                    self.events.put(("relay", f"the tool server is {servers['thunc']}"))
         self.events.put(("exit", self.process.wait()))
 
     def _read_stderr(self) -> None:
@@ -285,3 +311,41 @@ class ClaudeCodeConversation:
                 self.relay_out.flush()
         except OSError as exc:
             raise ThuncError(f"lost the tool server: {exc}") from None
+
+
+class WithFallback:
+    """The native conversation, or the text protocol when Claude Code can't start one. Decided at
+    the first step: a StartupError there switches this run to `text()` (and later runs in this
+    process start with the text protocol); any failure after that is a failure."""
+
+    def __init__(
+        self, native: ClaudeCodeConversation, text: Callable[[], Conversation], switched: Callable[[str], None]
+    ) -> None:
+        self.native, self.text, self.switched = native, text, switched
+        self.current: Conversation = native
+        self.decided = False
+
+    def next(self) -> Reply:
+        global unavailable
+        if self.decided:
+            return self.current.next()
+        try:
+            reply = self.native.next()
+        except StartupError as exc:
+            self.native.close()
+            unavailable = str(exc)
+            self.current = self.text()
+            self.decided = True
+            self.switched(str(exc))
+            return self.current.next()
+        self.decided = True
+        return reply
+
+    def results(self, results: Sequence[tuple[Call, str, bool]]) -> None:
+        self.current.results(results)
+
+    def nudge(self, reply: Reply) -> None:
+        self.current.nudge(reply)
+
+    def close(self) -> None:
+        self.native.close()

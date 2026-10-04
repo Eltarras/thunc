@@ -11,6 +11,10 @@ does, then plays a script instead of asking a model. FAKE_CLAUDE_SCRIPT is a JSO
 
 A turn after a text or error turn waits for the next user message, as the real CLI does. What it
 saw (arguments, system prompt, tools, user messages, tool results) goes to FAKE_CLAUDE_LOG as JSON.
+
+FAKE_CLAUDE_MODE plays a CLI that can't run thunc's tools: "old" rejects an option and exits, as a
+CLI too old for the options would; "no-mcp" starts without loading any MCP server, as when a policy
+turns them off, and ends its turn with text.
 """
 
 import json
@@ -23,6 +27,18 @@ import time
 
 def main():
     args = sys.argv[1:]
+    mode = os.environ.get("FAKE_CLAUDE_MODE")
+    if mode == "old":
+        sys.stderr.write("error: unknown option '--setting-sources'\n")
+        sys.exit(1)
+    if mode == "no-mcp":
+        sys.stdout.write(json.dumps({"type": "system", "subtype": "init", "mcp_servers": []}) + "\n")
+        sys.stdout.flush()
+        sys.stdin.readline()
+        result = {"type": "result", "subtype": "success", "is_error": False, "result": "I have no tools."}
+        sys.stdout.write(json.dumps(result) + "\n")
+        sys.stdout.flush()
+        time.sleep(60)
     log = {"args": args, "cwd": os.getcwd(), "messages": [], "results": []}
     path = os.environ["FAKE_CLAUDE_LOG"]
 
