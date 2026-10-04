@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -40,7 +41,7 @@ class Rule:
     def matches_command(self, argv: Sequence[str]) -> bool:
         if self.pattern is None:
             return True
-        words = shlex.split(self.pattern)
+        words = split_command(self.pattern)
         return list(argv[: len(words)]) == words
 
 
@@ -149,7 +150,7 @@ def _parse(text: str) -> Rule:
         raise ValueError(f"{source!r}: memory takes no path; use 'memory' or '!memory'")
     if kind == "run":
         try:
-            words = shlex.split(pattern)
+            words = split_command(pattern)
         except ValueError as exc:
             raise ValueError(f"{source!r}: {exc}") from None
         if not words:
@@ -166,6 +167,15 @@ def _parse(text: str) -> Rule:
         pattern += "**"
     _glob(pattern)
     return Rule(deny, kind, pattern, source)
+
+
+def split_command(text: str) -> list[str]:
+    """A command line as words, quoted the way a shell quotes them. On Windows a backslash is part of
+    a path, not an escape, so C:\\tools\\python.exe stays whole; quotes around a word are removed."""
+    if sys.platform != "win32":
+        return shlex.split(text)
+    words = shlex.split(text, posix=False)
+    return [w[1:-1] if len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'" else w for w in words]
 
 
 def _show(rule: Rule) -> str:

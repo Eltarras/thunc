@@ -26,7 +26,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
-from .permissions import Denied, Permissions
+from .permissions import Denied, Permissions, split_command
 from .runs import Command
 
 # Folders that are rarely what an agent is looking for, and can be huge.
@@ -217,7 +217,7 @@ class Workdir:
 
     def run(self, command: str) -> str:
         try:
-            argv = shlex.split(command)
+            argv = split_command(command)
         except ValueError as exc:
             raise ToolError(f"can't read the command: {exc}") from None
         if not argv:
