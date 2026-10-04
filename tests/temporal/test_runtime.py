@@ -416,3 +416,40 @@ async def test_cancel_running_command_stops_before_its_effect(service, tmp_path,
         with pytest.raises(DurableError, match="cancelled"):
             await asyncio.wait_for(handle.result(), 10)
         assert not (root / "should-not-exist").exists()
+
+
+@pytest.mark.asyncio
+async def test_native_workflow_composes_registered_tasks_without_slot_deadlock(service, tmp_path, fake):
+    from temporalio.worker import Worker as SDKWorker
+
+    from examples.temporal.pipeline import ReviewPipeline
+
+    @thunc.function
+    def classify(question: str) -> str:
+        """Classify."""
+        ...
+
+    @thunc.function
+    def analyze(question: str) -> str:
+        """Analyze."""
+        ...
+
+    @thunc.function
+    def summarize(analysis: str) -> str:
+        """Summarize."""
+        ...
+
+    registry = Registry(state_dir=tmp_path / "state")
+    registry.function("question.classify", classify, version="1", workspace_id="myapp")
+    registry.function("repo.analyze", analyze, version="1", workspace_id="myapp")
+    registry.function("analysis.summarize", summarize, version="1", workspace_id="myapp")
+    fake.replies = ["bug", "analysis", "summary"]
+    async with Worker(service.client, task_queue="thunc-myapp-v1", registry=registry, concurrency=1):
+        async with SDKWorker(service.client, task_queue="pipeline", workflows=[ReviewPipeline]):
+            result = await asyncio.wait_for(
+                service.client.execute_workflow(
+                    ReviewPipeline.run, "question", id="pipeline-one", task_queue="pipeline"
+                ),
+                30,
+            )
+            assert result == "summary" and len(fake.prompts) == 3
