@@ -312,3 +312,30 @@ def test_protocol_native_needs_an_api_backend(fake, repo):
         _task(thunc.Agent("x", workdir=repo, protocol="native"))()
     with pytest.raises(ValueError, match="protocol= is 'native', 'text' or None"):
         thunc.Agent("x", workdir=repo, protocol="json")
+
+
+def lookup_order(order_id: str) -> dict[str, float]:
+    """Look up an order's totals."""
+    return {"total": 49.0}
+
+
+def test_claude_custom_tool(claude, repo):
+    agent = thunc.Agent("c", workdir=repo, tools=[lookup_order])
+    claude.replies = [message(use("lookup_order", "t1", order_id="A-1")), message(use("finish", "t2", value=49.0))]
+
+    @agent.task
+    def total() -> float:
+        """Find the total of order A-1."""
+        ...
+
+    assert total() == 49.0
+    tool = next(t for t in claude.requests[0]["tools"] if t["name"] == "lookup_order")
+    assert tool["description"] == "Look up an order's totals."
+    assert tool["input_schema"] == {
+        "type": "object",
+        "properties": {"order_id": {"type": "string"}},
+        "required": ["order_id"],
+        "additionalProperties": False,
+    }
+    (result,) = claude.requests[1]["messages"][2]["content"]
+    assert result["content"] == '{"total": 49.0}' and "is_error" not in result
