@@ -230,6 +230,16 @@ def test_allowed_empty_bodies(fake, body):
     assert namespace["f"]("x") == "ok"
 
 
+@pytest.mark.parametrize("body", ["return 1", "return True", "return 'x'", "raise ValueError", "raise ValueError()"])
+@pytest.mark.parametrize("is_async", [False, True])
+def test_bodies_that_differ_only_in_a_constant_or_name_are_rejected(body, is_async):
+    # Same bytecode as `return None` / `raise NotImplementedError`: only the constant or name differs.
+    namespace = {"thunc": thunc}
+    with pytest.raises(TypeError, match="body must be empty"):
+        keyword = "async def" if is_async else "def"
+        exec(f"@thunc.function\n{keyword} f(x: str) -> int:\n    'Do it.'\n    {body}\n", namespace)
+
+
 def test_rejected_definitions():
     with pytest.raises(TypeError, match="body must be empty"):
 
