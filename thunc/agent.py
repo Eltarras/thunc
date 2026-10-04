@@ -391,6 +391,13 @@ class Agent:
             )
         store = Store(self.name)
         with store.lock():
+            from pathlib import Path
+
+            if any(
+                (path / ".thunc-temporal-owner").exists()
+                for path in (Path(store.folder), Path(self.workdir), *Path(self.workdir).parents)
+            ):
+                raise ThuncError("This workspace or agent memory is owned by Temporal; submit through its Runtime")
             changed_from = store.save_settings(self._settings())
             memory = store.memory()  # once: a note saved during this run reaches the next one
             followed = self._read_followed()  # once too, like memory

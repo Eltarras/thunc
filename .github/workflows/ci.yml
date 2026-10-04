@@ -16,11 +16,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[anthropic,openai,dev]"
+      - run: pip install -e ".[anthropic,openai,temporal-test,dev]"
       - run: pytest            # offline tests only; live_tests need a model and are not run in CI
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy --strict thunc
+      - run: mypy --strict --platform win32 thunc
 
   # The lock, process stopping and path handling have code just for Windows.
   test-windows:
@@ -34,3 +35,19 @@ jobs:
       - run: pytest
         env:
           PYTHONIOENCODING: utf-8  # the console's own code page can't print every test id and message
+
+  temporal-integration:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[anthropic,openai,temporal-test,dev]"
+      - name: Real service, restart and replay tests (no providers)
+        run: pytest -c pytest-temporal.ini tests/temporal -q
+        env:
+          THUNC_TEMPORAL_TESTS: "1"
