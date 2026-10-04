@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import pytest
 
 import thunc
-from thunc import store, tools
+from thunc import store
 
 
 def act(tool, **args):
@@ -116,11 +116,13 @@ def test_system_prompt_has_the_method_rules_and_tools(fake, repo):
     (system,) = fake.systems
     assert system.startswith("You are an agent inside a computer program.")
     assert "How to work:" in system and "Rules:" in system and '- finish {"value": ...}' in system
-    for name in [*tools.TOOLS, "remember"]:
+    for name in ["list", "read", "search", "remember"]:
         assert f"- {name} " in system
+    assert "- write " not in system and "- edit " not in system  # not allowed to write by default
     method = system.split("Rules:")[0]
     assert "save it with remember" in method  # the agent has remember, so its line is sent
-    assert "edit" not in method and "run commands" not in method  # it has no edit or run tools yet
+    assert "edit" not in method and "run commands" not in method  # it has no edit or run tools
+    assert "Your permissions:\n- Read: everything (and anything you may write).\n- Write: nothing." in system
     assert "<memory>" not in system  # nothing saved yet
 
 
@@ -509,3 +511,168 @@ def test_the_agent_folder_is_hidden_from_list(fake, repo, monkeypatch):
     task = make_task(thunc.Agent("a", workdir=repo))
     task(), task()
     assert os.path.isdir(repo / ".thunc_agents" / "a") and ".thunc_agents" not in fake.prompts[-1]
+
+
+# --- writing, within the permissions --------------------------------------------------------
+
+
+def writer(repo, *rules):
+    return make_task(thunc.Agent("w", workdir=repo, permissions=list(rules)))
+
+
+def test_write_tools_are_offered_only_with_a_write_rule(fake, repo):
+    fake.replies = [finish("x"), finish("y")]
+    make_task(thunc.Agent("r", workdir=repo))()
+    writer(repo, "write:docs/**")()
+    reader, writing = fake.systems
+    assert "- write " not in reader and "- edit " not in reader
+    assert "- write " in writing and "- edit " in writing
+    assert "Read a file before you edit it" in writing and "Read a file before you edit it" not in reader
+    assert "- Write: docs/**." in writing
+
+
+def test_create_edit_and_replace_a_file(fake, repo):
+    fake.replies = [
+        act("write", path="docs/guide.md", content="# Guide\n\nTimeout: 30\n"),
+        act("edit", path="docs/guide.md", old="Timeout: 30", new="Timeout: 45"),  # it wrote it, so it knows it
+        act("read", path="config.py"),
+        act("edit", path="config.py", old="TIMEOUT = 30", new="TIMEOUT = 45"),
+        finish("done"),
+    ]
+    assert writer(repo, "write:docs/**", "write:config.py")() == "done"
+    assert (repo / "docs" / "guide.md").read_text() == "# Guide\n\nTimeout: 45\n"
+    assert (repo / "config.py").read_text() == "NAME = 'demo'\nTIMEOUT = 45\n"
+    assert "created docs/guide.md (3 lines)" in fake.prompts[1]
+    assert "edited config.py" in fake.prompts[4]
+
+
+def test_writes_outside_the_rules_are_denied_and_the_run_goes_on(fake, repo):
+    fake.replies = [
+        act("read", path="config.py"),
+        act("edit", path="config.py", old="TIMEOUT = 30", new="TIMEOUT = 1"),
+        act("write", path="../outside.txt", content="x"),
+        act("write", path="CHANGELOG.md", content="- Added a thing\n"),
+        finish("ok"),
+    ]
+    assert writer(repo, "write:CHANGELOG.md")() == "ok"
+    feedback = fake.prompts[-1]
+    assert "error: not permitted: writing 'config.py' isn't allowed: no write rule matches it" in feedback
+    assert "this agent may write: write:CHANGELOG.md" in feedback
+    assert "is outside the working directory" in feedback
+    assert (repo / "config.py").read_text() == "NAME = 'demo'\nTIMEOUT = 30\n"
+    assert not (repo.parent / "outside.txt").exists() and (repo / "CHANGELOG.md").exists()
+
+
+def test_a_write_tool_without_any_write_rule_is_denied(fake, repo):
+    fake.replies = [act("write", path="x.txt", content="x"), finish("ok")]
+    make_task(thunc.Agent("r", workdir=repo))()
+    assert "error: not permitted: this agent may not write files" in fake.prompts[-1]
+    assert not (repo / "x.txt").exists()
+
+
+def test_files_must_be_read_before_they_are_changed(fake, repo):
+    fake.replies = [
+        act("edit", path="config.py", old="TIMEOUT = 30", new="TIMEOUT = 45"),
+        act("write", path="config.py", content="TIMEOUT = 45\n"),
+        finish("ok"),
+    ]
+    writer(repo, "write")()
+    feedback = fake.prompts[-1]
+    assert feedback.count("error: read 'config.py' before changing it") == 2
+    assert (repo / "config.py").read_text() == "NAME = 'demo'\nTIMEOUT = 30\n"
+
+
+def test_a_file_changed_on_disk_since_it_was_read_is_not_overwritten(monkeypatch, repo):
+    from thunc import backends
+
+    replies = [act("read", path="config.py"), act("edit", path="config.py", old="TIMEOUT = 30", new="TIMEOUT = 45")]
+    replies += [finish("ok")]
+    prompts = []
+
+    def backend(text, **kwargs):
+        prompts.append(text)
+        if len(prompts) == 2:  # someone else changes the file between the agent's read and its edit
+            (repo / "config.py").write_text("NAME = 'demo'\nTIMEOUT = 30\nRETRIES = 3\n")
+        return replies.pop(0)
+
+    monkeypatch.setitem(backends.BACKENDS, "racer", backend)
+    thunc.configure(backend="racer")
+    writer(repo, "write")()
+    assert "error: 'config.py' changed on disk since you read it; read it again first" in prompts[-1]
+    assert (repo / "config.py").read_text().endswith("RETRIES = 3\n")
+
+
+def test_edit_needs_text_that_appears_exactly_once(fake, repo):
+    (repo / "dup.txt").write_text("a = 1\na = 1\n")
+    fake.replies = [
+        act("read", path="dup.txt"),
+        act("edit", path="dup.txt", old="a = 1", new="a = 2"),
+        act("edit", path="dup.txt", old="b = 1", new="b = 2"),
+        act("edit", path="dup.txt", old="", new="x"),
+        act("edit", path="dup.txt", old="a = 1\na = 1", new="a = 2"),
+        finish("ok"),
+    ]
+    writer(repo, "write")()
+    feedback = fake.prompts[-1]
+    assert "the old text appears 2 times; it must appear exactly once" in feedback
+    assert "the old text isn't in the file" in feedback
+    assert "old is empty" in feedback
+    assert (repo / "dup.txt").read_text() == "a = 2\n"
+
+
+def test_edit_keeps_windows_line_endings(fake, repo):
+    (repo / "win.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
+    fake.replies = [act("read", path="win.txt"), act("edit", path="win.txt", old="one\ntwo", new="1\n2"), finish("ok")]
+    writer(repo, "write")()
+    assert (repo / "win.txt").read_bytes() == b"1\r\n2\r\nthree\r\n"
+
+
+def test_denied_files_are_hidden_from_list_and_search(fake, repo):
+    (repo / ".env").write_text("API_KEY=secret TIMEOUT\n")
+    fake.replies = [act("list"), act("search", pattern="TIMEOUT"), act("read", path=".env"), finish("ok")]
+    make_task(thunc.Agent("r", workdir=repo, permissions=["!read:.env*"]))()
+    after_list, after_search, after_read = fake.prompts[1:4]
+    assert ".env" not in after_list.split("<result>")[-1]
+    assert "secret" not in after_search and "config.py:2" in after_search
+    assert "error: not permitted: reading '.env' is denied by '!read:.env*'" in after_read
+
+
+def test_a_link_cannot_lead_to_a_denied_file(fake, repo):
+    (repo / ".env").write_text("API_KEY=secret\n")
+    os.symlink(repo / ".env", repo / "public.txt")
+    fake.replies = [act("read", path="public.txt"), finish("ok")]
+    make_task(thunc.Agent("r", workdir=repo, permissions=["!read:.env"]))()
+    assert "denied by '!read:.env'" in fake.prompts[-1] and "secret" not in fake.prompts[-1]
+
+
+def test_no_memory_permission(fake, repo):
+    fake.replies = [act("remember", note="x"), finish("ok")]
+    agent = thunc.Agent("r", workdir=repo, permissions=["!memory"])
+    make_task(agent)()
+    assert "- remember " not in fake.systems[0] and "save it with remember" not in fake.systems[0]
+    assert "error: not permitted: this agent may not save notes" in fake.prompts[-1]
+    assert agent.memory == ""
+
+
+def test_bad_rules_fail_at_declaration(repo):
+    with pytest.raises(ValueError, match=r"Agent 'w': Unknown permission 'run:pytest' \(running commands"):
+        thunc.Agent("w", workdir=repo, permissions=["run:pytest"])
+
+
+def test_the_run_record_lists_changes_and_denials(fake, repo):
+    agent = thunc.Agent("w", workdir=repo, permissions=["write:notes/**"])
+    fake.replies = [
+        act("write", path="notes/a.md", content="x" * 10_000),
+        act("write", path="README.md", content="y"),
+        finish("ok"),
+    ]
+    make_task(agent)()
+    (name,) = os.listdir(os.path.join(agent.folder, "sessions"))
+    with open(os.path.join(agent.folder, "sessions", name)) as f:
+        events = [json.loads(line) for line in f]
+    write_ok, write_denied, done = events[1:]
+    assert len(write_ok["args"]["content"]) < 4100 and "denied" not in write_ok  # long content is cut
+    assert write_denied["denied"] is True
+    assert done["files_changed"] == ["notes/a.md"]
+    with open(os.path.join(agent.folder, "agent.json")) as f:
+        assert json.load(f)["permissions"] == ["write:notes/**"]

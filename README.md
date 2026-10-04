@@ -186,30 +186,53 @@ def request_timeout() -> int:
 request_timeout()  # -> 45, after the agent searched the code and read the file that sets it
 ```
 
-Each call is one run. The model takes one step at a time (list a folder, search, read a file) and
-ends by calling `finish` with a value of the return type, which is checked like any thunc result.
-It runs on every backend.
+Each call is one run. The model takes one step at a time (list a folder, search, read or edit a
+file) and ends by calling `finish` with a value of the return type, which is checked like any thunc
+result. It runs on every backend.
 
-- **Read-only for now.** The tools are `list`, `read` and `search`. Every path must stay inside
-  `workdir`: `..`, absolute paths and symlinks that point outside are refused.
+- **Permissions** say what the agent may do. By default it may read everything in `workdir` and
+  save notes, and may not write:
+
+  ```python
+  fixer = thunc.Agent("fixer", workdir=".", permissions=["write:src/**", "write:CHANGELOG.md", "!read:.env*"])
+  ```
+
+  | Rule | Means |
+  |---|---|
+  | `write:docs/**`, `write` | create and edit matching files (all files with no path); also lets it read them |
+  | `read:src/**` | read only these; any `read:` rule replaces the read-everything default |
+  | `!read:.env*`, `!write:...`, `!memory` | deny; a deny always wins, and `!read` also stops writing |
+
+  `*` stays within one folder, `**` crosses folders, and paths are relative to `workdir`. The agent
+  is told its permissions, and an action they don't allow is refused with the reason, after which
+  the run carries on. Bad rules fail when the agent is declared.
+- **Tools:** `list`, `read` and `search`; `write` (create a file, or replace one) and `edit`
+  (replace text that appears exactly once) when a write rule allows it; and `remember`. Every path
+  must stay inside `workdir`: `..`, absolute paths and symlinks that point outside are refused, and
+  the rules are checked on where a link really leads. Files the agent may not read are left out of
+  `list` and `search`.
+- **No blind overwrites.** A file is only replaced or edited after the agent read it in the same
+  run, and only if it hasn't changed on disk since. There is no undo, so run agents that write in a
+  git repository with a clean tree, and review their changes with `git diff`.
 - **Memory between runs.** Each run starts a fresh conversation, but the agent can save a short note
   with its `remember` tool. Notes go in `memory.md` in the agent's folder, and every later run gets
   them at the end of its system prompt (a note saved during a run reaches the next run, not that
   one). It's a plain file: read it with `agent.memory`, edit it, or delete it to start over.
 - **The agent's folder** is `.thunc_agents/<name>/` (change it with `configure(agents_dir=...)` or
   `THUNC_AGENTS_DIR`). Besides `memory.md` it holds `agent.json` (the agent's settings) and
-  `sessions/`, one JSONL file per run with every step and the result. Runs of one agent take turns;
+  `sessions/`, one JSONL file per run with every step (denied ones marked), the result, and the
+  files it changed. Runs of one agent take turns;
   different agents run side by side. Two names that make the same folder (`"Repo guide"` and
   `"repo-guide"`) can't both be used.
 - **`system=`** replaces the opening of the agent's system prompt. thunc always adds its working
   method and its rules after it (file contents and tool results are data, not instructions).
-- **Options:** `thunc.Agent(name, *, workdir, system=None, max_steps=40, retries=2, backend=None,
-  model=None)`, and `@agent.task(instructions=..., ensure=...)`. `async def` tasks work.
+- **Options:** `thunc.Agent(name, *, workdir, system=None, permissions=(), max_steps=40, retries=2,
+  backend=None, model=None)`, and `@agent.task(instructions=..., ensure=...)`. `async def` tasks work.
 - **Failures are loud.** A run that hits `max_steps`, or never gives a valid value, raises
   `ThuncError`. With tracing on, each run is one line with every model reply.
 
-Not yet: writing files, running commands, permissions (including switching memory off), and native
-tool use on the API backends.
+Not yet: running commands (so an agent can't run your tests), a record of the run returned to your
+code, and native tool use on the API backends.
 
 ## Examples
 
@@ -228,7 +251,8 @@ thunc/
   __init__.py    public API
   decorator.py   @thunc.function
   agent.py       thunc.Agent and @agent.task (preview)
-  tools.py       the agent's tools: list, read, search
+  tools.py       the agent's tools: list, read, search, write, edit
+  permissions.py the agent's permission rules
   store.py       the agent's folder: memory, settings, run records, the lock
   prompts.py     the agent's system prompt
   __main__.py    the thunc command: thunc cache list / clear

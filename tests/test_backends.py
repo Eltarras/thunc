@@ -173,6 +173,18 @@ def test_codex(monkeypatch):
     assert thunc.call("ping") == "pong"
 
 
+def test_codex_leaves_out_its_own_notes(monkeypatch):
+    calls = []
+    stub_cli(monkeypatch, write_file="pong\n", calls=calls)
+    thunc.configure(backend="codex")
+    thunc.call("ping")
+    args, _ = calls[0]
+    settings = [args[i + 1] for i, a in enumerate(args) if a == "--config"]
+    assert settings[0].startswith("model_instructions_file=")  # still the first --config
+    assert "include_permissions_instructions=false" in settings
+    assert "include_environment_context=false" in settings
+
+
 def test_codex_system_prompt_goes_in_an_instructions_file(monkeypatch):
     calls, seen = [], {}
     stub_cli(monkeypatch, write_file="pong\n", calls=calls)

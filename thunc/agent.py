@@ -9,8 +9,8 @@
 
 Each call is one run: the model replies with one action at a time (a JSON object naming a tool),
 thunc carries it out and sends back the result, until the model calls finish with a value of the
-return type. This text protocol works on every backend. The tools are read-only for now, plus
-remember, which saves a note to the agent's memory.
+return type. This text protocol works on every backend. The tools: list, read and search; write and
+edit where the permissions allow; and remember, which saves a note to the agent's memory.
 
 Memory: each agent has a folder (see store.py) whose memory.md is read once at the start of every
 run and sent at the end of the system prompt, after the part that never changes between runs. A
@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any, ParamSpec, TypeVar, overload
 
 from . import tools
@@ -30,6 +30,7 @@ from .config import _check_backend
 from .core import _ensured, _render, _send, _sendable, _trace
 from .decorator import _read_signature, _wrap
 from .errors import ThuncError
+from .permissions import Permissions
 from .prompts import AGENT_CONTRACT, AGENT_PERSONA, method
 from .schema import describe, parse, shorten, validate
 from .store import Session, Store, slug
@@ -44,6 +45,9 @@ class Agent:
     name:      any string. It names the agent's folder (under configure(agents_dir=...)), which
                holds its memory and a record of every run, so the same name keeps its memory.
     workdir:   the folder its tools work in. Paths outside it are refused.
+    permissions: rules like ["write:CHANGELOG.md", "write:docs/**", "!read:.env*"]. By default the
+               agent may read everything in workdir and save notes, and may not write. See
+               thunc/permissions.py; a deny ("!...") always wins.
     system:    replaces the opening of the agent's system prompt. thunc's working method and rules
                are always sent after it.
     max_steps: model replies per run before ThuncError.
@@ -56,6 +60,7 @@ class Agent:
         *,
         workdir: str | os.PathLike[str],
         system: str | None = None,
+        permissions: Iterable[str] = (),
         max_steps: int = 40,
         retries: int = 2,
         backend: str | None = None,
@@ -71,6 +76,10 @@ class Agent:
             raise ValueError(f"Agent {name!r}: max_steps must be at least 1 and retries at least 0")
         if backend is not None:
             _check_backend(backend)
+        try:
+            self.permissions = Permissions(permissions)
+        except ValueError as exc:
+            raise ValueError(f"Agent {name!r}: {exc}") from None
         self.name = name
         self.workdir = folder
         self.system = system
@@ -131,18 +140,30 @@ class Agent:
         memory = Store(self.name).memory() if memory is None else memory
         return self._fixed_prompt() + _memory_section(memory)
 
+    def tools(self) -> list[str]:
+        """The tools this agent is offered, given its permissions."""
+        offered = [name for name in tools.TOOLS if name not in tools.WRITE_TOOLS or self.permissions.may("write")]
+        if self.permissions.may("memory"):
+            offered.append("remember")
+        return [*offered, "finish"]
+
     def _fixed_prompt(self) -> str:
         opening = self.system.strip() if self.system and self.system.strip() else AGENT_PERSONA
-        listed = "\n".join(f"- {name} {description}" for name, (_, _, description) in tools.TOOLS.items())
+        offered = self.tools()
+        listed = "\n".join(
+            f"- {name} {tools.TOOLS[name][2] if name in tools.TOOLS else REMEMBER}"
+            for name in offered
+            if name != "finish"
+        )
         protocol = (
             "How to use a tool: reply with exactly one JSON object and nothing else, like this:\n"
             '{"tool": "read", "args": {"path": "README.md"}}\n'
             "The program carries it out and sends back the result. Paths are relative to the working directory.\n\n"
             f"Tools:\n{listed}\n"
-            f"- remember {REMEMBER}\n"
-            '- finish {"value": ...}  Ends the task. The value is your result, in the type the task asks for.'
+            '- finish {"value": ...}  Ends the task. The value is your result, in the type the task asks for.\n\n'
+            + self.permissions.describe()
         )
-        return "\n\n".join([opening, method({*tools.TOOLS, "remember"}), AGENT_CONTRACT, protocol])
+        return "\n\n".join([opening, method(set(offered)), AGENT_CONTRACT, protocol])
 
     def _settings(self) -> dict[str, Any]:
         """What agent.json records."""
@@ -150,6 +171,7 @@ class Agent:
             "name": self.name,
             "workdir": self.workdir,
             "system": self.system,
+            "permissions": self.permissions.written,
             "max_steps": self.max_steps,
             "retries": self.retries,
             "backend": self.backend,
@@ -196,7 +218,8 @@ class Agent:
         returns: Any,
         ensure: Callable[[Any], bool] | None,
     ) -> Any:
-        workdir = tools.Workdir(self.workdir)
+        workdir = tools.Workdir(self.workdir, self.permissions)
+        offered = self.tools()
         request = _request(instructions, inputs, returns)
         steps: list[str] = []
         answers: list[str] = []
@@ -233,15 +256,18 @@ class Agent:
                             ) from problem
                         continue
                     result["value"] = value
-                    session.write("finish", n=len(steps) + 1, value=value)
+                    session.write("finish", n=len(steps) + 1, value=value, files_changed=workdir.changed)
                     return value
-                output = _use(tool, args, workdir, store)
+                output, denied = _use(tool, args, workdir, store, offered)
                 steps.append(_step(len(steps) + 1, shown, output))
-                session.write("step", n=len(steps), tool=tool, args=args, result=shorten(output, 4000))
+                record = {"denied": True} if denied else {}
+                session.write(
+                    "step", n=len(steps), tool=tool, args=_shortened(args), result=shorten(output, 4000), **record
+                )
             raise ThuncError(f"{name}: the agent didn't finish within max_steps={self.max_steps}")
         except BaseException as exc:  # Ctrl-C too, so the trace doesn't record it as a success
             result["error"] = exc
-            session.write("error", error=str(exc) or type(exc).__name__)
+            session.write("error", error=str(exc) or type(exc).__name__, files_changed=workdir.changed)
             raise
         finally:
             _trace(instructions, inputs, returns, answers, result, started, system, self.backend, self.model, name)
@@ -261,19 +287,29 @@ def _memory_section(memory: str) -> str:
     )
 
 
-def _use(tool: str, args: dict[str, Any], workdir: tools.Workdir, store: Store) -> str:
-    """Carry out a tool other than finish, and return what the model is told."""
+def _use(tool: str, args: dict[str, Any], workdir: tools.Workdir, store: Store, offered: list[str]) -> tuple[str, bool]:
+    """Carry out a tool other than finish. Returns what the model is told, and whether it was denied."""
     try:
+        if tool not in offered:
+            what = "save notes" if tool == "remember" else "write files"
+            raise tools.NotPermitted(f"not permitted: this agent may not {what}")
         if tool == "remember":
             if set(args) != {"note"} or not isinstance(args["note"], str):
                 raise tools.ToolError('remember takes {"note": "..."}')
             store.remember(args["note"])
-            return "saved. Later runs of this agent will see this note in their memory."
-        return tools.run(workdir, tool, args)
+            return "saved. Later runs of this agent will see this note in their memory.", False
+        return tools.run(workdir, tool, args), False
+    except tools.NotPermitted as problem:
+        return f"error: {problem}", True
     except (tools.ToolError, ValueError) as problem:
-        return f"error: {problem}"
+        return f"error: {problem}", False
     except OSError as problem:
-        return f"error: {problem.strerror or problem}"
+        return f"error: {problem.strerror or problem}", False
+
+
+def _shortened(args: dict[str, Any]) -> dict[str, Any]:
+    """Arguments for the run record, with long text (a whole file to write) cut down."""
+    return {k: shorten(v, 4000) if isinstance(v, str) else v for k, v in args.items()}
 
 
 def _request(instructions: str, inputs: dict[str, Any], returns: Any) -> str:
@@ -301,7 +337,7 @@ def _transcript(request: str, steps: list[str]) -> str:
 
 def _action(answer: str) -> tuple[str, dict[str, Any]]:
     """The model's reply as (tool, args). Raises ValueError with a reason the model can act on."""
-    names = [*tools.TOOLS, "remember", "finish"]
+    names = [*tools.TOOLS, "remember", "finish"]  # all of them: a tool the agent isn't offered is denied, not unknown
     obj = parse(answer, dict[str, Any])  # reads code fences and <think> blocks like any answer
     tool = obj.get("tool")
     if not isinstance(tool, str) or tool not in names:

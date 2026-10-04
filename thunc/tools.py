@@ -1,15 +1,22 @@
-"""The tools an agent uses on its working directory: list, read and search. Read-only for now.
+"""The tools an agent uses on its working directory: list, read, search, write and edit.
 
 Every path is resolved (symlinks included) and must land inside the working directory, so `..`,
-absolute paths and links that point outside are refused.
+absolute paths and links that point outside are refused. Then the agent's permissions are checked
+on the real path, so a link can't lead to a file the rules deny.
+
+A file is only replaced or edited after the agent read it in this run, and only if it hasn't
+changed on disk since: the agent never overwrites what it hasn't seen.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from collections.abc import Callable, Iterator
 from typing import Any
+
+from .permissions import Denied, Permissions
 
 # Folders that are rarely what an agent is looking for, and can be huge.
 SKIPPED_DIRS = frozenset(
@@ -25,11 +32,18 @@ class ToolError(Exception):
     """A tool call that can't be carried out. Its message goes back to the model, which can try again."""
 
 
-class Workdir:
-    """A working directory and the read-only tools that act on it."""
+class NotPermitted(ToolError):
+    """A tool call the agent's permissions don't allow."""
 
-    def __init__(self, root: str) -> None:
+
+class Workdir:
+    """A working directory and the tools that act on it, within the agent's permissions."""
+
+    def __init__(self, root: str, permissions: Permissions | None = None) -> None:
         self.root = os.path.realpath(root)
+        self.permissions = permissions or Permissions()
+        self.seen: dict[str, str] = {}  # real path -> sha256 of the content the agent last read or wrote
+        self.changed: list[str] = []  # files created or changed in this run, as the model sees them
 
     def path(self, relative: str) -> str:
         """The real path for `relative`, which must stay inside the working directory."""
@@ -42,12 +56,27 @@ class Workdir:
         """A path as the model sees it: relative to the working directory, with / separators."""
         return os.path.relpath(full, self.root).replace(os.sep, "/")
 
+    def readable(self, full: str) -> bool:
+        try:
+            self.permissions.check_read(self.show(full))
+        except Denied:
+            return False
+        return True
+
+    def _check(self, check: Callable[[str], None], full: str) -> None:
+        try:
+            check(self.show(full))
+        except Denied as exc:
+            raise NotPermitted(f"not permitted: {exc}") from None
+
     def list(self, path: str = ".") -> str:
         start = self.path(path)
         if not os.path.isdir(start):
             raise ToolError(f"{path!r} is not a folder")
         entries = []
         for full, is_dir in self._walk(start):
+            if not is_dir and not self.readable(full):
+                continue  # files the agent may not read aren't shown at all
             entries.append(self.show(full) + ("/" if is_dir else ""))
             if len(entries) == MAX_LIST:
                 entries.append(f"(stopped at {MAX_LIST} entries; list a subfolder to see more)")
@@ -58,12 +87,14 @@ class Workdir:
         full = self.path(path)
         if not os.path.isfile(full):
             raise ToolError(f"{path!r} is not a file" + ("; it is a folder, use list" if os.path.isdir(full) else ""))
+        self._check(self.permissions.check_read, full)
         if offset < 1 or limit < 1:
             raise ToolError("offset and limit must be at least 1")
         with open(full, "rb") as f:
             data = f.read()
         if b"\0" in data[:8192]:
             raise ToolError(f"{path!r} is a binary file")
+        self.seen[full] = _digest(data)
         lines = data.decode("utf-8", errors="replace").splitlines()
         chunk = lines[offset - 1 : offset - 1 + limit]
         if not chunk:
@@ -81,7 +112,11 @@ class Workdir:
         except re.error as exc:
             raise ToolError(f"invalid regular expression: {exc}") from None
         start = self.path(path)
-        files = [start] if os.path.isfile(start) else (full for full, is_dir in self._walk(start) if not is_dir)
+        if os.path.isfile(start):
+            self._check(self.permissions.check_read, start)
+            files: Iterator[str] | list[str] = [start]
+        else:
+            files = (full for full, is_dir in self._walk(start) if not is_dir and self.readable(full))
         matches = []
         for full in files:
             for number, line in self._lines(full):
@@ -90,6 +125,61 @@ class Workdir:
                     if len(matches) == MAX_MATCHES:
                         return "\n".join(matches) + f"\n(stopped at {MAX_MATCHES} matches; narrow the search)"
         return "\n".join(matches) or "(no matches)"
+
+    def write(self, path: str, content: str) -> str:
+        full = self.path(path)
+        self._check(self.permissions.check_write, full)
+        if os.path.isdir(full):
+            raise ToolError(f"{path!r} is a folder")
+        exists = os.path.exists(full)
+        if exists:
+            self._unchanged_since_read(path, full)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        self._save(full, content)
+        lines = content.count("\n") + (0 if content.endswith("\n") or not content else 1)
+        return f"{'replaced' if exists else 'created'} {self.show(full)} ({lines} lines)"
+
+    def edit(self, path: str, old: str, new: str) -> str:
+        full = self.path(path)
+        self._check(self.permissions.check_write, full)
+        if not os.path.isfile(full):
+            raise ToolError(f"{path!r} is not a file; use write to create it")
+        data = self._unchanged_since_read(path, full)
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ToolError(f"{path!r} isn't UTF-8 text, so it can't be edited") from None
+        if not old:
+            raise ToolError("old is empty; give the exact text to replace")
+        if old not in text and "\r\n" in text:  # the file uses Windows line endings; the model wrote \n
+            old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")
+        count = text.count(old)
+        if count != 1:
+            problem = "isn't in the file" if count == 0 else f"appears {count} times"
+            raise ToolError(
+                f"the old text {problem}; it must appear exactly once, so include more of the lines around it"
+            )
+        self._save(full, text.replace(old, new, 1))
+        return f"edited {self.show(full)}"
+
+    def _unchanged_since_read(self, path: str, full: str) -> bytes:
+        """The file's current content, if the agent read it in this run and it hasn't changed since."""
+        with open(full, "rb") as f:
+            data = f.read()
+        if full not in self.seen:
+            raise ToolError(f"read {path!r} before changing it")
+        if self.seen[full] != _digest(data):
+            raise ToolError(f"{path!r} changed on disk since you read it; read it again first")
+        return data
+
+    def _save(self, full: str, text: str) -> None:
+        data = text.encode("utf-8")
+        with open(full, "wb") as f:
+            f.write(data)
+        self.seen[full] = _digest(data)  # the agent knows what it wrote, so it can edit it again
+        shown = self.show(full)
+        if shown not in self.changed:
+            self.changed.append(shown)
 
     def _walk(self, start: str) -> Iterator[tuple[str, bool]]:
         """(path, is_folder) for everything under `start`, in tree order: each folder's contents
@@ -136,7 +226,20 @@ TOOLS: dict[str, tuple[str, dict[str, tuple[type, bool]], str]] = {
         {"pattern": (str, True), "path": (str, False)},
         '{"pattern": "def main", "path": "."}  Lines matching a Python regular expression, as file:line: text.',
     ),
+    "write": (
+        "write",
+        {"path": (str, True), "content": (str, True)},
+        '{"path": "docs/new.md", "content": "..."}  Creates a file, or replaces one you read in this run, '
+        "with the full content.",
+    ),
+    "edit": (
+        "edit",
+        {"path": (str, True), "old": (str, True), "new": (str, True)},
+        '{"path": "src/app.py", "old": "exact text", "new": "replacement"}  Replaces text that appears exactly '
+        "once in a file you read in this run.",
+    ),
 }
+WRITE_TOOLS = ("write", "edit")
 
 
 def run(workdir: Workdir, name: str, args: dict[str, Any]) -> str:
@@ -156,3 +259,7 @@ def run(workdir: Workdir, name: str, args: dict[str, Any]) -> str:
     if len(result) > MAX_RESULT:
         result = result[:MAX_RESULT] + f"\n(cut at {MAX_RESULT} characters; ask for less, e.g. a smaller limit)"
     return result
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
