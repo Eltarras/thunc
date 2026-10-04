@@ -9,3 +9,7 @@ dist/
 *.jsonl
 .thunc_cache/
 .thunc_agents/
+.thunc_temporal/
+.temporal-dev/
+examples/temporal/temporal-state/
+examples/temporal/temporal-workspace/
