@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Source for docs/og.png, the 1280x640 link preview. Render with:
+     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --hide-scrollbars \
+       --window-size=1280,640 --screenshot=docs/og.png design/og-card.html -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Serif:wght@600&display=block">
+<style>
+  :root {
+    --bg: #f7f5f2; --surface: #ffffff; --sunk: #efebe6; --fg: #22201d; --muted: #6c655d; --line: #ddd6cd;
+    --accent: #9b481b; --kw: #8a3fa0; --str: #2f7a46; --fn: #2c5f8a; --ty: #9b481b; --com: #8a8279;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    background: var(--bg); color: var(--fg); font-family: "IBM Plex Sans", sans-serif; -webkit-font-smoothing: antialiased;
+    display: grid; grid-template-columns: 560px 1fr; gap: 56px; align-items: center; padding: 0 72px;
+    border-top: 8px solid var(--accent);
+  }
+  .brand { font: 600 64px/1 "IBM Plex Mono", monospace; letter-spacing: -.04em; }
+  .brand span { color: var(--accent); }
+  .eyebrow { font: 500 15px/1 "IBM Plex Mono", monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-top: 18px; }
+  h1 { font: 600 58px/1.08 "IBM Plex Serif", serif; letter-spacing: -.015em; margin-top: 40px; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .install {
+    display: inline-flex; gap: 12px; margin-top: 40px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 9px; padding: 14px 22px; font: 500 22px "IBM Plex Mono", monospace;
+  }
+  .install::before { content: "$"; color: var(--muted); }
+  .facts { margin-top: 22px; font: 16px "IBM Plex Mono", monospace; color: var(--muted); }
+  .facts b { color: var(--fg); font-weight: 500; }
+  .window { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 28px 70px #00000018; overflow: hidden; }
+  .bar { display: flex; align-items: center; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--line); background: var(--sunk); }
+  .bar i { width: 12px; height: 12px; border-radius: 50%; background: var(--line); }
+  .bar span { margin-left: 8px; font: 15px "IBM Plex Mono", monospace; color: var(--muted); }
+  pre { padding: 26px 28px; font: 20px/1.7 "IBM Plex Mono", monospace; }
+  .kw { color: var(--kw); } .str { color: var(--str); } .fn { color: var(--fn); } .ty { color: var(--ty); }
+  .com { color: var(--com); font-style: italic; } .res { color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+  <div>
+    <div class="brand">thunc<span>()</span></div>
+    <div class="eyebrow">think + function</div>
+    <h1>Call an LLM like a <em>typed</em> Python function.</h1>
+    <div class="install">pip install thunc</div>
+    <div class="facts">Claude · OpenAI · local models · <b>0</b> dependencies</div>
+  </div>
+  <div class="window">
+    <div class="bar"><i></i><i></i><i></i><span>urgency.py</span></div>
+<pre><span class="kw">@thunc.function</span>
+<span class="kw">def</span> <span class="fn">urgency</span>(ticket: <span class="ty">str</span>) -&gt; <span class="ty">int</span>:
+    <span class="str">"""Rate urgency, 1 to 5."""</span>
+    ...
+
+<span class="fn">urgency</span>(<span class="str">"I was charged twice!"</span>)
+<span class="com"># -&gt;</span> <span class="res">4</span>  <span class="com"># a checked int</span></pre>
+  </div>
+</body>
+</html>
