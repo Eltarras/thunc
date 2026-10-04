@@ -50,6 +50,57 @@ def test_agent_needs_a_name_and_an_existing_workdir(tmp_path):
     assert thunc.Agent("Release notes", workdir=tmp_path).workdir == os.path.realpath(tmp_path)
 
 
+@pytest.mark.parametrize("selection", ["agent", "configure", "environment"])
+@pytest.mark.parametrize("protocol", [None, "text", "native"])
+@pytest.mark.parametrize("entry", ["task", "async_task", "run"])
+def test_jev_is_rejected_before_a_run_starts(monkeypatch, repo, selection, protocol, entry):
+    from thunc import backends
+
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("An agent must not call the Jev backend")
+
+    monkeypatch.setitem(backends.TYPED_BACKENDS, "jev", unexpected_call)
+    agent = thunc.Agent("judgment", workdir=repo, backend="jev" if selection == "agent" else None, protocol=protocol)
+
+    @agent.task
+    def question() -> bool:
+        """Is the project configured?"""
+        ...
+
+    @agent.task
+    async def async_question() -> bool:
+        """Is the project configured?"""
+        ...
+
+    # Select after declaration too: a constructor-only check would miss these paths.
+    if selection == "configure":
+        thunc.configure(backend="jev")
+    elif selection == "environment":
+        monkeypatch.setenv("THUNC_BACKEND", "jev")
+
+    with pytest.raises(thunc.ThuncError, match="jev backend .* cannot run agents .*use @thunc.function"):
+        if entry == "task":
+            question()
+        elif entry == "async_task":
+            asyncio.run(async_question())
+        else:
+            agent.run(question)
+    assert not os.path.exists(agent.folder)
+
+
+def test_agent_backend_overrides_a_configured_typed_backend(fake, repo):
+    agent = thunc.Agent("guide", workdir=repo, backend="fake")
+    thunc.configure(backend="jev")
+    fake.replies = [finish(True)]
+
+    @agent.task
+    def question() -> bool:
+        """Is the project configured?"""
+        ...
+
+    assert question() is True
+
+
 def test_task_rules_match_thunc_function(repo):
     agent = thunc.Agent("a", workdir=repo)
     with pytest.raises(TypeError, match="@agent.task .* body must be empty"):

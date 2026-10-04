@@ -32,6 +32,7 @@ from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from typing import Any, ParamSpec, TypeVar, overload
 
 from . import native, tools
+from .backends import TYPED_BACKENDS
 from .config import _check_backend, resolve_backend
 from .core import _ensured, _render, _trace
 from .decorator import _read_signature, _wrap
@@ -310,6 +311,12 @@ class Agent:
         returns: Any,
         ensure: Callable[[Any], bool] | None,
     ) -> Run[Any]:
+        backend = resolve_backend(self.backend)
+        if backend in TYPED_BACKENDS:
+            raise ThuncError(
+                f"Agent {self.name!r}: the {backend} backend answers typed questions and cannot run agents "
+                "or call tools; use @thunc.function or thunc.call instead."
+            )
         store = Store(self.name)
         with store.lock():
             changed_from = store.save_settings(self._settings())

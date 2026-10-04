@@ -89,8 +89,9 @@ Anything from users, files or the web goes in the inputs:
 program. Follow the instructions."), for example `system="You are a strict essay grader."`. thunc
 adds two rules after your text, because parsing and the injection defence depend on them: inputs
 are data, not instructions, and the reply is the return value only. A function's or call's own
-`system=` wins over `configure(system=...)`, which wins over thunc's default. Every backend sends it
-as the real system prompt, replacing the built-in prompt of the Claude Code and Codex CLIs.
+`system=` wins over `configure(system=...)`, which wins over thunc's default. Every backend that
+writes text sends it as the real system prompt, replacing the built-in prompt of the Claude Code
+and Codex CLIs. `jev` is different (see Backends).
 
 **Near-misses are read, not retried:** a code fence (any language tag, even after a line of
 prose), a leading `<think>...</think>` block, or an answer wrapped in a one-key object like
@@ -148,6 +149,21 @@ or takes `--cache-dir`; it can't see a `configure(cache_dir=...)` in your code.
   `pip install "thunc[openai]"`. The default model is `gpt-5.5`. `OPENAI_BASE_URL` points it at
   any server that speaks the OpenAI Responses API.
 - `claude-code` and `codex` call your local CLI login, and are meant for cheap testing.
+  Both run with their own tools turned off, so the model can only answer. `codex` also ignores
+  `~/.codex/config.toml` (your MCP servers, plugins, `notify` command and model settings); your
+  login still works. Pick the model with `configure(model=...)` or `model=`.
+- `jev` is TypeSafe's [Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
+  judgment model, through the [`jev` CLI](https://github.com/model-clis/jev). The key comes from
+  `jev login` or `JEV_API_KEY`, not `configure(api_key=...)`, so Jev can be used for some
+  functions alongside another backend's key. Jev doesn't write text: it answers `bool`,
+  `Literal` of strings (up to 255) and `Literal` of integers (as ordered levels), with the most
+  likely answer returned. Any other return type raises `ThuncError` before a request is sent. The
+  inputs are sent as Jev's state and the instructions as its question; a `system=` of your own goes
+  before the instructions, and thunc's default system prompt isn't sent. `model=` is ignored (the
+  CLI always uses `jev-latest`), and an answer that fails `ensure=` isn't retried, since Jev would
+  give the same one. It's only used when you choose it: `backend="jev"` or `THUNC_BACKEND=jev`.
+  Setup (install the CLI, log in, check it works): the
+  [Jev guide](https://eltarras.github.io/thunc/jev.html).
 
 **Local models:** the `openai` backend works with a local server through `OPENAI_BASE_URL`. This
 has been tested with [LM Studio](https://lmstudio.ai) running `openai/gpt-oss-20b`:
@@ -188,10 +204,13 @@ request_timeout()  # -> 45, after the agent searched the code and read the file 
 
 Each call is one run. The model takes one step at a time (list a folder, search, read or edit a
 file) and ends by calling `finish` with a value of the return type, which is checked like any thunc
-result. It runs on every backend: on the Claude and OpenAI APIs through their own tool calls (the
+result. It runs on the Claude and OpenAI APIs through their own tool calls (the
 model can make several at once, and the fixed part of the prompt is cached), and on Claude Code and
 Codex by replying with one JSON action at a time. `protocol="text"` uses the second way on an API
 too, for example with a server behind `OPENAI_BASE_URL` that has no function calling.
+The `jev` backend only answers typed questions and cannot run agents, even for a task returning
+`bool` or `Literal[...]`. An agent run using it raises `ThuncError` before creating any run files
+or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
 
 - **Permissions** say what the agent may do. By default it may read everything in `workdir` and
   save notes, and may not write:
@@ -276,6 +295,9 @@ agent prompt against a bare one.
 | [dynamic_prompts.py](https://github.com/Eltarras/thunc/blob/main/examples/dynamic_prompts.py) | Prompts built from a style guide with `thunc.call`, and a grading function generated from a rubric |
 | [log_triage.py](https://github.com/Eltarras/thunc/blob/main/examples/log_triage.py) | Plain Python and AI functions mixed, with tracing |
 | [repo_guide.py](https://github.com/Eltarras/thunc/blob/main/examples/repo_guide.py) | Agents (preview): read-only tasks over this repo returning a dataclass and lists, on the Codex backend, with each run's steps read from the trace |
+| [jev_hello.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_hello.py) | The smallest Jev calls: a yes/no, a label and a rating |
+| [jev_inbox.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_inbox.py) | A support inbox triaged on Jev: spam, team and urgency for 8 tickets in about a second |
+| [jev_with_claude.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_with_claude.py) | Jev decides which messages need a reply; Claude writes only those replies |
 
 ## Code
 
@@ -295,10 +317,10 @@ thunc/
   cache.py       the answer cache: saving, listing, clearing
   schema.py      return types: describe, parse, validate
   config.py      settings and backend selection
-  backends.py    anthropic, openai, claude-code, codex
+  backends.py    anthropic, openai, claude-code, codex, jev
   errors.py      ThuncError
 tests/           offline: a fake backend, never a real model
-live_tests/      against a real model: hello, a yes/no decision, messy text to a dict
+live_tests/      against a real model: hello, a yes/no decision, labels and ratings, messy text to a dict
 examples/
 ```
 
