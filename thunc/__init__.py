@@ -20,4 +20,4 @@ from .decorator import function
 from .errors import ThuncError
 
 __all__ = ["CacheGroup", "ThuncError", "cache_info", "call", "clear_cache", "configure", "function", "map"]
-__version__ = "0.1.2"
+__version__ = "0.1.3"
