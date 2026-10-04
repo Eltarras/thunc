@@ -1,6 +1,6 @@
 """How a run talks to its backend, one model reply at a time.
 
-- TextConversation works on every backend: the model replies with one JSON action as text, and
+- TextConversation works on text backends: the model replies with one JSON action as text, and
   the whole transcript is sent again each step (the CLI backends keep no conversation).
 - AnthropicConversation and OpenAIConversation use the APIs' own tool calls: tools are declared
   with JSON Schemas, the model can call several at once, and the conversation grows by appending.

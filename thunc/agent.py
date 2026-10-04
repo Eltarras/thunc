@@ -24,26 +24,32 @@ note saved with remember is on disk at once and reaches the model in the next ru
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
+import inspect
+import json
 import os
 import time
+import typing
 import warnings
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from typing import Any, ParamSpec, TypeVar, overload
 
 from . import native, tools
+from .backends import TYPED_BACKENDS
 from .config import _check_backend, resolve_backend
-from .core import _ensured, _render, _trace
+from .core import _ensured, _plain, _render, _trace
 from .decorator import _read_signature, _wrap
 from .errors import ThuncError
 from .permissions import Permissions
 from .prompts import AGENT_CONTRACT, AGENT_PERSONA, method
 from .runs import AgentError, Denial, Run
-from .schema import describe, json_schema, parse, shorten, validate
+from .schema import describe, json_schema, parse, resolve_strings, shorten, validate
 from .store import Session, Store, slug
 
 P = ParamSpec("P")
 R = TypeVar("R")
+T = TypeVar("T")
 
 
 class Agent:
@@ -67,6 +73,10 @@ class Agent:
     protocol:  "native" for the APIs' own tool calls, "text" for one JSON action per reply as text.
                By default native on the anthropic and openai backends, text on the others. Use
                "text" with a server behind OPENAI_BASE_URL that has no function calling.
+    tools:     your own Python functions the agent may call, like open_issue(title: str) -> int. Each
+               needs type hints and a docstring (its description); arguments are checked against the
+               hints before it runs, and what it returns (or raises) goes back to the model.
+    timeout:   seconds a run may take, checked between steps; a command's time limit is cut to fit.
     max_steps: model replies per run before ThuncError.
     retries:   how many times an invalid finish value is sent back to be fixed.
     """
@@ -82,6 +92,8 @@ class Agent:
         command_timeout: float = 120.0,
         follow: bool | Sequence[str] = False,
         protocol: str | None = None,
+        tools: Sequence[Callable[..., Any]] = (),
+        timeout: float | None = None,
         max_steps: int = 40,
         retries: int = 2,
         backend: str | None = None,
@@ -97,6 +109,10 @@ class Agent:
             raise ValueError(f"Agent {name!r}: max_steps must be at least 1 and retries at least 0")
         if not command_timeout > 0:
             raise ValueError(f"Agent {name!r}: command_timeout must be more than 0 seconds")
+        if timeout is not None and not timeout > 0:
+            raise ValueError(f"Agent {name!r}: timeout must be more than 0 seconds, or None")
+        self.timeout = timeout
+        self.custom = _custom_tools(name, tools)
         self.follow, self._follow_explicit = _follow_paths(name, follow)
         if protocol not in (None, "native", "text"):
             raise ValueError(f"Agent {name!r}: protocol= is 'native', 'text' or None, not {protocol!r}")
@@ -190,6 +206,51 @@ class Agent:
         record: Run[Any] = task.__dict__["__thunc_record__"](*args, **kwargs)
         return record
 
+    @overload
+    def call(
+        self,
+        instructions: str,
+        inputs: Mapping[str, Any] | None = None,
+        *,
+        ensure: Callable[[str], bool] | None = None,
+    ) -> str: ...
+    @overload
+    def call(
+        self,
+        instructions: str,
+        inputs: Mapping[str, Any] | None = None,
+        *,
+        returns: type[T],
+        ensure: Callable[[T], bool] | None = None,
+    ) -> T: ...
+    @overload
+    def call(
+        self,
+        instructions: str,
+        inputs: Mapping[str, Any] | None = None,
+        *,
+        returns: Any,
+        ensure: Callable[[Any], bool] | None = None,
+    ) -> Any: ...
+    def call(
+        self,
+        instructions: str,
+        inputs: Mapping[str, Any] | None = None,
+        *,
+        returns: Any = str,
+        ensure: Callable[[Any], bool] | None = None,
+    ) -> Any:
+        """A task built in code, run once: the agent version of thunc.call.
+
+            repo.call(f"Find where {setting} is set.", returns=Location)
+
+        Inputs are sent apart from the instructions, as with a task's arguments. The run is recorded
+        under the task name "call"; a failed run raises AgentError with the record."""
+        if not isinstance(instructions, str) or not instructions.strip():
+            raise ValueError("agent.call needs instructions: a string saying what to do")
+        describe(returns)  # an unsupported type fails here, before the run
+        return self._run(f"{self.name}.call", "call", instructions, dict(inputs or {}), returns, ensure).value
+
     def system_prompt(self, memory: str | None = None) -> str:
         """The system prompt a run sends now: the fixed part (with any followed files), then the memory.
         The fixed part only changes when the agent's code or its followed files do, so it can be cached."""
@@ -212,6 +273,7 @@ class Agent:
     def tools(self) -> list[str]:
         """The tools this agent is offered, given its permissions."""
         offered = [name for name in tools.TOOLS if name not in tools.NEEDS or self.permissions.may(tools.NEEDS[name])]
+        offered += list(self.custom)  # given with tools=, so allowed
         if self.permissions.may("memory"):
             offered.append("remember")
         return [*offered, "finish"]
@@ -255,11 +317,7 @@ class Agent:
                 "When you're done, call finish with your result.\n\n" + self.permissions.describe()
             )
         else:
-            listed = "\n".join(
-                f"- {name} {tools.TOOLS[name][2] if name in tools.TOOLS else REMEMBER}"
-                for name in offered
-                if name != "finish"
-            )
+            listed = "\n".join(f"- {name} {self._text_description(name)}" for name in offered if name != "finish")
             protocol = (
                 "How to use a tool: reply with exactly one JSON object and nothing else, like this:\n"
                 '{"tool": "read", "args": {"path": "README.md"}}\n'
@@ -273,13 +331,23 @@ class Agent:
             parts.append(_followed_section(followed))
         return "\n\n".join([*parts, protocol])
 
+    def _text_description(self, name: str) -> str:
+        """A tool for the text protocol's tool list: an example of its arguments, then what it does."""
+        if name in tools.TOOLS:
+            return tools.TOOLS[name][2]
+        if name in self.custom:
+            tool = self.custom[name]
+            example = ", ".join(f'"{p}": <{describe(hint, True)}>' for p, (hint, _) in tool.params.items())
+            return f"{{{example}}}  {tool.description}"
+        return REMEMBER
+
     def _conversation(
         self, native_calls: bool, fixed: str, memory: str, request: str, returns: Any
     ) -> native.Conversation:
         if not native_calls:
-            names = [*tools.TOOLS, "remember", "finish"]  # all: a tool it isn't offered is denied, not unknown
+            names = [*tools.TOOLS, *self.custom, "remember", "finish"]  # a tool it isn't offered is denied, not unknown
             return native.TextConversation(fixed + memory, request, names, self.backend, self.model)
-        specs = _tool_specs(self.tools(), returns)
+        specs = _tool_specs(self.tools(), returns, self.custom)
         if resolve_backend(self.backend) == "anthropic":
             return native.AnthropicConversation(fixed, memory.lstrip("\n"), request, specs, self.model)
         return native.OpenAIConversation(fixed + memory, request, specs, self.model)
@@ -295,6 +363,8 @@ class Agent:
             "command_timeout": self.command_timeout,
             "follow": list(self.follow),
             "protocol": self.protocol,
+            "tools": list(self.custom),
+            "timeout": self.timeout,
             "max_steps": self.max_steps,
             "retries": self.retries,
             "backend": self.backend,
@@ -310,6 +380,12 @@ class Agent:
         returns: Any,
         ensure: Callable[[Any], bool] | None,
     ) -> Run[Any]:
+        backend = resolve_backend(self.backend)
+        if backend in TYPED_BACKENDS:
+            raise ThuncError(
+                f"Agent {self.name!r}: the {backend} backend answers typed questions and cannot run agents "
+                "or call tools; use @thunc.function or thunc.call instead."
+            )
         store = Store(self.name)
         with store.lock():
             changed_from = store.save_settings(self._settings())
@@ -355,11 +431,14 @@ class Agent:
         returns: Any,
         ensure: Callable[[Any], bool] | None,
     ) -> Run[Any]:
-        workdir = tools.Workdir(self.workdir, self.permissions, env=self.env, command_timeout=self.command_timeout)
-        offered = self.tools()
-        known = {*tools.TOOLS, "remember", "finish"}
-        answers: list[str] = []
         started = time.monotonic()
+        deadline = None if self.timeout is None else started + self.timeout
+        workdir = tools.Workdir(
+            self.workdir, self.permissions, env=self.env, command_timeout=self.command_timeout, deadline=deadline
+        )
+        offered = self.tools()
+        known = {*tools.TOOLS, *self.custom, "remember", "finish"}
+        answers: list[str] = []
         result: dict[str, Any] = {"value": None, "error": None, "cached": False}
         bad_finishes = 0
         step = 0
@@ -383,6 +462,8 @@ class Agent:
 
         try:
             for _ in range(self.max_steps):
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise ThuncError(f"{name}: the agent didn't finish within timeout={self.timeout:g}s")
                 reply = conversation.next()
                 answers.append(reply.raw)
                 if reply.problem:  # nothing to carry out: say what's wrong and ask again
@@ -418,7 +499,10 @@ class Agent:
                         result["value"] = value
                         session.write("finish", n=step, value=value, files_changed=workdir.changed)
                         return record(value)
-                    output, was_denied = _use(call.tool, call.args, workdir, store, offered)
+                    if call.tool in self.custom and call.tool in offered:
+                        output, was_denied = self.custom[call.tool].call(call.args), False
+                    else:
+                        output, was_denied = _use(call.tool, call.args, workdir, store, offered)
                     if was_denied:
                         target = call.args.get("path") or call.args.get("command") or ""
                         reason = output.removeprefix("error: ").removeprefix("not permitted: ")
@@ -515,10 +599,90 @@ def _use(tool: str, args: dict[str, Any], workdir: tools.Workdir, store: Store, 
         return f"error: {problem.strerror or problem}", False
 
 
-def _tool_specs(offered: Sequence[str], returns: Any) -> list[native.Tool]:
+@dataclasses.dataclass(frozen=True)
+class CustomTool:
+    """One of the program's own functions, given with tools=."""
+
+    name: str
+    func: Callable[..., Any]
+    description: str
+    params: dict[str, tuple[Any, bool]]  # name -> (type, required)
+    schema: dict[str, Any]
+
+    def call(self, args: dict[str, Any]) -> str:
+        """Check the arguments, call the function, and say what came of it (an error starts with "error:")."""
+        unknown = sorted(set(args) - set(self.params))
+        if unknown:
+            return f"error: {self.name} has no argument {', '.join(map(repr, unknown))}; it takes {list(self.params)}"
+        checked = {}
+        for param, (hint, required) in self.params.items():
+            if param not in args:
+                if required:
+                    return f"error: {self.name} needs {param!r}"
+                continue
+            try:
+                checked[param] = validate(args[param], hint)
+            except ValueError as problem:
+                return f"error: {self.name}: {param!r}: {problem}"
+        try:
+            value = self.func(**checked)
+        except Exception as exc:  # the function's own failure goes back to the model, which can adjust
+            return f"error: {self.name} raised {type(exc).__name__}: {shorten(str(exc), 1000)}"
+        if isinstance(value, str):
+            return value
+        try:
+            return json.dumps(_plain(value), ensure_ascii=False, default=str)
+        except (TypeError, ValueError, RecursionError):
+            return shorten(repr(value), 4000)
+
+
+def _custom_tools(agent: str, funcs: Sequence[Callable[..., Any]]) -> dict[str, CustomTool]:
+    """tools= as CustomTools, checked now so a mistake shows when the agent is declared."""
+    if callable(funcs):
+        raise ValueError(f"Agent {agent!r}: tools= takes a list of functions, like tools=[open_issue]")
+    reserved = {*tools.TOOLS, "remember", "finish"}
+    found: dict[str, CustomTool] = {}
+    for func in funcs:
+        name = getattr(func, "__name__", None)
+        if not callable(func) or not isinstance(name, str) or not name.isidentifier():
+            raise ValueError(f"Agent {agent!r}: tools= has {func!r}, which isn't a named function")
+        if name in reserved or name in found:
+            raise ValueError(f"Agent {agent!r}: a tool named {name!r} already exists; rename the function")
+        if inspect.iscoroutinefunction(func):
+            raise ValueError(f"Agent {agent!r}: tool {name!r} is async; give tools= plain functions")
+        description = inspect.getdoc(func)
+        if not description:
+            raise ValueError(f"Agent {agent!r}: tool {name!r} needs a docstring, which tells the model what it does")
+        hints = typing.get_type_hints(func)
+        params: dict[str, tuple[Any, bool]] = {}
+        for param in inspect.signature(func).parameters.values():
+            if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD, param.POSITIONAL_ONLY):
+                raise ValueError(f"Agent {agent!r}: tool {name!r} takes {param}; tools take named arguments only")
+            if param.name not in hints:
+                raise ValueError(f"Agent {agent!r}: tool {name!r}: argument {param.name!r} needs a type hint")
+            hint = resolve_strings(hints[param.name], getattr(func, "__globals__", {}))
+            try:
+                describe(hint)
+            except ThuncError as exc:
+                raise ValueError(f"Agent {agent!r}: tool {name!r}: argument {param.name!r}: {exc}") from None
+            params[param.name] = (hint, param.default is param.empty)
+        schema = {
+            "type": "object",
+            "properties": {p: json_schema(hint) for p, (hint, _) in params.items()},
+            "required": [p for p, (_, required) in params.items() if required],
+            "additionalProperties": False,
+        }
+        found[name] = CustomTool(name, func, description.split("\n\n")[0].replace("\n", " "), params, schema)
+    return found
+
+
+def _tool_specs(offered: Sequence[str], returns: Any, custom: Mapping[str, CustomTool]) -> list[native.Tool]:
     """The offered tools as the APIs' tool definitions: a description and a JSON Schema each."""
     specs = []
     for name in offered:
+        if name in custom:
+            specs.append(native.Tool(name, custom[name].description, custom[name].schema))
+            continue
         if name in tools.TOOLS:
             _, params, description = tools.TOOLS[name]
             properties = {p: {"type": "string" if kind is str else "integer"} for p, (kind, _) in params.items()}
@@ -562,3 +726,30 @@ def _finished(args: dict[str, Any], returns: Any, ensure: Callable[[Any], bool] 
     if returns is str and not value.strip():
         raise ValueError("the value was empty")
     return _ensured(value, ensure)
+
+
+def agent(
+    name: str,
+    /,
+    *,
+    workdir: str | os.PathLike[str],
+    instructions: str | None = None,
+    ensure: Callable[[Any], bool] | None = None,
+    **options: Any,
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """An agent with one task, declared in one go:
+
+        @thunc.agent("release-notes", workdir="~/code/myapp", permissions=["write:CHANGELOG.md"])
+        def changelog(since_tag: str) -> list[str]:
+            \"\"\"Add an entry to CHANGELOG.md for the commits since `since_tag`.\"\"\"
+            ...
+
+    Shorthand for thunc.Agent(name, workdir=..., **options).task. The options are thunc.Agent's;
+    instructions= and ensure= are the task's. The agent is the task's __thunc_agent__, so
+    task.__thunc_agent__.run(task, ...) gives the run record."""
+    made = Agent(name, workdir=workdir, **options)
+
+    def decorate(func: Callable[P, R]) -> Callable[P, R]:
+        return made.task(instructions=instructions, ensure=ensure)(func)
+
+    return decorate

@@ -50,6 +50,57 @@ def test_agent_needs_a_name_and_an_existing_workdir(tmp_path):
     assert thunc.Agent("Release notes", workdir=tmp_path).workdir == os.path.realpath(tmp_path)
 
 
+@pytest.mark.parametrize("selection", ["agent", "configure", "environment"])
+@pytest.mark.parametrize("protocol", [None, "text", "native"])
+@pytest.mark.parametrize("entry", ["task", "async_task", "run"])
+def test_jev_is_rejected_before_a_run_starts(monkeypatch, repo, selection, protocol, entry):
+    from thunc import backends
+
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("An agent must not call the Jev backend")
+
+    monkeypatch.setitem(backends.TYPED_BACKENDS, "jev", unexpected_call)
+    agent = thunc.Agent("judgment", workdir=repo, backend="jev" if selection == "agent" else None, protocol=protocol)
+
+    @agent.task
+    def question() -> bool:
+        """Is the project configured?"""
+        ...
+
+    @agent.task
+    async def async_question() -> bool:
+        """Is the project configured?"""
+        ...
+
+    # Select after declaration too: a constructor-only check would miss these paths.
+    if selection == "configure":
+        thunc.configure(backend="jev")
+    elif selection == "environment":
+        monkeypatch.setenv("THUNC_BACKEND", "jev")
+
+    with pytest.raises(thunc.ThuncError, match="jev backend .* cannot run agents .*use @thunc.function"):
+        if entry == "task":
+            question()
+        elif entry == "async_task":
+            asyncio.run(async_question())
+        else:
+            agent.run(question)
+    assert not os.path.exists(agent.folder)
+
+
+def test_agent_backend_overrides_a_configured_typed_backend(fake, repo):
+    agent = thunc.Agent("guide", workdir=repo, backend="fake")
+    thunc.configure(backend="jev")
+    fake.replies = [finish(True)]
+
+    @agent.task
+    def question() -> bool:
+        """Is the project configured?"""
+        ...
+
+    assert question() is True
+
+
 def test_task_rules_match_thunc_function(repo):
     agent = thunc.Agent("a", workdir=repo)
     with pytest.raises(TypeError, match="@agent.task .* body must be empty"):
@@ -447,9 +498,17 @@ def test_runs_of_one_agent_take_turns(monkeypatch, repo):
     other = make_task(thunc.Agent("other", workdir=repo))
     assert thunc.map(lambda f: f(), [one] * 4) == ["ok"] * 4
     assert peak == 1  # one agent: one run at a time
-    peak = 0
+
+    # Different agents run side by side: each run waits at the barrier for the other, which can only
+    # get there if the two are running at once (if they took turns, the barrier would time out).
+    barrier = threading.Barrier(2, timeout=10)
+
+    def meet(text, **kwargs):
+        barrier.wait()
+        return finish("ok")
+
+    monkeypatch.setitem(backends.BACKENDS, "slow", meet)
     assert thunc.map(lambda f: f(), [one, other]) == ["ok"] * 2
-    assert peak == 2  # different agents run side by side
 
 
 def test_a_leftover_lock_file_does_not_block(fake, repo):
@@ -1014,3 +1073,217 @@ def test_a_huge_followed_file_is_cut(fake, repo):
 def test_bad_follow_fails_at_declaration(repo, follow, problem):
     with pytest.raises(ValueError, match=problem):
         thunc.Agent("f", workdir=repo, follow=follow)
+
+
+# --- presets --------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["CODING", "CODE_REVIEW", "ANALYSIS"])
+def test_presets_replace_only_the_opening(fake, repo, name):
+    preset = getattr(thunc.prompts, name)
+    assert thunc.prompts.PRESETS[name] is preset
+    fake.replies = [finish("ok")]
+    make_task(thunc.Agent("p", workdir=repo, system=preset))()
+    (system,) = fake.systems
+    assert system.startswith(preset + "\n\nHow to work:") and "Rules:" in system
+    assert "You are an agent inside a computer program" not in system
+
+
+def test_presets_can_be_extended(fake, repo):
+    fake.replies = [finish("ok")]
+    make_task(thunc.Agent("p", workdir=repo, system=thunc.prompts.CODING + "\n\nTarget Python 3.10."))()
+    assert fake.systems[0].startswith(thunc.prompts.CODING + "\n\nTarget Python 3.10.\n\nHow to work:")
+
+
+# --- tools=: the program's own functions ------------------------------------------------------
+
+opened = []
+
+
+@dataclass
+class Issue:
+    number: int
+    title: str
+
+
+def open_issue(title: str, labels: list[str] | None = None) -> Issue:
+    """Open an issue in the tracker and return it.
+
+    More detail that the model doesn't need."""
+    if title == "boom":
+        raise RuntimeError("tracker is down")
+    opened.append((title, labels))
+    return Issue(len(opened), title)
+
+
+def test_a_tool_is_offered_described_and_called(fake, repo):
+    opened.clear()
+    agent = thunc.Agent("t", workdir=repo, tools=[open_issue])
+    fake.replies = [
+        act("open_issue", title="Flaky test", labels=["ci"]),
+        act("open_issue", title=3),
+        act("open_issue", title="x", priority="high"),
+        act("open_issue"),
+        act("open_issue", title="boom"),
+        finish("done"),
+    ]
+    run = agent.run(make_task(agent))
+    system = fake.systems[0]
+    assert (
+        '- open_issue {"title": <a JSON string>, "labels": <a JSON array whose items are each a JSON string or null>}'
+        in system
+    )
+    assert "Open an issue in the tracker and return it." in system and "More detail" not in system
+    assert opened == [("Flaky test", ["ci"])]
+    feedback = fake.prompts[-1]
+    assert '{"number": 1, "title": "Flaky test"}' in feedback  # a dataclass comes back as JSON
+    assert "error: open_issue: 'title': expected a string, got 3" in feedback
+    assert "error: open_issue has no argument 'priority'" in feedback
+    assert "error: open_issue needs 'title'" in feedback
+    assert "error: open_issue raised RuntimeError: tracker is down" in feedback
+    assert run.denied == []
+    with open(os.path.join(agent.folder, "agent.json")) as f:
+        assert json.load(f)["tools"] == ["open_issue"]
+
+
+def _no_doc(x: int) -> int:
+    return x
+
+
+def _no_hint(x):
+    """Do it."""
+
+
+async def _async_tool(x: int) -> int:
+    """Do it."""
+    return x
+
+
+def _star(*names: str) -> None:
+    """Do it."""
+
+
+def read(path: str) -> str:
+    """Clashes with a built-in tool."""
+    return path
+
+
+@pytest.mark.parametrize(
+    "tools, problem",
+    [
+        (open_issue, "takes a list of functions"),
+        ([_no_doc], "needs a docstring"),
+        ([_no_hint], "needs a type hint"),
+        ([_async_tool], "is async"),
+        ([_star], "tools take named arguments only"),
+        ([read], "a tool named 'read' already exists"),
+        ([open_issue, open_issue], "a tool named 'open_issue' already exists"),
+        (["open_issue"], "isn't a named function"),
+    ],
+)
+def test_bad_tools_fail_at_declaration(repo, tools, problem):
+    with pytest.raises(ValueError, match=problem):
+        thunc.Agent("t", workdir=repo, tools=tools)
+
+
+# --- agent.call: a task built in code ----------------------------------------------------------
+
+
+def test_agent_call(fake, repo):
+    agent = thunc.Agent("c", workdir=repo)
+    fake.replies = [act("read", path="config.py"), finish(30)]
+    assert agent.call("Find the timeout in this module.", {"module": "config"}, returns=int) == 30
+    first = fake.prompts[0]
+    assert first.startswith("<instructions>\nFind the timeout in this module.\n</instructions>")
+    assert "<module>\nconfig\n</module>" in first and "a JSON integer" in first
+    assert any(name.endswith("Z-call.jsonl") for name in os.listdir(os.path.join(agent.folder, "sessions")))
+
+    fake.replies = [finish("plain text")]
+    assert agent.call("Say something.") == "plain text"
+
+    fake.replies = [finish(0), finish(0), finish(0)]
+    with pytest.raises(thunc.AgentError, match="no valid a JSON integer"):
+        agent.call("Count.", returns=int, ensure=lambda n: n > 0)
+    with pytest.raises(thunc.ThuncError, match="Unsupported return type"):
+        agent.call("Count.", returns=set)
+    with pytest.raises(ValueError, match="needs instructions"):
+        agent.call("  ")
+
+
+# --- @thunc.agent: one agent, one task ----------------------------------------------------------
+
+
+def test_the_agent_shorthand(fake, repo):
+    @thunc.agent("shorthand", workdir=repo, permissions=["write:notes.md"], ensure=lambda s: s != "bad")
+    def note(topic: str) -> str:
+        """Write a note about the topic."""
+        ...
+
+    fake.replies = [act("write", path="notes.md", content="hi"), finish("bad"), finish("good")]
+    run = note.__thunc_agent__.run(note, "testing")
+    assert run.value == "good" and run.files_changed == ["notes.md"]
+    assert note.__thunc_agent__.name == "shorthand" and "- Write: notes.md." in fake.systems[0]
+
+    @thunc.agent("plain", workdir=repo, instructions="Say hello.")
+    def hello() -> str: ...
+
+    fake.replies = [finish("hello")]
+    assert hello() == "hello"
+
+
+# --- timeout=: a limit for the whole run ------------------------------------------------------
+
+
+def test_a_run_that_runs_out_of_time(monkeypatch, repo):
+    from thunc import backends
+
+    def slow(text, **kwargs):
+        time.sleep(0.3)
+        return act("list")
+
+    monkeypatch.setitem(backends.BACKENDS, "slow", slow)
+    thunc.configure(backend="slow")
+    with pytest.raises(thunc.AgentError, match=r"didn't finish within timeout=0\.5s") as caught:
+        make_task(thunc.Agent("t", workdir=repo, timeout=0.5))()
+    assert caught.value.run.steps == 2
+    with pytest.raises(ValueError, match="timeout must be more than 0"):
+        thunc.Agent("t", workdir=repo, timeout=0)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="process groups")
+def test_a_command_gets_only_the_time_left(fake, repo):
+    slow = script(repo, "slow.py", "import time; time.sleep(30)")
+    agent = thunc.Agent("t", workdir=repo, permissions=[f"run:{PY}"], command_timeout=60, timeout=1)
+    fake.replies = [act("run", command=slow), finish("ok")]
+    started = time.monotonic()
+    with pytest.raises(thunc.AgentError, match="timeout=1s") as caught:
+        agent.run(make_task(agent))
+    assert time.monotonic() - started < 10  # not the command's own 60 seconds
+    (command,) = caught.value.run.commands
+    assert command.exit_code is None and command.seconds < 2  # stopped when the run's time was up
+
+
+# --- files changed by commands ------------------------------------------------------------------
+
+
+def test_files_changed_by_commands_are_in_the_run_record(fake, repo):
+    command = script(
+        repo,
+        "fmt.py",
+        "import os\nopen('config.py', 'a').write('X = 1\\n')\nopen('new.txt', 'w').write('n')\nos.remove('src/app.py')",
+    )
+    agent = thunc.Agent("c", workdir=repo, permissions=[f"run:{PY}"])
+    fake.replies = [act("run", command=command), act("run", command=f"{PY} -c pass"), finish("ok")]
+    run = agent.run(make_task(agent))
+    assert run.files_changed == ["config.py", "new.txt", "src/app.py"]  # changed, created, deleted
+    assert len(run.commands) == 2
+
+
+def test_no_command_starts_once_the_run_is_out_of_time(repo):
+    from thunc.permissions import Permissions
+    from thunc.tools import ToolError, Workdir
+
+    workdir = Workdir(str(repo), Permissions(["run"]), deadline=time.monotonic() - 1)
+    with pytest.raises(ToolError, match="the run's time limit is up"):
+        workdir.run("echo hi")
+    assert workdir.commands == []
