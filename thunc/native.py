@@ -19,12 +19,14 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .backends import _FALLBACK_MODELS, DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL, sdk_client
-from .config import setting
+from .config import resolve_backend, setting
 from .core import _send, _sendable
 from .errors import ThuncError
 from .schema import parse, shorten
 
 NUDGE = "Reply by calling one of your tools. When you're done, call finish with your result."
+CLI_BACKENDS = frozenset({"claude-code", "codex"})
+CLI_STEP_TIMEOUT = 120.0  # seconds one text-protocol step on a CLI may take before it's retried
 
 
 @dataclass
@@ -42,6 +44,7 @@ class Reply:
     calls: list[Call]
     raw: str  # for the trace: the reply's text, or its calls as JSON
     problem: str | None = None  # why the reply has no usable call
+    same_turn: bool = False  # more calls of the model reply the last Reply came from (see claude_code.py)
 
 
 @dataclass
@@ -92,7 +95,10 @@ class TextConversation:
         self.steps: list[str] = []
 
     def next(self) -> Reply:
-        answer = _send(self._transcript(), self.system, self.backend, self.model)
+        timeout = setting("timeout")
+        if resolve_backend(self.backend) in CLI_BACKENDS:  # a step that hangs is retried sooner (see agent.py)
+            timeout = min(timeout, CLI_STEP_TIMEOUT)
+        answer = _send(self._transcript(), self.system, self.backend, self.model, timeout)
         try:
             calls = actions(answer, self.names)
         except ValueError as problem:

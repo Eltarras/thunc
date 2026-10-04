@@ -71,6 +71,7 @@ def test_claude_code(monkeypatch):
     assert thunc.call("ping") == "pong"
     args, kwargs = calls[0]
     assert args[:2] == ["claude", "-p"] and args[args.index("--tools") + 1] == ""
+    assert args[args.index("--setting-sources") + 1] == ""  # no CLAUDE.md, settings or hooks
     assert "<instructions>\nping" in kwargs["input"]
 
 

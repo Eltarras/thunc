@@ -7,14 +7,18 @@
 - write, write:<glob>   create and edit files. Writing a file also lets the agent read it.
 - run, run:<command>    run commands that start with these words: "run:git log" allows
                         "git log --oneline" but not "git push". run alone allows any command.
+- shell                 run any command line through the system shell (sh -c, or cmd /c on Windows),
+                        so pipes, &&, cd and redirects work. Off by default. A shell command can't
+                        be checked word by word, so shell can't be combined with !run: rules.
 - memory                save notes with remember. Allowed by default.
 - !<rule>               deny. A deny always wins over an allow. !read also stops writing.
 
 Globs match the path relative to the working directory, with / separators: * stays within one
 folder, ** crosses folders, ? is one character. "docs/" means everything under docs/.
 
-Commands run without a shell, and a command can do anything its program can: "run:pytest" runs the
-project's code. Permissions limit which tools the model uses, not what a permitted command does.
+Commands run without a shell unless "shell" is given, and a command can do anything its program can:
+"run:pytest" runs the project's code. Permissions limit which tools the model uses, not what a
+permitted command does.
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-KINDS = ("read", "write", "run", "memory")
+KINDS = ("read", "write", "run", "shell", "memory")
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,13 @@ class Permissions:
         if isinstance(rules, str):
             raise ValueError('permissions= takes a list of rules, like ["write:docs/**"], not a single string')
         self.rules = [_parse(rule) for rule in rules]
+        if self.may("shell"):
+            run_denies = [r.source for r in self.rules if r.kind == "run" and r.deny]
+            if run_denies:
+                raise ValueError(
+                    f"'shell' can't be combined with {', '.join(map(repr, run_denies))}: a shell command line can't "
+                    "be checked word by word. Drop 'shell' and use run: rules, or drop the deny"
+                )
         if not any(r.kind == "read" and not r.deny for r in self.rules):
             self.rules.insert(0, Rule(False, "read", None, "read (default)"))
         self.rules.insert(0, Rule(False, "memory", None, "memory (default)"))
@@ -94,7 +105,10 @@ class Permissions:
             raise Denied(f"running {command!r} isn't allowed: no run rule matches it{hint}")
 
     def may(self, kind: str) -> bool:
-        """Whether any action of this kind could be allowed, which decides the tools an agent is offered."""
+        """Whether any action of this kind could be allowed, which decides the tools an agent is offered.
+        "shell" also allows running commands."""
+        if kind == "run" and self.may("shell"):
+            return True
         if any(r.deny and r.kind == kind and r.pattern is None for r in self.rules):
             return False
         return any(not r.deny and r.kind == kind for r in self.rules)
@@ -113,7 +127,9 @@ class Permissions:
                 where += " (and anything you may write)"
             except_ = f", except {', '.join(_show(r) for r in denied)}" if denied else ""
             lines.append(f"- {verb}: {where}{except_}.")
-        if self.may("run"):
+        if self.may("shell"):
+            lines.append("- Run commands: any command line, in a shell (pipes, &&, cd and redirects work).")
+        elif self.may("run"):
             allowed = [r for r in self.rules if r.kind == "run" and not r.deny]
             denied = [r for r in self.rules if r.kind == "run" and r.deny]
             which = (
@@ -147,8 +163,8 @@ def _parse(text: str) -> Rule:
         raise ValueError(f"Unknown permission {source!r}; rules start with {', '.join(KINDS)}")
     if not colon:
         return Rule(deny, kind, None, source)
-    if kind == "memory":
-        raise ValueError(f"{source!r}: memory takes no path; use 'memory' or '!memory'")
+    if kind in ("memory", "shell"):
+        raise ValueError(f"{source!r}: {kind} takes no path or command; use '{kind}' or '!{kind}'")
     if kind == "run":
         try:
             words = split_command(pattern)

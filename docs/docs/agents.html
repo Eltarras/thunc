@@ -86,7 +86,8 @@ repo.call(f"Where is {setting} set?", returns=str)</code></pre></div>
 <p>Each call is one run. The model takes one step at a time (list a folder, search, read or edit a file) and ends by calling <code>finish</code> with a value of the return type, which is checked like any thunc result.</p>
 <ul>
 <li>On the <strong>Claude and OpenAI APIs</strong> it uses their own tool calls: the model can make several at once, and the fixed part of the prompt is cached.</li>
-<li>On <strong>Claude Code and Codex</strong> it replies with JSON actions as text: one at a time, or several independent ones (reading three files) as a JSON array, which saves turns. <code>protocol="text"</code> uses this way on an API too, for example with a server behind <code>OPENAI_BASE_URL</code> that has no function calling.</li>
+<li>On <strong>Claude Code</strong> the calls are native too: the agent's tools are an MCP server that one <code>claude -p</code> process per run calls, while thunc carries out each call with its own tools, permissions and records. If Claude Code can't start them (an older <code>claude</code> CLI, or MCP servers turned off by a policy), the run uses the text protocol instead, with a warning; <code>protocol="native"</code> fails instead.</li>
+<li>On <strong>Codex</strong> it replies with JSON actions as text: one at a time, or several independent ones (reading three files) as a JSON array, which saves turns. <code>protocol="text"</code> uses this way on any backend, for example with a server behind <code>OPENAI_BASE_URL</code> that has no function calling. Durable runs on Claude Code use it too.</li>
 <li><strong>Jev</strong> only answers typed questions and can't run agents. An agent run using it raises <code>ThuncError</code> before creating any run files or calling a backend.</li>
 </ul>
 
@@ -99,15 +100,16 @@ repo.call(f"Where is {setting} set?", returns=str)</code></pre></div>
 <tr><td><code>write:docs/**</code>, <code>write</code></td><td>Create and edit matching files (all files with no path); also lets it read them</td></tr>
 <tr><td><code>read:src/**</code></td><td>Read only these; any <code>read:</code> rule replaces the read-everything default</td></tr>
 <tr><td><code>run:pytest</code>, <code>run:git log</code>, <code>run</code></td><td>Run commands that start with these words (<code>run:git log</code> allows <code>git log --oneline</code>, not <code>git push</code>); <code>run</code> alone allows any</td></tr>
+<tr><td><code>shell</code></td><td>Run any command line in a shell (<code>sh -c</code>, or <code>cmd /c</code> on Windows), so pipes, <code>&amp;&amp;</code>, <code>cd</code> and redirects work. Off by default, and it can't be combined with <code>!run:</code> rules</td></tr>
 <tr><td><code>!read:.env*</code>, <code>!write:...</code>, <code>!run:git push</code>, <code>!memory</code></td><td>Deny; a deny always wins, and <code>!read</code> also stops writing</td></tr>
 </tbody></table></div>
 <p><code>*</code> stays within one folder, <code>**</code> crosses folders, and paths are relative to <code>workdir</code>. The agent is told its permissions, and an action they don't allow is refused with the reason, after which the run carries on. Bad rules fail when the agent is declared.</p>
 
 <h2 id="tools">Tools</h2>
 <dl>
-<dt>list, read, search</dt><dd>Always available. Files the agent may not read are left out of <code>list</code> and <code>search</code>.</dd>
+<dt>list, read, search</dt><dd>Always available. <code>search</code> takes a regular expression and an optional <code>glob</code> such as <code>*.py</code>. Files the agent may not read are left out of <code>list</code> and <code>search</code>, and so is what git ignores, in a git repository; a folder named explicitly is still listed and searched.</dd>
 <dt>write, edit</dt><dd>When a write rule allows it. <code>write</code> creates a file or replaces one; <code>edit</code> replaces text that appears exactly once.</dd>
-<dt>run</dt><dd>When a run rule allows it.</dd>
+<dt>run</dt><dd>When a run or shell rule allows it. <code>cwd</code> runs the command in a folder inside <code>workdir</code>.</dd>
 <dt>remember</dt><dd>Saves a short note for later runs (see <a href="#memory">memory</a>).</dd>
 <dt>finish</dt><dd>Ends the run with the answer.</dd>
 </dl>
@@ -126,7 +128,7 @@ triage = thunc.Agent("triage", workdir=".", tools=[open_issue])</code></pre></di
 <h3 id="overwrites">No blind overwrites</h3>
 <p>A file is only replaced or edited after the agent read it in the same run, and only if it hasn't changed on disk since. There is no undo, so run agents that write in a git repository with a clean tree, and review their changes with <code>git diff</code>.</p>
 <h3 id="commands">Commands</h3>
-<p>Commands run in <code>workdir</code> without a shell, so <code>&amp;&amp;</code>, pipes, redirects and <code>$VARIABLES</code> don't work (the agent is told). They get a minimal environment: <code>PATH</code>, <code>HOME</code>, the locale and temp-folder variables, and whatever you pass in <code>env=</code>, so your API keys don't reach them. Each has a time limit (<code>command_timeout=120</code> seconds) that also stops the processes it started, and the agent sees the exit code and the output, its end kept when it's long.</p>
+<p>Commands run in <code>workdir</code>, or in a folder inside it given as <code>cwd</code>. Without the <code>shell</code> permission there's no shell, so <code>&amp;&amp;</code>, pipes, <code>cd</code>, redirects and <code>$VARIABLES</code> don't work (the agent is told). They get a minimal environment: <code>PATH</code>, <code>HOME</code>, the locale and temp-folder variables, and whatever you pass in <code>env=</code>, so your API keys don't reach them. Each has a time limit (<code>command_timeout=120</code> seconds) that also stops the processes it started, and the agent sees the exit code and the output: the start and the end when it's long.</p>
 <div class="callout warn"><p><strong>A permitted command can do anything its program can.</strong> <code>run:pytest</code> runs the project's code, which can read or change any file your user account can, whatever the read and write rules say. Permissions limit which tools the model uses; they aren't a sandbox. For untrusted input, run the agent in a container.</p></div>
 
 <h2 id="memory">Memory between runs</h2>
@@ -153,7 +155,7 @@ run.files_changed  # ["src/mathutil.py"]  (by write, edit and commands)
 run.commands       # [Command("python3 tests/test_mathutil.py", exit_code=0, seconds=0.04)]
 run.denied         # [Denial("run", "git commit -am fix", "running ... is denied by '!run:git'")]
 run.notes, run.followed, run.steps, run.seconds, run.session</code></pre></div>
-<p><strong>Failures are loud.</strong> A run that hits <code>max_steps</code>, never gives a valid value, or loses its backend raises <code>thunc.AgentError</code> (a <code>ThuncError</code>), whose <code>.run</code> is the record up to that point.</p>
+<p><strong>Failures are loud.</strong> A run that hits <code>max_steps</code>, never gives a valid value, or loses its backend raises <code>thunc.AgentError</code> (a <code>ThuncError</code>), whose <code>.run</code> is the record up to that point. A step that fails for a reason asking again may fix (a timeout, a lost connection, a rate limit, a server error, a CLI call that ended in an error) is retried twice first, and each retry is in the run's record.</p>
 
 <h2 id="options">All options</h2>
 <div class="codeblock"><pre><code class="py">thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_timeout=120,

@@ -7,9 +7,13 @@ on the real path, so a link can't lead to a file the rules deny.
 A file is only replaced or edited after the agent read it in this run, and only if it hasn't
 changed on disk since: the agent never overwrites what it hasn't seen.
 
-Commands run in the working directory without a shell, with a minimal environment (your API keys
-aren't in it), a timeout that also stops the processes they start, and their output's end kept
-when it's long, since that's where errors are.
+Commands run in the working directory (or a folder inside it) without a shell, unless the "shell"
+permission allows one, with a minimal environment (your API keys aren't in it), a timeout that also
+stops the processes they start, and the start and end of their output kept when it's long: the
+first error is often at the start, the summary at the end.
+
+In a git repository, list and search leave out what git ignores (build output, caches, vendored
+code), as git ls-files sees it; a folder named explicitly is still searched.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, MutableSequence
 from typing import Any
 
 from .permissions import Denied, Permissions, join_command, split_command
@@ -37,7 +41,8 @@ MAX_LIST = 300  # entries
 MAX_MATCHES = 100
 MAX_SEARCH_FILE = 1_000_000  # bytes; bigger files are skipped by search
 MAX_TRACKED = 20_000  # files; past this, changes made by commands aren't tracked
-MAX_OUTPUT = 18_000  # characters of a command's output sent back; the end is kept
+MAX_OUTPUT = 18_000  # characters of a command's output sent back: its start and its end
+OUTPUT_HEAD = 5_000  # of those, characters from the start
 # Environment variables a command gets by default: enough to find programs and run them, nothing else.
 PASSED_ENV = (
     "PATH",
@@ -90,6 +95,7 @@ class Workdir:
     ) -> None:
         self.root = os.path.realpath(root)
         self.permissions = permissions or Permissions()
+        self.shell = self.permissions.may("shell")  # commands run in a shell: pipes, && and cd work
         self.env = command_env(env)
         self.command_timeout = command_timeout
         self.deadline = deadline  # time.monotonic() when the run's own time limit is up, if it has one
@@ -127,13 +133,17 @@ class Workdir:
         if not os.path.isdir(start):
             raise ToolError(f"{path!r} is not a folder")
         entries = []
-        for full, is_dir in self._walk(start):
+        hidden: list[str] = []
+        for full, is_dir in self._walk(start, self._ignored(start, hidden)):
             if not is_dir and not self.readable(full):
                 continue  # files the agent may not read aren't shown at all
             entries.append(self.show(full) + ("/" if is_dir else ""))
             if len(entries) == MAX_LIST:
                 entries.append(f"(stopped at {MAX_LIST} entries; list a subfolder to see more)")
                 break
+        if hidden:
+            shown = ", ".join(hidden[:5]) + (", ..." if len(hidden) > 5 else "")
+            entries.append(f"(left out because git ignores them: {shown}; list one by name to see inside)")
         return "\n".join(entries) or "(empty folder)"
 
     def read(self, path: str, offset: int = 1, limit: int = 400) -> str:
@@ -159,17 +169,22 @@ class Workdir:
             body += f"\n(lines {offset}-{end} of {len(lines)}; read again with offset={end + 1} for more)"
         return body
 
-    def search(self, pattern: str, path: str = ".") -> str:
+    def search(self, pattern: str, path: str = ".", glob: str | None = None) -> str:
         try:
             regex = re.compile(pattern)
         except re.error as exc:
             raise ToolError(f"invalid regular expression: {exc}") from None
+        wanted = _file_glob(glob) if glob else None
         start = self.path(path)
         if os.path.isfile(start):
             self._check(self.permissions.check_read, start)
             files: Iterator[str] | list[str] = [start]
         else:
-            files = (full for full, is_dir in self._walk(start) if not is_dir and self.readable(full))
+            files = (
+                full
+                for full, is_dir in self._walk(start, self._ignored(start))
+                if not is_dir and self.readable(full) and (wanted is None or wanted(self.show(full)))
+            )
         matches = []
         for full in files:
             for number, line in self._lines(full):
@@ -215,23 +230,33 @@ class Workdir:
         self._save(full, text.replace(old, new, 1))
         return f"edited {self.show(full)}"
 
-    def run(self, command: str) -> str:
-        try:
-            argv = split_command(command)
-        except ValueError as exc:
-            raise ToolError(f"can't read the command: {exc}") from None
-        if not argv:
-            raise ToolError("the command is empty")
-        operators = [word for word in argv if word in SHELL_OPERATORS]
-        if operators:
-            raise ToolError(
-                f"commands run without a shell, so {operators[0]!r} doesn't work. Run one command at a time, "
-                "and read files with read instead of redirecting output"
-            )
-        try:
-            self.permissions.check_run(argv)
-        except Denied as exc:
-            raise NotPermitted(f"not permitted: {exc}") from None
+    def run(self, command: str, cwd: str = ".") -> str:
+        folder = self.path(cwd)
+        if not os.path.isdir(folder):
+            raise ToolError(f"cwd {cwd!r} is not a folder in the working directory")
+        if self.shell:  # the "shell" permission: any command line, run by the system shell
+            if not command.strip():
+                raise ToolError("the command is empty")
+            argv = ["cmd", "/c", command] if sys.platform == "win32" else ["/bin/sh", "-c", command]
+            shown = command
+        else:
+            try:
+                argv = split_command(command)
+            except ValueError as exc:
+                raise ToolError(f"can't read the command: {exc}") from None
+            if not argv:
+                raise ToolError("the command is empty")
+            operators = [word for word in argv if word in SHELL_OPERATORS]
+            if operators:
+                raise ToolError(
+                    f"commands run without a shell, so {operators[0]!r} doesn't work. Run one command at a time "
+                    "(use cwd to run it in a folder), and read files with read instead of redirecting output"
+                )
+            try:
+                self.permissions.check_run(argv)
+            except Denied as exc:
+                raise NotPermitted(f"not permitted: {exc}") from None
+            shown = join_command(argv)
         limit = self.command_timeout
         if self.deadline is not None:
             left = self.deadline - time.monotonic()
@@ -243,7 +268,7 @@ class Workdir:
         try:
             process = subprocess.Popen(
                 argv,
-                cwd=self.root,
+                cwd=folder,
                 env=self.env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -286,11 +311,14 @@ class Workdir:
                 process.communicate(timeout=5)
             raise
         seconds = time.monotonic() - started
-        self.commands.append(Command(join_command(argv), exit_code, round(seconds, 3)))
+        where = "" if folder == self.root else f" (in {self.show(folder)})"
+        self.commands.append(Command(shown + where, exit_code, round(seconds, 3)))
         self._note_changes(before, self._snapshot())
         text = output.decode("utf-8", errors="replace") if output else ""
-        if len(text) > MAX_OUTPUT:
-            text = f"(the first {len(text) - MAX_OUTPUT} characters are left out)\n" + text[-MAX_OUTPUT:]
+        if len(text) > MAX_OUTPUT:  # keep the start (often the first error) and the end (the summary)
+            tail = MAX_OUTPUT - OUTPUT_HEAD
+            left_out = len(text) - MAX_OUTPUT
+            text = f"{text[:OUTPUT_HEAD]}\n(... {left_out} characters left out ...)\n{text[-tail:]}"
         return f"{status} ({seconds:.1f}s)\n{text}".rstrip()
 
     def _snapshot(self) -> dict[str, tuple[int, int]] | None:
@@ -340,20 +368,62 @@ class Workdir:
         if shown not in self.changed:
             self.changed.append(shown)
 
-    def _walk(self, start: str) -> Iterator[tuple[str, bool]]:
+    def _walk(self, start: str, ignored: Callable[[str, bool], bool] | None = None) -> Iterator[tuple[str, bool]]:
         """(path, is_folder) for everything under `start`, in tree order: each folder's contents
-        right after it. Links are not followed into folders, so nothing outside is reached."""
+        right after it. Links are not followed into folders, so nothing outside is reached.
+        `ignored(path, is_folder)` leaves out entries (and a folder's whole contents)."""
         try:
             entries = sorted(os.scandir(start), key=lambda e: e.name)
         except OSError:
             return
         for entry in entries:
             if entry.is_dir(follow_symlinks=False):
-                if entry.name not in SKIPPED_DIRS:
+                if entry.name not in SKIPPED_DIRS and not (ignored and ignored(entry.path, True)):
                     yield entry.path, True
-                    yield from self._walk(entry.path)
-            elif entry.is_file():
+                    yield from self._walk(entry.path, ignored)
+            elif entry.is_file() and not (ignored and ignored(entry.path, False)):
                 yield entry.path, False
+
+    def _ignored(self, start: str, hidden: MutableSequence[str] | None = None) -> Callable[[str, bool], bool] | None:
+        """What git ignores under `start`, as a test for _walk; None outside a git repository, or when
+        `start` is itself ignored (the agent asked for it by name). Ignored folders are added to `hidden`."""
+        visible = self._git_files()
+        if visible is None:
+            return None
+        folders = {"."}
+        for file in visible:
+            parts = file.split("/")[:-1]
+            folders.update("/".join(parts[: i + 1]) for i in range(len(parts)))
+        if self.show(start) not in folders:
+            return None
+
+        def ignored(full: str, is_dir: bool) -> bool:
+            shown = self.show(full)
+            if shown in (folders if is_dir else visible):
+                return False
+            if is_dir and hidden is not None:
+                hidden.append(shown + "/")
+            return True
+
+        return ignored
+
+    def _git_files(self) -> set[str] | None:
+        """Files git doesn't ignore (tracked, or untracked and not ignored), relative to the root;
+        None when the root isn't in a git repository or git isn't available."""
+        try:
+            done = subprocess.run(
+                ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+                cwd=self.root,
+                env=self.env,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if done.returncode != 0:
+            return None
+        return {name for name in done.stdout.decode("utf-8", "surrogateescape").split("\0") if name}
 
     def _lines(self, full: str) -> Iterator[tuple[int, str]]:
         try:
@@ -373,7 +443,8 @@ TOOLS: dict[str, tuple[str, dict[str, tuple[type, bool]], str]] = {
     "list": (
         "list",
         {"path": (str, False)},
-        '{"path": "."}  Files and folders under a folder, recursively (folders end in /).',
+        '{"path": "."}  Files and folders under a folder, recursively (folders end in /). In a git repository, '
+        "what git ignores is left out.",
     ),
     "read": (
         "read",
@@ -382,8 +453,10 @@ TOOLS: dict[str, tuple[str, dict[str, tuple[type, bool]], str]] = {
     ),
     "search": (
         "search",
-        {"pattern": (str, True), "path": (str, False)},
-        '{"pattern": "def main", "path": "."}  Lines matching a Python regular expression, as file:line: text.',
+        {"pattern": (str, True), "path": (str, False), "glob": (str, False)},
+        '{"pattern": "def main", "path": ".", "glob": "*.py"}  Lines matching a Python regular expression '
+        "(start it with (?i) to ignore case), as file:line: text. glob (optional) limits the files searched: "
+        '"*.py" matches by file name, "src/**/*.ts" by path. In a git repository, what git ignores is left out.',
     ),
     "write": (
         "write",
@@ -399,12 +472,25 @@ TOOLS: dict[str, tuple[str, dict[str, tuple[type, bool]], str]] = {
     ),
     "run": (
         "run",
-        {"command": (str, True)},
-        '{"command": "pytest -q tests/test_app.py"}  Runs a command in the working directory and returns its exit '
-        "code and output. There is no shell: no pipes, &&, redirects or $VARIABLES.",
+        {"command": (str, True), "cwd": (str, False)},
+        '{"command": "pytest -q tests/test_app.py", "cwd": "."}  Runs a command and returns its exit code and '
+        "output (the start and end of long output). cwd (optional) is the folder to run it in, inside the "
+        "working directory.",
     ),
 }
-# The permission each tool needs before the agent is offered it.
+RUN_NO_SHELL = " There is no shell: no pipes, &&, cd, redirects or $VARIABLES."
+RUN_SHELL = " It runs in a shell, so pipes, && and redirects work."
+
+
+def description(name: str, shell: bool = False) -> str:
+    """A built-in tool's description for the prompt: an example of its arguments, then what it does."""
+    text = TOOLS[name][2]
+    if name == "run":
+        text += RUN_SHELL if shell else RUN_NO_SHELL
+    return text
+
+
+# The permission each tool needs before the agent is offered it ("shell" also allows run).
 NEEDS = {"write": "write", "edit": "write", "run": "run"}
 
 
@@ -425,6 +511,19 @@ def run(workdir: Workdir, name: str, args: dict[str, Any]) -> str:
     if len(result) > MAX_RESULT:
         result = result[:MAX_RESULT] + f"\n(cut at {MAX_RESULT} characters; ask for less, e.g. a smaller limit)"
     return result
+
+
+def _file_glob(pattern: str) -> Callable[[str], bool]:
+    """search's glob: a pattern without / matches the file name in any folder, one with / the whole path."""
+    from .permissions import _glob
+
+    pattern = pattern.strip().replace("\\", "/").removeprefix("./")
+    if not pattern:
+        raise ToolError("glob is empty; leave it out to search every file")
+    regex = _glob(pattern)
+    if "/" in pattern:
+        return lambda path: regex.fullmatch(path) is not None
+    return lambda path: regex.fullmatch(path.rsplit("/", 1)[-1]) is not None
 
 
 def _digest(data: bytes) -> str:

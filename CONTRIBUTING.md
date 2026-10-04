@@ -86,6 +86,9 @@ THUNC_TEMPORAL_TESTS=1 .venv/bin/pytest -c pytest-temporal.ini tests/temporal
 5. Agents work on any text backend through the JSON text protocol. For native tool calls, add a
    `Conversation` for the API in `thunc/native.py`, add the backend to `native.NATIVE`, and pick
    the class where `thunc/agent.py` builds the conversation. Test it like `tests/test_native.py`.
+   A CLI that can call MCP tools can get native calls the way Claude Code does
+   (`thunc/claude_code.py`, tested with a fake CLI in `tests/test_claude_code_agent.py`).
+   Raise `TransientError` for failures worth asking again, so agent runs retry them.
    Agents and durable runs refuse typed backends.
 6. Run `THUNC_BACKEND=<name> .venv/bin/pytest live_tests` against the real service, and say in
    the PR that you did.
@@ -114,8 +117,9 @@ no reliable way to tell them from a real one. Only an empty reply is retried.
 **Open: behavior that might change.**
 
 - `thunc.map` loses every result when one item fails, and returns coroutines for `async` functions.
-- Backend errors (timeouts, connection failures) are never retried by `thunc.call` or local agent
-  runs; only bad replies are. Durable runs do retry transient provider failures.
+- Backend errors (timeouts, connection failures) are never retried by `thunc.call`; only bad
+  replies are. Local agent runs retry a step that failed with a `TransientError` twice, and durable
+  runs retry transient provider failures.
 - Several lines of prose before a code fence are read as a preamble, though `_unfence` in
   `thunc/schema.py` documents one line, and no test pins either behavior.
 - A union takes the first option that accepts the reply as JSON, in the order written: `3` for

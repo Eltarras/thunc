@@ -229,10 +229,14 @@ def _ensured(value: Any, ensure: Callable[[Any], bool] | None) -> Any:
     return value
 
 
-def _send(text: str, system: str, backend: str | None, model: str | None) -> str:
+def _send(text: str, system: str, backend: str | None, model: str | None, timeout: float | None = None) -> str:
     name = resolve_backend(backend)
     answer = BACKENDS[name](
-        text, system=system, model=model or setting("model"), api_key=setting("api_key"), timeout=setting("timeout")
+        text,
+        system=system,
+        model=model or setting("model"),
+        api_key=setting("api_key"),
+        timeout=setting("timeout") if timeout is None else timeout,
     )
     if not isinstance(answer, str):
         raise ThuncError(f"The {name} backend returned {type(answer).__name__}, not text.")

@@ -5,8 +5,24 @@ All notable changes to thunc. The full notes for each release are on the
 
 ## Unreleased
 
+**Agents on Claude Code make native tool calls.** On the `claude-code` backend the model wrote each
+action as JSON text, and current models drift back to their trained tool calls: they invented tool
+results and ran on to the timeout, or the CLI refused a tool call it couldn't parse. In a tool-use
+benchmark (`live_tests/bench_tooluse.py`), agents on Claude Sonnet 5.5 passed 12 of 24 runs this
+way, against 24 of 24 for Claude Code itself.
+
 ### Added
 
+- **Native calls on `claude-code`**: the agent's tools are an MCP server that one `claude -p`
+  process per run calls; thunc carries out each call with its own tools, permissions and run
+  record. The CLI runs in the agent's `workdir`. `protocol="text"` keeps the old way, and durable
+  runs on Claude Code still use it. When Claude Code can't start native calls (an older CLI, or MCP
+  servers turned off by a policy), a run falls back to the text protocol with a warning and a
+  `fallback` entry in its record; `protocol="native"` raises instead.
+- **`run` takes `cwd`**, a folder inside `workdir` to run the command in.
+- **The `shell` permission** runs command lines through the system shell, so pipes, `&&`, `cd`
+  and redirects work. Off by default; it can't be combined with `!run:` rules.
+- **`search` takes `glob`** (`*.py` by file name, `src/**/*.ts` by path) to limit the files searched.
 - **`thunc run --profile`**: runs a script (or `-m module`) and prints a performance report to
   stderr when it ends: per function, calls, cache hits, retries, failures, total/mean/p95/max time
   and the split between model time and thunc's own; for agents, steps and time in each tool; and
@@ -14,14 +30,25 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Changed
 
+- **A failed step is retried.** A timeout, lost connection, rate limit, server error or CLI call
+  that ended in an error (`thunc.errors.TransientError`) is retried twice in an agent run, with a
+  note in the run record, before the run fails. A text-protocol step on Claude Code or Codex may
+  take 120 seconds before it's retried, instead of the whole `timeout`.
+- **`list` and `search` leave out what git ignores** in a git repository; a folder named
+  explicitly is still listed and searched.
+- **Long command output keeps its start and its end** (the first error and the summary), not only
+  the end.
+- **The `claude-code` backend loads none of your Claude Code settings** (`--setting-sources ""`):
+  no `CLAUDE.md`, settings or hooks reach thunc's calls, so an agent's `workdir` can't give it
+  instructions unless `follow=` asks for them.
 - **The `anthropic` and `openai` backends reuse their connections.** One SDK client is shared by
   every call in the process (`thunc.map`'s threads and agent runs included), instead of a new
   client, and so a new TCP and TLS handshake, for each call. A new client is made when the API key,
   the SDK's environment variables (`ANTHROPIC_*`, `OPENAI_*`) or the process change. In a local
   benchmark with 60 ms of connection setup, 20 calls in a row went from 1.47 s to 68 ms.
-- **Agents on the text protocol can act several times per reply.** On Claude Code, Codex and
-  `protocol="text"`, a reply can be a JSON array of independent actions (reading three files)
-  instead of one. They run in order, at most 16 per reply, and every result comes back together,
+- **Agents on the text protocol can act several times per reply.** On Codex and
+  `protocol="text"` (and on Claude Code when it falls back to the text protocol), a reply can be a
+  JSON array of independent actions (reading three files) instead of one. They run in order, at most 16 per reply, and every result comes back together,
   as with native tool calls. Each turn resends the whole transcript and, on the CLI backends,
   starts the CLI, so fewer turns save both. A single JSON action works as before. On Codex, with
   `live_tests/eval_prompts.py` (default prompt, 5 runs of each task), every run batched its first

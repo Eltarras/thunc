@@ -9,10 +9,12 @@
 
 Each call is one run: the model calls tools one reply at a time, thunc carries the calls out and
 sends back the results, until the model calls finish with a value of the return type. On the Claude
-and OpenAI APIs the calls are the APIs' own tool calls; on the CLI backends (and with
-protocol="text") each reply is one JSON action written as text, or an array of them. See native.py.
-The tools: list, read and search; write, edit and run where the permissions allow; and remember,
-which saves a note to the agent's memory.
+and OpenAI APIs the calls are the APIs' own tool calls; on claude-code they're native calls too,
+through an MCP server Claude Code starts (see claude_code.py); on codex (and with protocol="text")
+each reply is one JSON action written as text, or an array of them. See native.py. The tools: list,
+read and search; write, edit and run where the permissions allow; and remember, which saves a note
+to the agent's memory. A step that fails for a reason asking again may fix (a timeout, a lost
+connection, a rate limit) is retried twice before the run fails.
 
 Instruction files: with follow=, files such as AGENTS.md are read at the start of each run and sent
 in the system prompt as instructions to follow, within thunc's rules. Without it, the agent can
@@ -36,12 +38,12 @@ import warnings
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from typing import Any, ParamSpec, TypeVar, overload
 
-from . import native, profiling, tools
+from . import claude_code, native, profiling, tools
 from .backends import TYPED_BACKENDS
-from .config import _check_backend, resolve_backend
+from .config import _check_backend, resolve_backend, setting
 from .core import _plain, _render, _trace
 from .decorator import _read_signature, _wrap
-from .errors import ThuncError
+from .errors import ThuncError, TransientError
 from .execution import KNOWN, AgentState
 from .permissions import Permissions
 from .prompts import AGENT_CONTRACT, AGENT_PERSONA, method
@@ -72,9 +74,11 @@ class Agent:
                Off by default, so a folder you point an agent at can't give it instructions.
     system:    replaces the opening of the agent's system prompt. thunc's working method and rules
                are always sent after it.
-    protocol:  "native" for the APIs' own tool calls, "text" for JSON actions written as text.
-               By default native on the anthropic and openai backends, text on the others. Use
-               "text" with a server behind OPENAI_BASE_URL that has no function calling.
+    protocol:  "native" for native tool calls, "text" for JSON actions written as text. By default
+               native on the anthropic, openai and claude-code backends (claude-code through an MCP
+               server, falling back to text with a warning when Claude Code can't start it; durable
+               runs on it use text), text on codex. Use "text" with a server behind OPENAI_BASE_URL
+               that has no function calling.
     tools:     your own Python functions the agent may call, like open_issue(title: str) -> int. Each
                needs type hints and a docstring (its description); arguments are checked against the
                hints before it runs, and what it returns (or raises) goes back to the model.
@@ -259,20 +263,24 @@ class Agent:
         """The system prompt a run sends now: the fixed part (with any followed files), then the memory.
         The fixed part only changes when the agent's code or its followed files do, so it can be cached."""
         memory = Store(self.name).memory() if memory is None else memory
-        return self._fixed_prompt(self._read_followed(), self._native()) + _memory_section(memory)
+        return self._fixed_prompt(self._read_followed(), self._native() or self._mcp()) + _memory_section(memory)
 
     def _native(self) -> bool:
-        """Whether a run uses the backend's own tool calls (see protocol=)."""
+        """Whether a run uses an API's own tool calls (see protocol=). Durable runs ask this too."""
         if self.protocol == "text":
             return False
         backend = resolve_backend(self.backend)
         if backend in native.NATIVE:
             return True
-        if self.protocol == "native":
+        if self.protocol == "native" and backend not in MCP_BACKENDS:
             raise ThuncError(
                 f"Agent {self.name!r}: the {backend} backend has no native tool calls; use protocol='text'"
             )
         return False
+
+    def _mcp(self) -> bool:
+        """Whether a local run makes native calls through Claude Code and an MCP server (claude_code.py)."""
+        return self.protocol != "text" and resolve_backend(self.backend) in MCP_BACKENDS
 
     def tools(self) -> list[str]:
         """The tools this agent is offered, given its permissions."""
@@ -343,7 +351,7 @@ class Agent:
     def _text_description(self, name: str) -> str:
         """A tool for the text protocol's tool list: an example of its arguments, then what it does."""
         if name in tools.TOOLS:
-            return tools.TOOLS[name][2]
+            return tools.description(name, self.permissions.may("shell"))
         if name in self.custom:
             tool = self.custom[name]
             example = ", ".join(f'"{p}": <{describe(hint, True)}>' for p, (hint, _) in tool.params.items())
@@ -356,7 +364,7 @@ class Agent:
         if not native_calls:
             names = [*tools.TOOLS, *self.custom, "remember", "finish"]  # a tool it isn't offered is denied, not unknown
             return native.TextConversation(fixed + memory, request, names, self.backend, self.model)
-        specs = _tool_specs(self.tools(), returns, self.custom)
+        specs = _tool_specs(self.tools(), returns, self.custom, self.permissions.may("shell"))
         if resolve_backend(self.backend) == "anthropic":
             return native.AnthropicConversation(fixed, memory.lstrip("\n"), request, specs, self.model)
         return native.OpenAIConversation(fixed + memory, request, specs, self.model)
@@ -408,9 +416,11 @@ class Agent:
             memory = store.memory()  # once: a note saved during this run reaches the next one
             followed = self._read_followed()  # once too, like memory
             native_calls = self._native()
-            fixed, memory_text = self._fixed_prompt(followed, native_calls), _memory_section(memory)
+            mcp = not native_calls and self._mcp()
+            fixed, memory_text = self._fixed_prompt(followed, native_calls or mcp), _memory_section(memory)
             system = fixed + memory_text
             session = store.session(task)
+            conversation: native.Conversation | None = None
             try:
                 session.write(
                     "start",
@@ -420,17 +430,43 @@ class Agent:
                     returns=getattr(returns, "__name__", None) or repr(returns),
                     memory_characters=len(memory),
                     followed={path: hashlib.sha256(text.encode()).hexdigest()[:16] for path, text in followed},
-                    protocol="native" if native_calls else "text",
+                    protocol="native" if native_calls else "mcp" if mcp else "text",
                     **({"settings_changed_from": changed_from} if changed_from else {}),
                 )
-                conversation = self._conversation(
-                    native_calls, fixed, memory_text, _request(instructions, inputs, returns), returns
-                )
+                request = _request(instructions, inputs, returns)
+
+                def text_protocol() -> native.Conversation:
+                    return self._conversation(False, self._fixed_prompt(followed, False), memory_text, request, returns)
+
+                def switched(reason: str) -> None:
+                    session.write("fallback", protocol="text", reason=reason)
+                    warnings.warn(
+                        f"Agent {self.name!r}: Claude Code couldn't run thunc's tools as native calls ({reason}); "
+                        "using the text protocol. Update the claude CLI, or pass protocol='text' to skip this.",
+                        RuntimeWarning,
+                        4,
+                    )
+
+                if mcp and self.protocol is None and claude_code.unavailable is not None:
+                    session.write("fallback", protocol="text", reason=claude_code.unavailable)
+                    conversation = text_protocol()  # a run in this process already found native calls unavailable
+                elif mcp:
+                    specs = _tool_specs(self.tools(), returns, self.custom, self.permissions.may("shell"))
+                    conversation = claude_code.ClaudeCodeConversation(
+                        system, request, specs, self.model or setting("model"), self.workdir, setting("timeout")
+                    )
+                    if self.protocol is None:  # protocol="native" asked for native calls: no fallback
+                        conversation = claude_code.WithFallback(conversation, text_protocol, switched)
+                else:
+                    conversation = self._conversation(native_calls, fixed, memory_text, request, returns)
                 names = [path for path, _ in followed]
                 return self._loop(
                     name, task, store, session, conversation, system, names, instructions, inputs, returns, ensure
                 )
             finally:
+                close = getattr(conversation, "close", None)
+                if close is not None:
+                    close()
                 session.close()
 
     def _loop(
@@ -481,8 +517,12 @@ class Agent:
                 state.begin_turn(self.max_steps, name)
                 if deadline is not None and time.monotonic() >= deadline:
                     raise ThuncError(f"{name}: the agent didn't finish within timeout={self.timeout:g}s")
-                reply = profiling.timed(waits, conversation.next)
-                answers.append(reply.raw)
+                reply = profiling.timed(waits, _next, conversation, session, deadline)
+                if reply.same_turn and answers:  # more calls from the model reply already counted
+                    state.same_turn()
+                    answers[-1] = f"{answers[-1]}\n{reply.raw}"
+                else:
+                    answers.append(reply.raw)
                 if not state.receive(reply):  # nothing to carry out: say what's wrong and ask again
                     step += 1
                     session.write("step", n=step, reply=reply.raw, result=f"error: {reply.problem}")
@@ -540,6 +580,26 @@ class Agent:
 
 FOLLOW_LIMIT = 50_000  # characters of one followed file put in the prompt
 FOLLOW_DEFAULT = ("AGENTS.md", "CLAUDE.md")
+MCP_BACKENDS = frozenset({"claude-code"})  # backends whose local runs make native calls through MCP
+STEP_RETRIES = 2  # times a step that failed with a TransientError is tried again
+RETRY_DELAY = 2.0  # seconds before the first retry; doubled for each one after
+
+
+def _next(conversation: native.Conversation, session: Session, deadline: float | None) -> native.Reply:
+    """The model's next reply, asking again (with a pause) when the failure may be temporary: a
+    timeout, a lost connection, a rate limit, a server error, a CLI call that ended in an error."""
+    delay = RETRY_DELAY
+    for attempt in range(STEP_RETRIES + 1):
+        try:
+            return conversation.next()
+        except TransientError as exc:
+            out_of_time = deadline is not None and time.monotonic() + delay >= deadline
+            if attempt == STEP_RETRIES or out_of_time:
+                raise
+            session.write("retry", attempt=attempt + 1, error=str(exc))
+            time.sleep(delay)
+            delay *= 2
+    raise AssertionError("unreachable")
 
 
 def _follow_paths(name: str, follow: bool | Sequence[str]) -> tuple[tuple[str, ...], bool]:
@@ -686,7 +746,9 @@ def _custom_tools(agent: str, funcs: Sequence[Callable[..., Any]]) -> dict[str, 
     return found
 
 
-def _tool_specs(offered: Sequence[str], returns: Any, custom: Mapping[str, CustomTool]) -> list[native.Tool]:
+def _tool_specs(
+    offered: Sequence[str], returns: Any, custom: Mapping[str, CustomTool], shell: bool = False
+) -> list[native.Tool]:
     """The offered tools as the APIs' tool definitions: a description and a JSON Schema each."""
     specs = []
     for name in offered:
@@ -694,7 +756,8 @@ def _tool_specs(offered: Sequence[str], returns: Any, custom: Mapping[str, Custo
             specs.append(native.Tool(name, custom[name].description, custom[name].schema))
             continue
         if name in tools.TOOLS:
-            _, params, description = tools.TOOLS[name]
+            _, params, _ = tools.TOOLS[name]
+            description = tools.description(name, shell)
             properties = {p: {"type": "string" if kind is str else "integer"} for p, (kind, _) in params.items()}
             required = [p for p, (_, needed) in params.items() if needed]
         elif name == "remember":

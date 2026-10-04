@@ -145,3 +145,22 @@ def test_run_denies_win_and_nothing_runs_by_default():
     with pytest.raises(Denied, match=r"no run rule matches it; this agent may run: run:git"):
         p.check_run(["rm", "-rf", "."])
     assert "- Run commands: git ..., except git push ...." in p.describe()
+
+
+def test_shell_is_off_by_default_and_given_explicitly():
+    assert not Permissions().may("shell") and not Permissions(["run"]).may("shell")
+    shell = Permissions(["shell"])
+    assert shell.may("shell") and shell.may("run")  # a shell runs commands
+    assert "any command line, in a shell" in shell.describe()
+    assert not Permissions(["shell", "!shell"]).may("shell")
+
+
+@pytest.mark.parametrize("rules", [["shell", "!run:git push"], ["!run", "shell"]])
+def test_shell_cannot_be_combined_with_run_denies(rules):
+    with pytest.raises(ValueError, match="can't be checked word by word"):
+        Permissions(rules)
+
+
+def test_shell_takes_no_command():
+    with pytest.raises(ValueError, match="shell takes no path or command"):
+        Permissions(["shell:ls"])
