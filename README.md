@@ -325,6 +325,50 @@ more of the code before answering. Each review flagged the renamed function as a
 (outside code importing the old name breaks), never as blocking. Harder tasks are needed to measure
 more.
 
+## Durable agents with Temporal
+
+> **Unreleased.** On `main`, not yet in a PyPI release. Install from a checkout with
+> `pip install -e ".[temporal]"`. The API may change before it ships.
+
+The optional `thunc.temporal` runtime records each agent model turn and tool result
+in a Temporal workflow. Workers can restart and continue recorded progress. Existing
+function calls and `agent.run()` remain local and need no Temporal installation.
+
+Register tasks on a worker, then submit by stable identity:
+
+```python
+from thunc.temporal import Registry, Runtime, Worker
+
+# Worker process; review_task is an existing @agent.task function.
+registry = Registry(state_dir="/srv/thunc-state")
+registry.agent_task("repo.review", review_task, version="1", workspace_id="repo")
+worker = await Worker.connect("localhost:7233", task_queue="repo-v1", registry=registry)
+# await worker.run() in the worker's async entry point
+
+# Client process; a reconnectable handle survives this process exiting.
+runtime = await Runtime.connect("localhost:7233", task_queue="repo-v1")
+handle = await runtime.start(
+    "repo.review",
+    version="1",
+    workspace_id="repo",
+    inputs={},
+    returns=str,
+    request_id="review-123",
+    deadline_seconds=1800,
+)
+run = await handle.result()
+print(run.value)
+```
+
+Durable mode requires a Temporal service, a worker, and persistent storage on the
+same volume. File changes and memory updates use recovery receipts. Commands with
+uncertain outcomes pause for operator resolution instead of blindly running twice.
+Temporal does not back up your workspace or guarantee exactly-once external effects.
+
+The [Temporal guide and runnable example](examples/temporal/README.md) cover service
+setup, typed functions, composition, retries, cancellation, permissions, storage,
+history replay and upgrades.
+
 ## Examples
 
 | | |

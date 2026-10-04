@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Durable execution · thunc</title><style>
+:root{color-scheme:light dark}body{max-width:880px;margin:50px auto;padding:0 24px;font:16px/1.65 system-ui,sans-serif}h1{font-size:42px;line-height:1.1}h2{margin-top:38px}a{color:light-dark(#9b481b,#edb16e)}pre{padding:20px;border:1px solid #8886;border-radius:8px;overflow:auto}code{font-size:.88em}.note{border-left:3px solid #bf7b32;padding:15px 20px;background:#bf7b3214}li{margin:9px 0}
+</style></head><body><a href="index.html">← thunc</a><p>Unreleased · optional integration</p><h1>Durable agents with Temporal</h1><p>Keep task definitions. Use a separate runtime when execution needs to survive worker restarts.</p><div class="note">Durable agents are on main and not yet in a PyPI release; install from a checkout. Local thunc calls remain dependency-free.</div>
+<h2>Start the service and worker</h2><p>Install the development checkout and the <a href="https://docs.temporal.io/cli">official Temporal CLI</a>. The service below is for local development and binds to loopback; production needs a properly operated Temporal service.</p><pre><code>pip install -e '.[temporal,openai]'
+mkdir -p .temporal-dev
+temporal server start-dev --db-filename .temporal-dev/server.sqlite
+
+# Another terminal, with provider credentials configured:
+cd examples/temporal
+python worker.py
+
+# A third terminal in examples/temporal:
+python client.py</code></pre>
+<p>The example creates an exclusively worker-owned workspace. Set <code>THUNC_WORKSPACE</code> to select its path and <code>THUNC_TEMPORAL_STATE</code> for persistent journal/artifact storage outside that workspace. Keep the same volume and paths across worker restarts.</p>
+<h2>Register and submit</h2><pre><code>from thunc.temporal import Registry, Runtime, Worker
+
+registry = Registry(state_dir="/srv/thunc-state")
+registry.agent_task("repo.review", review_task,
+                    version="1", workspace_id="repo")
+worker = await Worker.connect("localhost:7233",
+    task_queue="repo-v1", registry=registry)
+# await worker.run() in the worker process
+
+runtime = await Runtime.connect("localhost:7233", task_queue="repo-v1")
+handle = await runtime.start("repo.review", version="1",
+    workspace_id="repo", inputs={}, returns=str,
+    request_id="review-123", deadline_seconds=1800)
+run = await handle.result()
+print(run.value)</code></pre>
+<p>Use <code>registry.function(...)</code> for typed <code>@thunc.function</code> definitions. <code>runtime.get(handle.id, returns=str)</code> reconnects; <code>status()</code> inspects and <code>cancel()</code> requests cooperative cancellation. Disconnecting a client does not cancel its run.</p>
+<h2>What recovers</h2><ul><li>Recorded model turns and tool results replay without repeating completed provider calls. An unrecorded provider completion can still repeat and incur cost.</li><li>Transient provider failures have a bounded three-attempt policy, separate from invalid-answer repair.</li><li>File writes use intentions, before/after hashes, atomic replacement and completion receipts. Permission revocations narrow access on resume.</li><li>Memory notes use stable operation identities; native reasoning/signatures and read hashes survive serialization.</li><li>Runs against one workspace are serialized. A command with an uncertain outcome pauses the lane for operator reconciliation.</li></ul>
+<h2>Resolve an uncertain effect</h2><pre><code>status = await handle.status()
+await handle.resolve(status["operation_id"], "complete",
+    evidence="Verified the process exited and checked its effect",
+    output="Recovered output")</code></pre><p>Operators can complete, abort, or explicitly retry an uncertain command after checking the old process and effects. Resolutions are deduplicated. Namespace authorization controls access; the evidence text is an audit record, not authentication. Termination or cancellation alone is not rollback.</p>
+<h2>Boundaries</h2><p>Temporal history is not a workspace backup. Preserve the service database, worker journal, artifacts and workspace. The beta supports a persistent local filesystem and same-volume restart, not arbitrary multi-host failover. Agent permissions are not an OS sandbox. Local agent execution refuses durable-owned workspaces.</p><p>Submissions and final results have a 256 KiB inline budget; immutable state snapshots have a 16 MiB ceiling. Larger final results should be represented by application-managed artifact references. Tombstones and artifacts are retained; there is no automatic garbage collection.</p><p>Version task definitions and deployment queues, retain compatible workers until runs drain, and replay saved histories before changing orchestration. A configured Temporal DataConverter/PayloadCodec protects service payloads as configured; local SQLite and artifacts require their own encrypted storage and filesystem permissions.</p>
+<h2>Compose and verify</h2><p><code>examples/temporal/pipeline.py</code> demonstrates classification → agent analysis → typed summary using native Temporal Workflows. <code>thunc.temporal.adapters.execute_task</code> submits and waits through stable identities; each agent still has separate model/tool Activities.</p><pre><code>pip install -e '.[anthropic,openai,dev,temporal-test]'
+pytest
+THUNC_TEMPORAL_TESTS=1 pytest -c pytest-temporal.ini tests/temporal</code></pre><p>Integration tests use the official local service and scripted providers, including actual worker termination, replay, rollover and cancellation. They incur no model calls. SDK 1.34.0 is the tested baseline.</p><p>See <code>examples/temporal/README.md</code> in the checkout for the complete operational guide.</p></body></html>
