@@ -23,6 +23,7 @@ thunc = "thunc.__main__:main"
 
 [project.urls]
 Homepage = "https://eltarras.github.io/thunc/"
+Documentation = "https://eltarras.github.io/thunc/docs/"
 Repository = "https://github.com/Eltarras/thunc"
 Issues = "https://github.com/Eltarras/thunc/issues"
 

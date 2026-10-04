@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started with the Jev backend · thunc docs</title>
+<meta name="description" content="Set up TypeSafe&#x27;s Jev judgment model as a thunc backend for fast yes/no, label and rating questions.">
+<link rel="canonical" href="https://eltarras.github.io/thunc/docs/jev.html">
+<meta property="og:title" content="Getting started with the Jev backend · thunc docs">
+<meta property="og:description" content="Set up TypeSafe&#x27;s Jev judgment model as a thunc backend for fast yes/no, label and rating questions.">
+<meta property="og:image" content="https://raw.githubusercontent.com/Eltarras/thunc/main/.github/social-preview.png">
+<meta property="og:url" content="https://eltarras.github.io/thunc/docs/jev.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="thunc">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/thunc/favicon.ico" sizes="48x48">
+<link rel="icon" href="/thunc/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/thunc/favicon-96.png" type="image/png" sizes="96x96">
+<link rel="apple-touch-icon" href="/thunc/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href=".././">thunc<span>()</span></a>
+  <nav aria-label="Site">
+    <a href="../docs/" class="active">Docs</a>
+    <a href="../docs/agents.html" class="hide-sm">Agents</a>
+    <a href="https://pypi.org/project/thunc/" class="hide-sm">PyPI</a>
+    <a href="https://github.com/Eltarras/thunc" class="gh">GitHub</a>
+  </nav>
+</div></header>
+<div class="docs">
+<aside>
+  <nav aria-label="Docs">
+    <div class="eyebrow">Guide</div>
+    <a href="./">Get started</a>
+    <a href="functions.html">Functions</a>
+    <a href="backends.html">Backends</a>
+    <a href="caching.html">Caching and tracing</a>
+    <a href="agents.html">Agents</a>
+    <div class="eyebrow">Going further</div>
+    <a href="temporal.html">Durable agents</a>
+    <a href="jev.html" class="active" aria-current="page">Jev backend</a>
+    <div class="eyebrow">Reference</div>
+    <a href="api.html">API reference</a>
+  </nav>
+  <div class="version">thunc 0.2.1 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+</aside>
+<main>
+<header>
+  <div class="eyebrow">Backend guide · thunc 0.1.3+</div>
+  <h1>Getting started with the Jev backend</h1>
+  <p class="lede">Jev is TypeSafe's judgment model. It doesn't write text; it answers yes/no, label and rating questions with calibrated probabilities, in about 0.3 seconds. Use it for the functions that only decide something.</p>
+</header>
+<div class="chips" style="margin-top:24px"><span>~0.3 s per call</span><span>bool · Literal[...] only</span><span>needs the jev CLI</span></div>
+
+<h2 id="setup">Set it up</h2>
+<ol class="steps">
+<li>
+<h3>Install thunc</h3>
+<p>The <code>jev</code> backend is in thunc 0.1.3 and later. It needs no extra Python packages.</p>
+<div class="codeblock"><pre><code class="sh">pip install --upgrade thunc</code></pre></div>
+</li>
+<li>
+<h3>Get a TypeSafe API key</h3>
+<p>Create one in the <a href="https://console.typesafe.ai">TypeSafe console</a>. You'll paste it into <code>jev login</code> in step 4, and nowhere else.</p>
+</li>
+<li>
+<h3>Install the jev CLI</h3>
+<p>On a Mac with Apple Silicon, use TypeSafe's Homebrew tap. Homebrew asks you to trust a tap's formulas before it installs them; trusting only <code>jev</code> is enough.</p>
+<div class="codeblock"><div class="label">macOS (Apple Silicon)</div><pre><code class="sh">brew tap model-clis/packages
+brew trust --formula model-clis/packages/jev
+brew install jev</code></pre></div>
+<p>On Linux, or a Mac without Homebrew, the install script checks the download's SHA-256 and puts <code>jev</code> in <code>~/.local/bin</code>. For Windows and other options, see the <a href="https://github.com/model-clis/jev">jev README</a>.</p>
+<div class="codeblock"><div class="label">Linux and macOS</div><pre><code class="sh">curl -fsSL https://raw.githubusercontent.com/model-clis/jev/main/scripts/install.sh | sh</code></pre></div>
+</li>
+<li>
+<h3>Log in</h3>
+<p><code>jev login</code> asks for your key, checks it with TypeSafe and stores it in <code>~/.model-clis/jev/credentials.json</code>, readable only by you.</p>
+<div class="codeblock"><pre><code class="sh">jev login</code></pre></div>
+<div class="callout"><p><strong>In CI or a container</strong>, set <code>JEV_API_KEY</code> instead. It takes precedence over the stored login. thunc never sends <code>configure(api_key=...)</code> to Jev, because that is usually the key of another backend.</p></div>
+</li>
+<li>
+<h3>Check that it works</h3>
+<p>One call costs a fraction of a cent. A probability near 1 means the login works.</p>
+<div class="codeblock"><pre><code class="sh">jev noul "Is the sky blue?" --state "A clear summer day"</code></pre></div>
+<div class="codeblock"><div class="label">Output</div><pre><code>{"answers":{"q":{"noul":0.95,"type":"noul"}},"latency_ms":265,"model":"jev-1.13.0","ok":true,...}</code></pre></div>
+</li>
+<li>
+<h3>Point thunc at it</h3>
+<p>Pick Jev for one function with <code>backend="jev"</code>, or for everything with <code>thunc.configure(backend="jev")</code> or <code>THUNC_BACKEND=jev</code>. thunc never picks it on its own.</p>
+<div class="codeblock"><pre><code class="py">from typing import Literal
+import thunc
+
+
+@thunc.function(backend="jev")
+def team(ticket: str) -&gt; Literal["bug", "billing", "feature-request", "other"]:
+    """Which team should handle this customer support ticket?"""
+    ...
+
+
+team("I was charged twice this month.")  # "billing"</code></pre></div>
+</li>
+</ol>
+
+<h2 id="types">What Jev can answer</h2>
+<p>Jev picks from answers you define, so only these return types work. Any other type raises <code>ThuncError</code> before a request is sent.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Return type</th><th>Jev question</th><th>You get</th></tr></thead>
+<tbody>
+<tr><td><code>bool</code></td><td>yes/no (<code>noul</code>)</td><td><code>True</code> when a yes is at least as likely as a no</td></tr>
+<tr><td><code>Literal["bug", "billing", ...]</code></td><td>choice, up to 255 labels</td><td>The label Jev chose</td></tr>
+<tr><td><code>Literal[1, 2, 3, 4, 5]</code></td><td>score, levels lowest first</td><td>The most likely level, as an <code>int</code></td></tr>
+<tr><td class="wrap"><code>str</code>, <code>int</code>, <code>float</code>, <code>list</code>, <code>dict</code>, dataclasses, <code>T | None</code></td><td class="muted">none</td><td class="muted"><code>ThuncError</code>; use another backend</td></tr>
+</tbody></table></div>
+<p class="muted">For a rating, use <code>Literal[1, 2, 3, 4, 5]</code> instead of <code>int</code> with <code>ensure=</code>.</p>
+
+<h2 id="with-claude">Use it next to Claude</h2>
+<p>Jev can't write text, so most programs use it for the decisions and another backend for the writing. Each function picks its own backend. Here Jev filters every message, and Claude drafts a reply only for the ones that need one.</p>
+<div class="codeblock"><pre><code class="py">thunc.configure(backend="anthropic")  # the default, for text
+
+
+@thunc.function(backend="jev")
+def needs_reply(message: str) -&gt; bool:
+    """Does this message ask a question or report a problem we should answer?"""
+    ...
+
+
+@thunc.function
+def draft_reply(message: str) -&gt; str:
+    """Write a short first reply to this message. Never promise a refund."""
+    ...
+
+
+for message in inbox:
+    if needs_reply(message):  # ~0.3 s, fractions of a cent
+        print(draft_reply(message))</code></pre></div>
+
+<h2 id="options">How thunc's options behave</h2>
+<dl>
+<dt>inputs</dt><dd>Sent as Jev's state. The docstring or instructions become the question.</dd>
+<dt>system=</dt><dd>Your own system prompt goes before the question as context. thunc's default prompt is written for text models, so it isn't sent.</dd>
+<dt>model=</dt><dd>Ignored. The CLI always uses <code>jev-latest</code>, which the cache and trace record.</dd>
+<dt>ensure=</dt><dd>A rejected answer raises <code>ThuncError</code> at once. Asking again would get the same answer.</dd>
+<dt>cache=, trace=</dt><dd>Work as for any backend.</dd>
+<dt>thunc.map</dt><dd>Works as usual. 8 workers stay under Jev's limit of about 20 requests per second.</dd>
+<dt>agents</dt><dd>Not supported: an agent run on Jev raises <code>ThuncError</code> before calling a backend.</dd>
+</dl>
+
+<h2 id="examples">Try the examples</h2>
+<p>From a clone of the <a href="https://github.com/Eltarras/thunc">repository</a>, after step 4:</p>
+<div class="codeblock"><pre><code class="sh">python3 -m examples.jev_hello        # a yes/no, a label and a rating
+python3 -m examples.jev_inbox        # 8 tickets, 24 calls, about 1 s
+python3 -m examples.jev_with_claude  # Jev decides, Claude Code writes the replies</code></pre></div>
+<p class="muted">To run thunc's live tests on Jev: <code>THUNC_BACKEND=jev pytest live_tests</code>. Tests that need text answers are skipped.</p>
+
+<h2 id="trouble">If something goes wrong</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>You see</th><th>What to do</th></tr></thead>
+<tbody>
+<tr><td class="wrap"><code>`jev` was not found on PATH.</code></td><td>Install the CLI (step 3). If you used the install script, add <code>~/.local/bin</code> to your <code>PATH</code>.</td></tr>
+<tr><td class="wrap"><code>Refusing to load formula model-clis/packages/jev from untrusted tap</code></td><td>Run <code>brew trust --formula model-clis/packages/jev</code>, then <code>brew install jev</code> again.</td></tr>
+<tr><td class="wrap"><code>jev exited 1: Error: API rejected the credentials</code></td><td>Run <code>jev login</code> again. If <code>JEV_API_KEY</code> is set, it wins over the login, so check or unset it.</td></tr>
+<tr><td class="wrap"><code>The jev backend answers bool, Literal of strings ...</code></td><td>The function's return type isn't one Jev can answer. Use <code>Literal[...]</code>, or give that function another backend.</td></tr>
+<tr><td class="wrap"><code>Unknown backend 'jev'</code></td><td>Your thunc is older than 0.1.3: <code>pip install --upgrade thunc</code>.</td></tr>
+</tbody></table></div>
+<nav class="pager" aria-label="Pages"><a class="prev" href="temporal.html"><span>Previous</span>Durable agents</a><a class="next" href="api.html"><span>Next</span>API reference</a></nav>
+<p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/jev.html">Edit this page on GitHub</a></p>
+</main>
+</div>
+<footer class="sitefoot"><div class="wrap">
+  <span>thunc() · beta · MIT</span>
+  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+</div></footer>
+<script src="../site.js"></script>
+</body>
+</html>

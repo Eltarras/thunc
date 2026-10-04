@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>thunc · call an LLM like a typed Python function</title>
-<meta name="description" content="thunc is a Python library for typed LLM calls: a docstring and type hints in, a validated value out. Works with Claude, OpenAI and local models. No dependencies.">
+<meta name="description" content="thunc is a Python library for typed LLM calls: a docstring and type hints in, a validated value out. Agents that read, edit and test code. Works with Claude, OpenAI, local models, Claude Code and Codex. No dependencies.">
 <link rel="canonical" href="https://eltarras.github.io/thunc/">
 <meta property="og:title" content="thunc · call an LLM like a typed Python function">
-<meta property="og:description" content="Docstring is the prompt, return type is the contract. Claude, OpenAI or local models. Zero dependencies.">
+<meta property="og:description" content="Docstring is the prompt, return type is the contract. Claude, OpenAI, local models, or your Claude Code login. Zero dependencies.">
 <meta property="og:image" content="https://raw.githubusercontent.com/Eltarras/thunc/main/.github/social-preview.png">
 <meta property="og:url" content="https://eltarras.github.io/thunc/">
 <meta property="og:type" content="website">
@@ -27,253 +27,189 @@
   "runtimePlatform": "Python 3.10+",
   "license": "https://opensource.org/licenses/MIT",
   "author": { "@type": "Person", "name": "Hussein Eltarras" },
-  "keywords": "python, llm, structured output, type hints, claude, openai, anthropic, local models"
+  "keywords": "python, llm, structured output, type hints, agents, claude, openai, anthropic, local models"
 }
 </script>
 <meta name="twitter:card" content="summary_large_image">
-<meta name="theme-color" content="#0f1218">
+<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/thunc/favicon.ico" sizes="48x48">
 <link rel="icon" href="/thunc/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/thunc/favicon-96.png" type="image/png" sizes="96x96">
 <link rel="apple-touch-icon" href="/thunc/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
-<style>
-  /* Same palette as .github/social-preview.png */
-  :root {
-    --bg: #0f1218;
-    --card: #171b23;
-    --line: #2a303b;
-    --text: #e8ebf1;
-    --muted: #8b93a3;
-    --accent: #f5b14c;
-    --kw: #c79bff;
-    --fn: #7cc4ff;
-    --str: #9fe0a8;
-    --ty: #f5b14c;
-    --com: #6e7787;
-    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
-    --sans: Inter, -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
-    color-scheme: dark;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background:
-      radial-gradient(900px 520px at 88% 0%, rgba(245, 177, 76, 0.10), transparent 60%),
-      radial-gradient(700px 520px at 0% 40%, rgba(124, 196, 255, 0.06), transparent 60%),
-      var(--bg);
-    background-repeat: no-repeat;
-    background-color: var(--bg);
-    color: var(--text);
-    font-family: var(--sans);
-    font-size: 17px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    font-feature-settings: "liga" 0, "calt" 0;
-  }
-  a { color: inherit; }
-  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
-  code, pre { font-family: var(--mono); }
-  :not(pre) > code {
-    font-size: 0.88em; background: var(--card); border: 1px solid var(--line);
-    border-radius: 6px; padding: 1px 6px; white-space: nowrap;
-  }
-
-  /* hero */
-  header { padding: 72px 0 40px; }
-  header .wrap { display: grid; grid-template-columns: 1fr 1.05fr; gap: 56px; align-items: center; }
-  .mark { font-family: var(--mono); font-weight: 800; font-size: 44px; line-height: 1; letter-spacing: -1.5px; }
-  .mark span { color: var(--accent); }
-  .sub { margin-top: 8px; font-family: var(--mono); font-size: 15px; color: var(--muted); }
-  .sub b { color: var(--text); font-weight: 700; }
-  h1 { margin-top: 28px; font-size: clamp(34px, 4.4vw, 46px); line-height: 1.1; letter-spacing: -1px; font-weight: 800; }
-  h1 em { font-style: normal; color: var(--accent); }
-  .install {
-    margin-top: 32px; display: inline-flex; align-items: center; gap: 14px; max-width: 100%;
-    background: var(--card); border: 2px solid var(--line); border-radius: 12px;
-    padding: 8px 8px 8px 18px; font: 700 18px var(--mono);
-  }
-  .install::before { content: "$"; color: var(--muted); font-weight: 500; }
-  .copy {
-    font: 600 13px var(--sans); color: var(--muted); background: transparent; cursor: pointer;
-    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
-  }
-  .copy:hover { color: var(--text); border-color: var(--muted); }
-  .ctas { margin-top: 20px; display: flex; gap: 12px; flex-wrap: wrap; }
-  .btn {
-    display: inline-flex; align-items: center; justify-content: center; min-height: 48px;
-    padding: 0 24px; border-radius: 12px; text-decoration: none; font: 600 16px var(--sans);
-    background: var(--card); border: 2px solid var(--line); color: var(--text);
-    transition: border-color 0.15s, filter 0.15s, transform 0.15s;
-  }
-  .btn:hover { border-color: var(--muted); transform: translateY(-1px); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1306; }
-  .btn.primary:hover { filter: brightness(1.08); border-color: var(--accent); }
-
-  .code {
-    background: var(--card); border: 2px solid var(--line); border-radius: 20px;
-    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45); overflow: hidden; min-width: 0;
-  }
-  .dots { display: flex; gap: 8px; padding: 18px 22px 0; }
-  .dots i { width: 12px; height: 12px; border-radius: 50%; background: var(--line); display: block; }
-  pre { padding: 18px 26px 26px; font-size: 16px; line-height: 1.65; overflow-x: auto; }
-  .kw { color: var(--kw); } .fn { color: var(--fn); } .str { color: var(--str); }
-  .ty { color: var(--ty); } .com { color: var(--com); } .res { color: var(--accent); font-weight: 700; }
-
-  /* sections */
-  section { padding: 56px 0; }
-  h2 { font-size: 28px; line-height: 1.2; letter-spacing: -0.5px; font-weight: 800; }
-  .lead { margin-top: 10px; color: var(--muted); max-width: 40em; }
-
-  .map { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 28px; }
-  .map div { background: var(--card); border: 2px solid var(--line); border-radius: 14px; padding: 20px 22px; }
-  .map b { display: block; font: 700 15px var(--mono); color: var(--accent); margin-bottom: 6px; }
-  .map p { color: var(--muted); font-size: 15.5px; }
-
-  .types { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
-  .types span {
-    font: 700 16px var(--mono); padding: 9px 14px; border-radius: 10px;
-    background: var(--card); border: 2px solid var(--line);
-  }
-
-  .robust { list-style: none; margin-top: 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px 40px; }
-  .robust li { padding-left: 30px; position: relative; color: var(--muted); }
-  .robust li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 800; }
-  .robust b { color: var(--text); font-weight: 600; }
-
-  .string { display: grid; grid-template-columns: 1fr 1.25fr; gap: 40px; align-items: center; }
-
-  footer { border-top: 1px solid var(--line); margin-top: 32px; padding: 28px 0 44px; color: var(--muted); font-size: 14px; }
-  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-  footer span:first-child { font-family: var(--mono); }
-
-  @media (max-width: 880px) {
-    header .wrap, .string { grid-template-columns: 1fr; gap: 36px; }
-    .map, .robust { grid-template-columns: 1fr; }
-  }
-  @media (max-width: 600px) {
-    .wrap { padding: 0 16px; }
-    header { padding: 44px 0 24px; }
-    .mark { font-size: 38px; }
-    section { padding: 40px 0; }
-    pre { font-size: 13.5px; padding: 14px 18px 20px; }
-    .install { font-size: 16px; }
-  }
-</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<link rel="stylesheet" href="site.css">
 </head>
 <body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href="./">thunc<span>()</span></a>
+  <nav aria-label="Site">
+    <a href="docs/">Docs</a>
+    <a href="docs/agents.html" class="hide-sm">Agents</a>
+    <a href="https://pypi.org/project/thunc/" class="hide-sm">PyPI</a>
+    <a href="https://github.com/Eltarras/thunc" class="gh">GitHub</a>
+  </nav>
+</div></header>
 
-<header>
-  <div class="wrap">
-    <div>
-      <div class="mark">thunc<span>()</span></div>
-      <div class="sub"><b>th</b>ink + f<b>unc</b>tion</div>
-      <h1>Call an LLM like a <em>typed</em> Python function.</h1>
-      <div class="install"><span>pip install thunc</span><button class="copy" data-copy="pip install thunc" type="button">Copy</button></div>
-      <div class="ctas">
-        <a class="btn primary" href="https://github.com/Eltarras/thunc">View on GitHub</a>
-        <a class="btn" href="https://pypi.org/project/thunc/">PyPI</a>
-      </div>
+<main>
+<section class="wrap hero">
+  <div>
+    <div class="eyebrow accent">think + function · Python 3.10+ · MIT</div>
+    <h1 style="margin-top:16px">Call an LLM like a <em>typed</em> Python function.</h1>
+    <p class="lede">The docstring is the prompt, the parameters are the inputs, and the return type is what you get back, checked. Runs on Claude, OpenAI, a local model, or your Claude Code or Codex login.</p>
+    <div class="install"><span>pip install thunc</span><button type="button" data-copy="pip install thunc">Copy</button></div>
+    <div class="ctas">
+      <a class="btn primary" href="docs/">Get started</a>
+      <a class="btn" href="https://github.com/Eltarras/thunc">View on GitHub</a>
     </div>
-    <div class="code">
-      <div class="dots"><i></i><i></i><i></i></div>
-<pre><span class="kw">@thunc.function</span>
-<span class="kw">def</span> <span class="fn">urgency</span>(ticket: <span class="ty">str</span>) -&gt; <span class="ty">int</span>:
-    <span class="str">"""Rate how urgent this ticket is,
-    from 1 (can wait) to 5 (blocked)."""</span>
+    <div class="facts"><span><b>0</b> dependencies</span><span><b>no API key</b> with Claude Code or Codex</span><span><b>beta</b> v0.2</span></div>
+  </div>
+  <div class="window">
+    <div class="bar"><i></i><i></i><i></i><span>urgency.py</span></div>
+<pre><code><span class="tk-kw">import</span> thunc
+
+<span class="tk-kw">@thunc.function</span>
+<span class="tk-kw">def</span> <span class="tk-fn">urgency</span>(ticket: <span class="tk-ty">str</span>) -&gt; <span class="tk-ty">int</span>:
+    <span class="tk-str">"""Rate how urgent this ticket is,
+    from 1 (can wait) to 5 (customer is blocked)."""</span>
     ...
 
-<span class="fn">urgency</span>(<span class="str">"I was charged twice!"</span>)
-<span class="com"># -&gt;</span> <span class="res">4</span>  <span class="com"># a checked int</span></pre>
-    </div>
+<span class="tk-fn">urgency</span>(<span class="tk-str">"I was charged twice!"</span>)
+<span class="tk-com"># -&gt;</span> <span class="tk-res">4</span>  <span class="tk-com"># a checked int</span></code></pre>
   </div>
-</header>
+</section>
 
-<section>
+<section class="band">
   <div class="wrap">
-    <h2>Your function is the prompt.</h2>
-    <div class="map">
-      <div><b>docstring</b><p>The instructions the model follows.</p></div>
-      <div><b>parameters</b><p>The inputs, sent separately from the instructions as data.</p></div>
-      <div><b>return type</b><p>What you get back, parsed and checked.</p></div>
+    <div class="head">
+      <div class="eyebrow accent">How it works</div>
+      <h2 style="margin-top:8px">Your function is the prompt.</h2>
+      <p>No prompt templates, no JSON schemas, no parsing code. Write the signature you want and call it.</p>
+    </div>
+    <div class="grid3">
+      <div class="card"><span class="cardnum">docstring</span><p>The instructions the model follows. Or pass <code>instructions=</code> built in code.</p></div>
+      <div class="card"><span class="cardnum">parameters</span><p>The inputs, sent separately from the instructions as data, which blunts prompt injection.</p></div>
+      <div class="card"><span class="cardnum">return type</span><p>What you get back, parsed and checked: <code>bool</code>, <code>Literal</code>, lists, dataclasses and more.</p></div>
     </div>
   </div>
 </section>
 
-<section>
-  <div class="wrap">
-    <h2>Supported return types</h2>
-    <div class="types">
-      <span>str</span><span>bool</span><span>int</span><span>float</span><span>Literal[...]</span>
-      <span>list[T]</span><span>dict[str, T]</span><span>T | None</span><span>dataclasses</span>
+<section class="band">
+  <div class="wrap grid2">
+    <div>
+      <div class="eyebrow accent">Real objects back</div>
+      <h2 style="margin-top:8px">Dataclasses in, dataclasses out.</h2>
+      <p class="muted" style="margin-top:12px;font-size:17px">Return types nest, so messy text becomes a <code>list[Item]</code> you can use straight away. This is a real run.</p>
+      <div class="chips" style="margin-top:20px"><span>str</span><span>bool</span><span>int</span><span>float</span><span>Literal[...]</span><span>list[T]</span><span>dict[str, T]</span><span>T | None</span><span>dataclasses</span></div>
     </div>
+    <img class="gif" src="https://raw.githubusercontent.com/Eltarras/thunc/main/.github/demo-function.gif" width="1200" height="675" alt="A thunc function returning list[Item] is called with &quot;2 oat lattes and a croissant pls. oh, one more latte!&quot; and returns two Item dataclasses: oat latte ×3 and croissant ×1." loading="lazy">
   </div>
 </section>
 
-<section>
+<section class="band">
   <div class="wrap">
-    <h2>Robust by default</h2>
-    <ul class="robust">
+    <div class="head">
+      <div class="eyebrow accent">Robust by default</div>
+      <h2 style="margin-top:8px">Never a silent bad value.</h2>
+    </div>
+    <ul class="checks">
       <li><b>Every answer is validated</b> against your return type. Dataclasses come back as real instances.</li>
       <li><b>Wrong answers get fixed.</b> The problem is sent back to the model and it tries again.</li>
-      <li><b>Never a silent bad value.</b> If it still doesn't fit, you get a <code>ThuncError</code>.</li>
+      <li><b>Loud when it can't.</b> If the answer still doesn't fit, you get a <code>ThuncError</code>.</li>
       <li><b>Your own checks</b> with <code>ensure=lambda n: 1 &lt;= n &lt;= 5</code>, retried the same way.</li>
-      <li><b>Harder to hijack.</b> Inputs never get pasted into the instructions, which blunts prompt injection.</li>
+      <li><b>Cache what should be stable.</b> <code>cache=True</code> asks the model once per input.</li>
       <li><b>Zero dependencies.</b> Standard library only; provider SDKs are optional extras.</li>
     </ul>
   </div>
 </section>
 
-<section>
-  <div class="wrap string">
+<section class="band">
+  <div class="wrap grid2">
+    <img class="gif" src="https://raw.githubusercontent.com/Eltarras/thunc/main/.github/demo-agent.gif" width="1200" height="675" alt="An agent allowed to write src/** and run pytest is asked to run the tests and fix any problems. pytest shows 1 failure; it reads src/pricing.py, fixes one line, reruns pytest (3 passed) and returns True." loading="lazy">
     <div>
-      <h2>Or just pass a string.</h2>
-      <p class="lead">When the prompt comes from a variable, a config file or a loop, call <code>thunc.call</code> with it. You still get typed, checked results.</p>
-    </div>
-    <div class="code">
-<pre>prompt = <span class="str">f"Translate into </span>{lang}<span class="str">."</span>
-text = thunc.<span class="fn">call</span>(prompt, {<span class="str">"note"</span>: note})
+      <div class="eyebrow accent">Agents · new in 0.2</div>
+      <h2 style="margin-top:8px">Agents that hand back a typed answer.</h2>
+      <p class="muted" style="margin-top:12px;font-size:17px">Give an agent a folder and permissions. It lists, searches, reads, edits and runs commands, then finishes with a checked value of your return type.</p>
+      <div class="codeblock"><pre><code class="py">fixer = thunc.Agent(
+    "fixer",
+    workdir=".",
+    permissions=["write:src/**", "run:pytest"],
+)
 
-score = thunc.<span class="fn">call</span>(
-    rubric,
-    {<span class="str">"answer"</span>: answer},
-    returns=<span class="ty">int</span>,
-)</pre>
+
+@fixer.task
+def fix_failing_tests() -> bool:
+    """Run the tests and fix any problems that they surface."""
+    ...</code></pre></div>
+      <a class="btn" href="docs/agents.html">Read the agents guide</a>
     </div>
   </div>
 </section>
 
-<section id="temporal">
+<section class="band">
   <div class="wrap">
-    <h2>Durable agents with Temporal.</h2>
-    <p class="lead">New in 0.2.1: optional durable execution, with recorded model turns,
-      recoverable tool effects, reconnectable runs and explicit resolution of uncertain commands.
-      Local calls keep their dependency-free runtime.</p>
-    <p>Durable mode requires a Temporal service, a worker and persistent workspace storage.
-      Install it with <code>pip install "thunc[temporal]"</code>.</p>
-    <a class="btn" href="temporal.html">Temporal setup and recovery guide</a>
+    <div class="head">
+      <div class="eyebrow accent">Backends</div>
+      <h2 style="margin-top:8px">Runs on what you already have.</h2>
+      <p>Choose per program, per function or per call. Mix them: a fast judgment model for decisions, a frontier model for writing.</p>
+    </div>
+    <div class="backends">
+      <div><b>Claude Code</b><code>backend="claude-code"</code><p>Your local login. No API key, no SDK.</p></div>
+      <div><b>Codex</b><code>backend="codex"</code><p>Your local login. No API key, no SDK.</p></div>
+      <div><b>Claude API</b><code>thunc[anthropic]</code><p>Native tool calls and prompt caching for agents.</p></div>
+      <div><b>OpenAI API</b><code>thunc[openai]</code><p>The Responses API, with native tool calls.</p></div>
+      <div><b>Local models</b><code>OPENAI_BASE_URL</code><p>Tested with LM Studio and gpt-oss-20b.</p></div>
+      <div><b>Jev</b><code>backend="jev"</code><p>Yes/no, labels and ratings in about 0.3 s.</p></div>
+    </div>
   </div>
 </section>
 
-<footer>
-  <div class="wrap">
-    <span>thunc() · beta · MIT</span>
-    <span><a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="jev.html">Jev guide</a> · <a href="temporal.html">Temporal guide</a></span>
-  </div>
-</footer>
+<section class="band">
+  <div class="wrap grid2" style="align-items:start">
+    <div>
+      <div class="eyebrow accent">Or just pass a string</div>
+      <h2 style="margin-top:8px">Prompts built in code.</h2>
+      <p class="muted" style="margin-top:12px;font-size:17px">When the prompt comes from a variable, a config file or a loop, call <code>thunc.call</code> with it. You still get typed, checked results, and <code>thunc.map</code> runs many at once.</p>
+    </div>
+    <div class="codeblock"><pre><code class="py">text = thunc.call(f"Translate into {lang}.", {"note": note})
 
-<script>
-  document.querySelectorAll(".copy").forEach(function (button) {
-    button.addEventListener("click", function () {
-      try {
-        navigator.clipboard.writeText(button.getAttribute("data-copy")).then(function () {
-          button.textContent = "Copied";
-          setTimeout(function () { button.textContent = "Copy"; }, 1500);
-        }, function () {});
-      } catch (e) {}
-    });
-  });
-</script>
+score = thunc.call(rubric, {"answer": answer}, returns=int)
+
+scores = thunc.map(urgency, tickets, workers=8)</code></pre></div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="card" style="display:flex;flex-wrap:wrap;gap:18px 32px;align-items:center;justify-content:space-between;padding:26px 28px">
+      <div style="max-width:620px">
+        <div class="eyebrow accent">Optional · new in 0.2.1</div>
+        <h3 style="font:600 22px/1.3 var(--display);margin:6px 0 6px">Durable agents with Temporal</h3>
+        <p class="muted" style="margin:0">Recorded model turns, recoverable tool effects, reconnectable runs and explicit resolution of uncertain commands. Local calls keep their dependency-free runtime.</p>
+      </div>
+      <a class="btn" href="docs/temporal.html">Temporal guide</a>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <h2>Try it in a minute.</h2>
+    <div class="install"><span>pip install thunc</span><button type="button" data-copy="pip install thunc">Copy</button></div>
+    <div class="ctas">
+      <a class="btn primary" href="docs/">Get started</a>
+      <a class="btn" href="https://github.com/Eltarras/thunc">Star on GitHub</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="sitefoot"><div class="wrap">
+  <span>thunc() · beta · MIT</span>
+  <span><a href="docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+</div></footer>
+<script src="site.js"></script>
 </body>
 </html>

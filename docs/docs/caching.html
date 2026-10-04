@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caching and tracing · thunc docs</title>
+<meta name="description" content="Save answers on disk with cache=True, clear them from Python or the command line, and trace every call.">
+<link rel="canonical" href="https://eltarras.github.io/thunc/docs/caching.html">
+<meta property="og:title" content="Caching and tracing · thunc docs">
+<meta property="og:description" content="Save answers on disk with cache=True, clear them from Python or the command line, and trace every call.">
+<meta property="og:image" content="https://raw.githubusercontent.com/Eltarras/thunc/main/.github/social-preview.png">
+<meta property="og:url" content="https://eltarras.github.io/thunc/docs/caching.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="thunc">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/thunc/favicon.ico" sizes="48x48">
+<link rel="icon" href="/thunc/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/thunc/favicon-96.png" type="image/png" sizes="96x96">
+<link rel="apple-touch-icon" href="/thunc/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href=".././">thunc<span>()</span></a>
+  <nav aria-label="Site">
+    <a href="../docs/" class="active">Docs</a>
+    <a href="../docs/agents.html" class="hide-sm">Agents</a>
+    <a href="https://pypi.org/project/thunc/" class="hide-sm">PyPI</a>
+    <a href="https://github.com/Eltarras/thunc" class="gh">GitHub</a>
+  </nav>
+</div></header>
+<div class="docs">
+<aside>
+  <nav aria-label="Docs">
+    <div class="eyebrow">Guide</div>
+    <a href="./">Get started</a>
+    <a href="functions.html">Functions</a>
+    <a href="backends.html">Backends</a>
+    <a href="caching.html" class="active" aria-current="page">Caching and tracing</a>
+    <a href="agents.html">Agents</a>
+    <div class="eyebrow">Going further</div>
+    <a href="temporal.html">Durable agents</a>
+    <a href="jev.html">Jev backend</a>
+    <div class="eyebrow">Reference</div>
+    <a href="api.html">API reference</a>
+  </nav>
+  <div class="version">thunc 0.2.1 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+</aside>
+<main>
+<header>
+  <div class="eyebrow">Guide</div>
+  <h1>Caching and tracing</h1>
+  <p class="lede">Save answers on disk so the model is asked once per input, clear them from Python or the command line, and record every call to a file.</p>
+</header>
+<h2 id="cache">Caching answers: cache=True</h2>
+<p><code>cache=True</code> saves each answer on disk and reuses it when the same inputs come again, so the model is asked once.</p>
+<div class="codeblock"><pre><code class="py">@thunc.function(cache=True)
+def category(ticket: str) -&gt; Literal["bug", "billing", "other"]:
+    """Classify this support ticket."""
+    ...</code></pre></div>
+<p>It's off by default, because it only suits some functions:</p>
+<ul>
+<li><strong>Use it</strong> for functions that should give one answer per input: classify, extract, score.</li>
+<li><strong>Don't use it</strong> for functions meant to vary (drafting a reply, brainstorming), or whose answer depends on something that isn't an input, like today's date. Make that an input instead, <code>def overdue(deadline: date, today: date) -&gt; bool</code>, and caching becomes safe.</li>
+</ul>
+
+<h3 id="keys">When a saved answer is reused</h3>
+<p>Only for the exact same function, prompt, backend and model, so changing the docstring, the return type or the model asks again. A saved answer is checked against the return type and <code>ensure=</code> before it's reused, and failed calls are never saved. The function's name is part of the key, so renaming a function starts its cache fresh.</p>
+
+<h3 id="where">Where answers go</h3>
+<p>In <code>.thunc_cache/</code> in the working directory; change it with <code>configure(cache_dir=...)</code> or <code>THUNC_CACHE_DIR</code>. Each call is one JSON file holding the full prompt in plain text, inputs included, so treat the folder like the data you send.</p>
+
+<h2 id="clearing">Clearing the cache</h2>
+<p>Clear everything, or one function's answers, from Python:</p>
+<div class="codeblock"><pre><code class="py">thunc.clear_cache()                                # everything
+thunc.clear_cache(urgency)                         # one function
+thunc.clear_cache("urgency")                       # the same, by name
+thunc.clear_cache(older_than=timedelta(days=30))   # answers saved more than 30 days ago
+thunc.cache_info()                                 # what's saved, one group per function</code></pre></div>
+<p>Or from the command line:</p>
+<div class="codeblock"><pre><code class="sh">thunc cache list                                   # saved answers per function
+thunc cache clear                                  # everything
+thunc cache clear --function urgency               # one function (repeat for several)
+thunc cache clear --older-than 30d --dry-run       # what would go, without deleting</code></pre></div>
+<p>A name is the function's name (<code>urgency</code>, or <code>Triage.urgency</code> for a method), optionally with its module (<code>support_inbox.urgency</code>). For <code>thunc.call</code>, pass <code>name="..."</code> to group its answers the same way; unnamed calls are cleared only with everything or by age. Ages count from when the answer was saved. <code>clear_cache</code> returns how many answers it deleted.</p>
+<p>Clearing deletes only cache entries, never other files in the folder, and it's safe while another process is using the cache. The <code>thunc</code> command (also <code>python -m thunc</code>) reads <code>THUNC_CACHE_DIR</code>, or takes <code>--cache-dir</code>; it can't see a <code>configure(cache_dir=...)</code> in your code.</p>
+
+<h2 id="tracing">Tracing every call</h2>
+<div class="codeblock"><pre><code class="py">thunc.configure(trace="calls.jsonl")</code></pre></div>
+<p>Every call is appended to the file as one JSON line, or set <code>THUNC_TRACE</code> instead. An agent run is one line too, with every model reply in it. <a href="https://github.com/Eltarras/thunc/blob/main/examples/log_triage.py">log_triage.py</a> and <a href="https://github.com/Eltarras/thunc/blob/main/examples/repo_guide.py">repo_guide.py</a> read their traces back.</p>
+
+<h2 id="testing">Testing code that calls a model</h2>
+<p>There's no record/replay switch for tests yet: <code>cache=True</code> is per function, and nothing serves every call from disk and fails on a miss. thunc's own offline tests use a fake backend instead of a real model.</p>
+<nav class="pager" aria-label="Pages"><a class="prev" href="backends.html"><span>Previous</span>Backends</a><a class="next" href="agents.html"><span>Next</span>Agents</a></nav>
+<p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/caching.html">Edit this page on GitHub</a></p>
+</main>
+</div>
+<footer class="sitefoot"><div class="wrap">
+  <span>thunc() · beta · MIT</span>
+  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+</div></footer>
+<script src="../site.js"></script>
+</body>
+</html>

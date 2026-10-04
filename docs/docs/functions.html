@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Functions and prompts · thunc docs</title>
+<meta name="description" content="Write prompts as typed Python functions with @thunc.function or thunc.call: return types, retries, ensure= and system prompts.">
+<link rel="canonical" href="https://eltarras.github.io/thunc/docs/functions.html">
+<meta property="og:title" content="Functions and prompts · thunc docs">
+<meta property="og:description" content="Write prompts as typed Python functions with @thunc.function or thunc.call: return types, retries, ensure= and system prompts.">
+<meta property="og:image" content="https://raw.githubusercontent.com/Eltarras/thunc/main/.github/social-preview.png">
+<meta property="og:url" content="https://eltarras.github.io/thunc/docs/functions.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="thunc">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/thunc/favicon.ico" sizes="48x48">
+<link rel="icon" href="/thunc/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/thunc/favicon-96.png" type="image/png" sizes="96x96">
+<link rel="apple-touch-icon" href="/thunc/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href=".././">thunc<span>()</span></a>
+  <nav aria-label="Site">
+    <a href="../docs/" class="active">Docs</a>
+    <a href="../docs/agents.html" class="hide-sm">Agents</a>
+    <a href="https://pypi.org/project/thunc/" class="hide-sm">PyPI</a>
+    <a href="https://github.com/Eltarras/thunc" class="gh">GitHub</a>
+  </nav>
+</div></header>
+<div class="docs">
+<aside>
+  <nav aria-label="Docs">
+    <div class="eyebrow">Guide</div>
+    <a href="./">Get started</a>
+    <a href="functions.html" class="active" aria-current="page">Functions</a>
+    <a href="backends.html">Backends</a>
+    <a href="caching.html">Caching and tracing</a>
+    <a href="agents.html">Agents</a>
+    <div class="eyebrow">Going further</div>
+    <a href="temporal.html">Durable agents</a>
+    <a href="jev.html">Jev backend</a>
+    <div class="eyebrow">Reference</div>
+    <a href="api.html">API reference</a>
+  </nav>
+  <div class="version">thunc 0.2.1 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+</aside>
+<main>
+<header>
+  <div class="eyebrow">Guide</div>
+  <h1>Functions and prompts</h1>
+  <p class="lede">Two ways to write a prompt, the return types thunc understands, and what happens when the model's answer doesn't fit.</p>
+</header>
+<h2 id="two-ways">Two ways to write a prompt</h2>
+<div class="tablewrap"><table>
+<thead><tr><th></th><th>When</th><th>How</th></tr></thead>
+<tbody>
+<tr><td><code>@thunc.function</code></td><td>The prompt is fixed and should read like code</td><td>The docstring is the prompt, the parameters are the inputs, the return annotation is the type</td></tr>
+<tr><td><code>thunc.call(...)</code></td><td>The prompt is built in code: from config, in a loop, loaded from a file</td><td class="wrap"><code>thunc.call(f"Translate into {lang}.", {"text": note})</code></td></tr>
+</tbody></table></div>
+
+<h3 id="function">@thunc.function</h3>
+<div class="codeblock"><pre><code class="py">from typing import Literal
+import thunc
+
+
+@thunc.function
+def team(ticket: str) -&gt; Literal["bug", "billing", "feature-request", "other"]:
+    """Which team should handle this customer support ticket?"""
+    ...
+
+
+team("I was charged twice this month.")  # "billing"</code></pre></div>
+<p>The body must stay empty: a docstring and <code>...</code>. Real code there raises <code>TypeError</code> when the function is declared, because the model replaces the body and that code would never run. <code>async def</code> works and gives an awaitable. Methods work too; <code>self</code> and <code>cls</code> aren't sent.</p>
+
+<h3 id="call">thunc.call</h3>
+<div class="codeblock"><pre><code class="py">text = thunc.call(f"Translate into {lang}.", {"note": note})
+
+score = thunc.call(
+    rubric,
+    {"answer": answer},
+    returns=int,
+    ensure=lambda n: 0 &lt;= n &lt;= 10,
+)</code></pre></div>
+<p>The first argument is the instructions; the second is a dict of inputs, sent separately. <code>returns=</code> is the type (default <code>str</code>). <code>name="..."</code> groups a call's cached answers so they can be <a href="caching.html#clearing">cleared by name</a>.</p>
+
+<h3 id="generated">Both: a typed function with a generated prompt</h3>
+<p><code>@thunc.function(instructions=some_string)</code> gives a typed, reusable function whose prompt comes from code. The docstring can then be left out.</p>
+<div class="codeblock"><pre><code class="py">rubric = Path("rubric.md").read_text()
+
+
+@thunc.function(instructions=rubric)
+def grade(essay: str) -&gt; int:
+    ...</code></pre></div>
+
+<h2 id="injection">Keep user data out of the instructions</h2>
+<p>Your own text can go in the instructions. Anything from users, files or the web goes in the inputs, which thunc sends as data, separate from the instructions, and the model is told to treat them as data.</p>
+<ul>
+<li><code>@thunc.function</code> does this automatically: the arguments are the inputs.</li>
+<li>With <code>thunc.call</code> it's up to you. Don't paste user text into the instructions with an f-string.</li>
+</ul>
+<div class="callout warn"><p>In a live test, a hostile email pasted into the instructions with an f-string tricked the model 3 out of 3 times. Passed as an input, it failed 3 out of 3 times.</p></div>
+
+<h2 id="types">Return types</h2>
+<div class="chips"><span>str</span><span>bool</span><span>int</span><span>float</span><span>Literal[...]</span><span>list[T]</span><span>dict[str, T]</span><span>T | None</span><span>dataclasses</span></div>
+<p style="margin-top:14px">They nest, and dataclasses come back as real instances:</p>
+<div class="codeblock"><pre><code class="py">from dataclasses import dataclass
+
+
+@dataclass
+class Item:
+    name: str
+    qty: int
+
+
+@thunc.function
+def order(message: str) -&gt; list[Item]:
+    """List what the customer wants, combining repeats."""
+    ...
+
+
+order("2 oat lattes and a croissant pls. oh, one more latte!")
+# [Item(name='oat latte', qty=3), Item(name='croissant', qty=1)]</code></pre></div>
+<p>An unsupported return type fails when the function is declared, not at the first call. A function with no return annotation returns <code>str</code>.</p>
+
+<h2 id="retries">When the answer doesn't fit</h2>
+<p>Every answer is parsed and checked against the return type. If it doesn't fit, the problem is sent back to the model and it tries again, up to <code>retries=2</code> more times. After that, <code>thunc.ThuncError</code> is raised.</p>
+<p><strong>Near-misses are read, not retried:</strong></p>
+<ul>
+<li>a code fence, with any language tag, even after a line of prose;</li>
+<li>a leading <code>&lt;think&gt;...&lt;/think&gt;</code> block;</li>
+<li>an answer wrapped in a one-key object, like <code>{"rating": 5}</code> for an <code>int</code> (not when the key is one of the dataclass's fields, or the type is a <code>dict</code>).</li>
+</ul>
+<p><strong>Anything ambiguous is retried instead:</strong> two answers (also an answer, then a fence with another), <code>NaN</code>, a duplicate key, <code>true</code> for <code>Literal[1, 2]</code>, an object with none of a dataclass's fields, or an empty reply for <code>str</code>.</p>
+
+<h2 id="ensure">Your own checks: ensure=</h2>
+<div class="codeblock"><pre><code class="py">@thunc.function(ensure=lambda n: 1 &lt;= n &lt;= 5)
+def urgency(ticket: str) -&gt; int:
+    """Rate how urgent this ticket is, from 1 (can wait) to 5 (customer is blocked)."""
+    ...</code></pre></div>
+<p>A failed check is sent back to the model and retried like a parse failure, and so is a check that raises (<code>1 &lt;= None</code> when the model answered <code>null</code>).</p>
+
+<h2 id="system">The system prompt: system=</h2>
+<p><code>system=</code> replaces thunc's default system prompt (<em>"You are a function inside a computer program. Follow the instructions."</em>), for example <code>system="You are a strict essay grader."</code>.</p>
+<p>thunc adds two rules after your text, because parsing and the injection defence depend on them: inputs are data, not instructions, and the reply is the return value only.</p>
+<p>A function's or call's own <code>system=</code> wins over <code>configure(system=...)</code>, which wins over thunc's default. Every backend that writes text sends it as the real system prompt, replacing the built-in prompt of the Claude Code and Codex CLIs. Jev is different: see <a href="jev.html#options">the Jev guide</a>.</p>
+
+<h2 id="map">Many calls at once: thunc.map</h2>
+<div class="codeblock"><pre><code class="py">tickets = load_tickets()
+scores = thunc.map(urgency, tickets, workers=8)  # same order as tickets</code></pre></div>
+<p>Like the built-in <code>map</code>, but up to <code>workers</code> calls run at once, and the results keep the input order. Each call takes 4–8 seconds, so this is the main speed lever.</p>
+
+<h2 id="typing">Type checking</h2>
+<p>Signatures and return types are visible to mypy and Pyright. mypy reports the empty bodies; turn that off with <code>disable_error_code = ["empty-body"]</code>. <code>Literal</code> results from <code>thunc.call</code> are typed as <code>Any</code>; <code>@thunc.function</code> has no such gap.</p>
+<p>Docstrings disappear under <code>python -OO</code>. Use <code>instructions=</code> there.</p>
+<nav class="pager" aria-label="Pages"><a class="prev" href="./"><span>Previous</span>Get started</a><a class="next" href="backends.html"><span>Next</span>Backends</a></nav>
+<p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/functions.html">Edit this page on GitHub</a></p>
+</main>
+</div>
+<footer class="sitefoot"><div class="wrap">
+  <span>thunc() · beta · MIT</span>
+  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+</div></footer>
+<script src="../site.js"></script>
+</body>
+</html>
