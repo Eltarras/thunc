@@ -498,9 +498,17 @@ def test_runs_of_one_agent_take_turns(monkeypatch, repo):
     other = make_task(thunc.Agent("other", workdir=repo))
     assert thunc.map(lambda f: f(), [one] * 4) == ["ok"] * 4
     assert peak == 1  # one agent: one run at a time
-    peak = 0
+
+    # Different agents run side by side: each run waits at the barrier for the other, which can only
+    # get there if the two are running at once (if they took turns, the barrier would time out).
+    barrier = threading.Barrier(2, timeout=10)
+
+    def meet(text, **kwargs):
+        barrier.wait()
+        return finish("ok")
+
+    monkeypatch.setitem(backends.BACKENDS, "slow", meet)
     assert thunc.map(lambda f: f(), [one, other]) == ["ok"] * 2
-    assert peak == 2  # different agents run side by side
 
 
 def test_a_leftover_lock_file_does_not_block(fake, repo):
