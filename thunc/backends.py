@@ -7,6 +7,12 @@
 
 The API backends send `system` as the API's system prompt. The CLIs replace their own built-in
 prompt with it: `claude -p --system-prompt`, and Codex's `model_instructions_file` setting.
+
+Typed backends answer a typed question instead of writing text, so they take the instructions,
+inputs and return type separately: (instructions, inputs, returns, *, system, timeout).
+They return the answer as JSON text, so parsing, ensure=, the cache and the trace work as usual.
+
+- jev:         TypeSafe's Jev judgment model via `jev ask`. Answers bool and Literal[...] only.
 """
 
 from __future__ import annotations
@@ -19,15 +25,19 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable
+from typing import Any, Literal, get_args, get_origin
 
 from .errors import ThuncError
+from .schema import describe
 
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
 DEFAULT_OPENAI_MODEL = "gpt-5.5"
-# The model a backend uses when none is given, where thunc decides it (the CLIs pick their own).
-DEFAULT_MODELS = {"anthropic": DEFAULT_ANTHROPIC_MODEL, "openai": DEFAULT_OPENAI_MODEL}
+# The model a backend uses when none is given, where thunc decides it (the claude and codex CLIs
+# pick their own). Jev's can't be changed: the CLI always uses jev-latest.
+DEFAULT_MODELS = {"anthropic": DEFAULT_ANTHROPIC_MODEL, "openai": DEFAULT_OPENAI_MODEL, "jev": "jev-latest"}
 # Models that accept the server-side refusal fallback (`fallbacks: "default"`).
 _FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"}
+_JEV_MAX_CHOICES = 255  # the most options a Jev choice question takes
 
 
 def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
@@ -226,6 +236,66 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
                 os.unlink(path)
 
 
+def jev(instructions: str, inputs: dict[str, Any], returns: Any, *, system: str | None, timeout: float) -> str:
+    """One Jev question: the inputs are its state, the instructions its question. The answer comes
+    back as JSON text: true when a yes is at least as likely as not, the chosen label, or the most
+    likely level. The CLI always uses jev-latest, and finds the key itself: JEV_API_KEY or `jev login`.
+    configure(api_key=...) isn't passed on, since it's usually the key of another backend."""
+    kind, labels = _jev_question(returns)
+    if system and system.strip():  # context from the program; thunc's own default is written for text models
+        instructions = f"{system.strip()}\n\n{instructions}"
+    question: dict[str, Any] = {"type": kind, "instructions": instructions}
+    if kind == "choice":  # option -> description
+        question["criteria"] = {label: label for label in labels}
+    elif kind == "score":  # level descriptions, lowest first
+        question["criteria"] = [str(level) for level in labels]
+    request = json.dumps({"state": inputs, "questions": {"answer": question}}, ensure_ascii=False, default=str)
+    proc = _run_cli(["jev", "ask", "-"], request, timeout)
+    if proc.returncode != 0:
+        raise ThuncError(f"jev exited {proc.returncode}: {_printable(proc.stderr or proc.stdout).strip()[-500:]}")
+    try:
+        answer = json.loads(proc.stdout)["answers"]["answer"]
+        value = answer["probabilities"] if kind == "score" else answer[kind]
+    except (ValueError, RecursionError, KeyError, TypeError) as exc:
+        raise ThuncError(f"jev returned no answer: {_printable(proc.stdout).strip()[-500:]}") from exc
+    shown = _printable(json.dumps(value))[:200]
+    if kind == "noul":  # {"noul": 0.98}: the probability of a yes
+        if not _probability(value):
+            raise ThuncError(f"jev returned {shown}, not a probability.")
+        return json.dumps(value >= 0.5)
+    if kind == "choice":  # {"choice": "billing", "probabilities": {...}}
+        if value not in labels:
+            raise ThuncError(f"jev chose {shown}, not one of {list(labels)}.")
+        return json.dumps(value, ensure_ascii=False)
+    # {"score": 3.99, "probabilities": {"0": 0.0, ..., "4": 1.0}}: "score" is the expected position,
+    # so it can fall between two likely levels; the most likely level comes from the probabilities.
+    positions = [str(position) for position in range(len(labels))]
+    if not isinstance(value, dict) or sorted(value) != sorted(positions) or not all(map(_probability, value.values())):
+        raise ThuncError(f"jev returned {shown}, not probabilities for the positions {positions}.")
+    return json.dumps(labels[int(max(positions, key=value.__getitem__))])
+
+
+def _jev_question(returns: Any) -> tuple[str, tuple[Any, ...]]:
+    """The Jev question for a return type: noul for bool, choice for string literals, score for
+    integer literals (levels in ascending order). Jev can't write text, so nothing else."""
+    if returns is bool:
+        return "noul", ()
+    if get_origin(returns) is Literal:
+        options = get_args(returns)
+        if all(isinstance(option, str) for option in options) and len(options) <= _JEV_MAX_CHOICES:
+            return "choice", options
+        if all(isinstance(option, int) and not isinstance(option, bool) for option in options):
+            return "score", tuple(sorted(options))
+    raise ThuncError(
+        f"The jev backend answers bool, Literal of strings (up to {_JEV_MAX_CHOICES}) or Literal of "
+        f"integers, not {describe(returns)}."
+    )
+
+
+def _probability(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
+
+
 def _not_utf8(output: str) -> bool:
     """Whether CLI output had bytes that aren't UTF-8 (surrogateescape turns them into U+DC80-DCFF).
     A surrogate the CLI wrote as a JSON escape ("\\ud83d") is plain ASCII here, so it doesn't count."""
@@ -241,4 +311,9 @@ BACKENDS: dict[str, Callable[..., str]] = {
     "openai": openai_api,
     "claude-code": claude_code,
     "codex": codex,
+}
+
+# Typed backends: see the module docstring.
+TYPED_BACKENDS: dict[str, Callable[..., str]] = {
+    "jev": jev,
 }
