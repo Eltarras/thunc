@@ -1250,6 +1250,45 @@ def test_follow_true_reads_agents_md_and_claude_md(fake, repo):
     assert run.followed == ["AGENTS.md", "CLAUDE.md"]
 
 
+# A stand-in for `claude -p` on the text protocol: finishes with the length of the system prompt,
+# which it reads from the file thunc names.
+FAKE_CLAUDE_FINISH = """
+import json, sys
+args = sys.argv[1:]
+with open(args[args.index("--system-prompt-file") + 1], encoding="utf-8") as f:
+    system = f.read()
+sys.stdin.read()
+print(json.dumps({"result": json.dumps({"tool": "finish", "args": {"value": len(system)}}), "is_error": False}))
+"""
+
+
+def test_large_followed_files_reach_claude_code_on_the_text_protocol(monkeypatch, repo, tmp_path):
+    # Three followed files of 48,000 characters each: a system prompt over the 128 KB Linux allows
+    # for one command-line argument, and far over Windows' 32,767 characters for the whole line.
+    from thunc import backends
+
+    script = tmp_path / "fake_claude.py"
+    script.write_text(FAKE_CLAUDE_FINISH)
+    real_run = subprocess.run
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(
+        backends.subprocess, "run", lambda args, **kw: real_run([sys.executable, str(script), *args[1:]], **kw)
+    )
+    thunc.configure(backend="claude-code")
+    names = ["a.md", "b.md", "c.md"]
+    for name in names:
+        (repo / name).write_text("Keep it short.\n" * 3_200)  # 48,000 characters, under FOLLOW_LIMIT
+    agent = thunc.Agent("f", workdir=repo, follow=names, protocol="text")
+
+    @agent.task
+    def size() -> int:
+        """How long is your system prompt?"""
+        ...
+
+    run = agent.run(size)
+    assert run.followed == names and run.value > 3 * 48_000
+
+
 def test_follow_true_skips_missing_files_quietly(fake, repo, recwarn):
     (repo / "CLAUDE.md").write_text("Be brief.")
     fake.replies = [finish("ok")]

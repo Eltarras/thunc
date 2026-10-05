@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changelog · thunc docs</title>
+<meta name="description" content="Every thunc release, newest first: what was added and changed in each version.">
+<link rel="canonical" href="https://eltarras.github.io/thunc/docs/changelog.html">
+<meta property="og:title" content="Changelog · thunc docs">
+<meta property="og:description" content="Every thunc release, newest first: what was added and changed in each version.">
+<meta property="og:image" content="https://eltarras.github.io/thunc/og.png">
+<meta property="og:url" content="https://eltarras.github.io/thunc/docs/changelog.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="thunc">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/thunc/favicon.ico" sizes="48x48">
+<link rel="icon" href="/thunc/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/thunc/favicon-96.png" type="image/png" sizes="96x96">
+<link rel="apple-touch-icon" href="/thunc/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href=".././">thunc<span>()</span></a>
+  <nav aria-label="Site">
+    <a href="../docs/" class="active">Docs</a>
+    <a href="../docs/agents.html" class="hide-sm">Agents</a>
+    <a href="https://pypi.org/project/thunc/" class="hide-sm">PyPI</a>
+    <a href="https://github.com/Eltarras/thunc" class="gh">GitHub</a>
+  </nav>
+</div></header>
+<div class="docs">
+<aside>
+  <nav aria-label="Docs">
+    <div class="eyebrow">Guide</div>
+    <a href="./">Get started</a>
+    <a href="functions.html">Functions</a>
+    <a href="backends.html">Backends</a>
+    <a href="caching.html">Caching, tracing and profiling</a>
+    <a href="agents.html">Agents</a>
+    <div class="eyebrow">Going further</div>
+    <a href="temporal.html">Durable agents</a>
+    <a href="jev.html">Jev backend</a>
+    <div class="eyebrow">Reference</div>
+    <a href="api.html">API reference</a>
+    <a href="changelog.html" class="active" aria-current="page">Changelog</a>
+  </nav>
+  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+</aside>
+<main>
+<header>
+  <div class="eyebrow">Reference</div>
+  <h1>Changelog</h1>
+  <p class="lede">Every thunc release, newest first. Each one links to its full notes on GitHub and its page on PyPI. Upgrade with <code>pip install --upgrade thunc</code>.</p>
+</header>
+<div class="tablewrap"><table>
+<thead><tr><th>Version</th><th>Released</th><th>Headline</th></tr></thead>
+<tbody>
+<tr><td><a href="#v0-2-2"><code>0.2.2</code></a></td><td class="nowrap">5 Oct 2026</td><td class="wrap">Agents use their tools reliably; native tool calls on Claude Code; faster calls; <code>thunc run --profile</code></td></tr>
+<tr><td><a href="#v0-2-1"><code>0.2.1</code></a></td><td class="nowrap">4 Oct 2026</td><td class="wrap">Durable agents with Temporal</td></tr>
+<tr><td><a href="#v0-2-0"><code>0.2.0</code></a></td><td class="nowrap">4 Oct 2026</td><td class="wrap">Agents: typed tasks that read, edit and run commands under permissions</td></tr>
+<tr><td><a href="#v0-1-3"><code>0.1.3</code></a></td><td class="nowrap">4 Oct 2026</td><td class="wrap">The Jev backend</td></tr>
+<tr><td><a href="#v0-1-2"><code>0.1.2</code></a></td><td class="nowrap">4 Oct 2026</td><td class="wrap"><code>cache=True</code>, <code>system=</code> and sturdier parsing</td></tr>
+<tr><td><a href="#v0-1-1"><code>0.1.1</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">The OpenAI backend and local models</td></tr>
+<tr><td><a href="#v0-1-0"><code>0.1.0</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">First release</td></tr>
+</tbody></table></div>
+<div class="release">
+<h2 id="v0-2-2">0.2.2 <span class="pill">beta</span></h2>
+<p class="release-meta">5 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.2.2">Release notes</a> · <a href="https://pypi.org/project/thunc/0.2.2/">PyPI</a></p>
+<p><strong>Agents that use their tools reliably, and faster calls.</strong> Agents on Claude Code make native tool calls instead of writing each action as JSON text, a failed step is retried instead of ending the run, and the agent's tools fill gaps a benchmark found. In that tool-use benchmark (<code>live_tests/bench_tooluse.py</code>, 8 tasks, Claude Sonnet 5.5, 3 runs each), agents on Claude Code went from 12 of 24 runs passing to 24 of 24, from 99 to 10 seconds a task, and from $0.084 to $0.022 a task; Claude Code itself took 11 seconds and $0.069. The API backends also reuse their connections, Codex answers return sooner, and <code>thunc run --profile</code> shows where a program's time goes.</p>
+<h3>Behavior changes</h3>
+<p>Nothing is removed, but these defaults change:</p>
+<ul>
+<li><strong>Agents on <code>claude-code</code> make native tool calls</strong> (see Added). With a <code>claude</code> CLI too old for them, or with MCP servers turned off by a policy, a run falls back to the text protocol with a warning. <code>protocol="text"</code> keeps the old way.</li>
+<li><strong><code>list</code> and <code>search</code> leave out what git ignores</strong> in a git repository (build output, caches, vendored code). A folder named explicitly is still listed and searched.</li>
+<li><strong>Long command output keeps its start and its end</strong> (the first error and the summary), not only the end.</li>
+<li><strong>The <code>claude-code</code> backend loads none of your Claude Code settings</strong> (<code>--setting-sources ""</code>): no <code>CLAUDE.md</code>, settings or hooks reach thunc's calls, plain function calls included, so an agent's <code>workdir</code> can't give it instructions unless <code>follow=</code> asks for them.</li>
+</ul>
+<h3>Added</h3>
+<ul>
+<li><strong>Native calls on <code>claude-code</code></strong>: the agent's tools are an MCP server that one <code>claude -p</code> process per run calls; thunc carries out each call with its own tools, permissions and run record. The CLI runs in the agent's <code>workdir</code>. <code>protocol="text"</code> keeps the old way, and durable runs on Claude Code still use it. When Claude Code can't start native calls (an older CLI, or MCP servers turned off by a policy), a run falls back to the text protocol with a warning and a <code>fallback</code> entry in its record; <code>protocol="native"</code> raises instead.</li>
+<li><strong><code>run</code> takes <code>cwd</code></strong>, a folder inside <code>workdir</code> to run the command in.</li>
+<li><strong>The <code>shell</code> permission</strong> runs command lines through the system shell, so pipes, <code>&amp;&amp;</code>, <code>cd</code> and redirects work. Off by default; it can't be combined with <code>!run:</code> rules.</li>
+<li><strong><code>search</code> takes <code>glob</code></strong> (<code>*.py</code> by file name, <code>src/**/*.ts</code> by path) to limit the files searched.</li>
+<li><strong><code>thunc run --profile</code></strong>: runs a script (or <code>-m module</code>) and prints a performance report to stderr when it ends: per function, calls, cache hits, retries, failures, total/mean/p95/max time and the split between model time and thunc's own; for agents, steps and time in each tool; and the share of wall time spent in thunc, with the overlap from <code>thunc.map</code>.</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+<li><strong>A failed step is retried.</strong> A timeout, lost connection, rate limit, server error or CLI call that ended in an error (<code>thunc.errors.TransientError</code>) is retried twice in an agent run, with a note in the run record, before the run fails. A text-protocol step on Claude Code or Codex may take 120 seconds before it's retried, instead of the whole <code>timeout</code>.</li>
+<li><strong>The <code>anthropic</code> and <code>openai</code> backends reuse their connections.</strong> One SDK client is shared by every call in the process (<code>thunc.map</code>'s threads and agent runs included), instead of a new client, and so a new TCP and TLS handshake, for each call. A new client is made when the API key, the SDK's environment variables (<code>ANTHROPIC_*</code>, <code>OPENAI_*</code>) or the process change. In a local benchmark with 60 ms of connection setup, 20 calls in a row went from 1.47 s to 68 ms.</li>
+<li><strong>Agents on the text protocol can act several times per reply.</strong> On Codex and <code>protocol="text"</code> (and on Claude Code when it falls back to the text protocol), a reply can be a JSON array of independent actions (reading three files) instead of one. They run in order, at most 16 per reply, and every result comes back together, as with native tool calls. Each turn resends the whole transcript and, on the CLI backends, starts the CLI, so fewer turns save both. A single JSON action works as before. On Codex, with <code>live_tests/eval_prompts.py</code> (default prompt, 5 runs of each task), every run batched its first reads: replies went from 6.0 / 4.8 / 5.0 to 5.0 / 3.0 / 3.6 (fix / review / analysis) and the mean time from 37 / 27 / 27 s to 29 / 19 / 21 s, with the same work done and 30/30 passing.</li>
+<li><strong>The <code>codex</code> backend returns as soon as the answer arrives.</strong> It reads Codex's JSON events as they come (<code>codex exec --json</code>) instead of waiting for the process to exit and reading the answer from a file. Codex takes about 0.4 s to shut down after answering; that now happens in the background. Over 8 alternating pairs of real calls the new way was faster every time, by a median of 0.67 s on a call of about 4 s. Every agent turn on Codex is one call, so the saving repeats.</li>
+</ul>
+<h2 id="v0-2-1">0.2.1 <span class="pill">beta</span></h2>
+<p class="release-meta">4 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.2.1">Release notes</a> · <a href="https://pypi.org/project/thunc/0.2.1/">PyPI</a></p>
+<p><strong>Durable agents with Temporal.</strong> An optional <code>thunc[temporal]</code> runtime records each model turn and tool call in a Temporal workflow, so a run survives worker restarts and can be reattached from another process. Local thunc stays dependency-free. See the <a href="https://github.com/Eltarras/thunc/blob/main/examples/temporal/README.md">Temporal guide</a>.</p>
+<h3>Added</h3>
+<ul>
+<li><strong><code>thunc.temporal</code></strong>: <code>Registry</code>, <code>Worker</code>, <code>Runtime</code> and <code>Handle</code> to register versioned tasks and start, reattach to, inspect, cancel and resolve durable runs. One coordinator per workspace runs requests in order; a repeated request ID reattaches to the same run. Agents with <code>tools=</code> or <code>timeout=</code> can't be registered for durable runs yet (<a href="https://github.com/Eltarras/thunc/pull/37">#37</a>).</li>
+<li><strong>Recoverable tool effects</strong>: file writes and memory notes go through an intent and receipt journal with atomic replacement and content hashes. A command whose outcome is uncertain is never rerun automatically: the run waits for an operator's <code>resolve()</code> (<a href="https://github.com/Eltarras/thunc/pull/37">#37</a>).</li>
+<li><strong><code>thunc.temporal.adapters.execute_task</code></strong> composes registered tasks from native Temporal workflows, with a classify → agent analysis → typed summary example (<a href="https://github.com/Eltarras/thunc/pull/38">#38</a>).</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+<li>The agent loop's decisions moved into a shared engine (<code>thunc/execution.py</code>) that local and durable runs both use. A <code>remember</code> call that fails no longer appears in <code>Run.notes</code> (<a href="https://github.com/Eltarras/thunc/pull/36">#36</a>).</li>
+</ul>
+<h2 id="v0-2-0">0.2.0 <span class="pill">beta</span></h2>
+<p class="release-meta">4 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.2.0">Release notes</a> · <a href="https://pypi.org/project/thunc/0.2.0/">PyPI</a></p>
+<p><strong>Agents.</strong> An agent is a typed function that can look around before it answers: it lists, reads and searches files in a working directory, and, when its permissions allow, writes, edits and runs commands, then returns a checked value of the task's return type. See the <a href="agents.html">Agents section</a> of the README.</p>
+<h3>Added</h3>
+<ul>
+<li><strong><code>thunc.Agent(name, workdir=...)</code> and <code>@agent.task</code></strong>: declare tasks like <code>@thunc.function</code>. Read-only by default, with <code>list</code>, <code>read</code>, <code>search</code> and <code>remember</code> tools. Sync and async tasks (<a href="https://github.com/Eltarras/thunc/pull/23">#23</a>).</li>
+<li><strong>Memory and run files</strong> in <code>.thunc_agents/&lt;name&gt;/</code>: <code>memory.md</code> (notes kept between runs), <code>agent.json</code>, and one JSONL record per run. Runs of one agent take turns through an OS file lock (<a href="https://github.com/Eltarras/thunc/pull/23">#23</a>).</li>
+<li><strong>Permission rules</strong>: <code>write:</code>, <code>read:</code>, <code>run:</code> and <code>!</code> denies with globs, plus the <code>write</code> and <code>edit</code> tools. Edits need a fresh read of the file in the same run (<a href="https://github.com/Eltarras/thunc/pull/26">#26</a>).</li>
+<li><strong>The <code>run</code> tool</strong>: commands allowed by <code>run:</code> rules run without a shell, with a minimal environment and a time limit that also stops their child processes (<a href="https://github.com/Eltarras/thunc/pull/28">#28</a>).</li>
+<li><strong><code>agent.run(task, ...)</code></strong> returns a <code>thunc.Run</code> with the value, files changed, commands, denials, notes and steps. A failed run raises <code>thunc.AgentError</code> with the partial record (<a href="https://github.com/Eltarras/thunc/pull/29">#29</a>).</li>
+<li><strong><code>follow=</code></strong> gives the agent <code>AGENTS.md</code> / <code>CLAUDE.md</code>, or files you name, as instructions. Off by default (<a href="https://github.com/Eltarras/thunc/pull/31">#31</a>).</li>
+<li><strong>Native tool calls</strong> on the Claude and OpenAI APIs, with the fixed part of the prompt cached. Claude Code and Codex use a JSON text protocol; <code>protocol="text"</code> picks it on an API too (<a href="https://github.com/Eltarras/thunc/pull/32">#32</a>).</li>
+<li><strong>System prompt presets</strong>: <code>thunc.prompts.CODING</code>, <code>CODE_REVIEW</code> and <code>ANALYSIS</code>, for <code>system=</code> (<a href="https://github.com/Eltarras/thunc/pull/34">#34</a>).</li>
+<li><strong><code>tools=</code></strong>: your own typed, documented Python functions as agent tools (<a href="https://github.com/Eltarras/thunc/pull/34">#34</a>).</li>
+<li><strong><code>agent.call(...)</code></strong>, the agent version of <code>thunc.call</code>, and the <strong><code>@thunc.agent(...)</code></strong> shorthand for a one-task agent (<a href="https://github.com/Eltarras/thunc/pull/34">#34</a>).</li>
+<li><strong><code>timeout=</code></strong> bounds a run's time; command limits are cut to the time left (<a href="https://github.com/Eltarras/thunc/pull/34">#34</a>).</li>
+<li><strong>Files changed by commands</strong> are included in <code>Run.files_changed</code> (<a href="https://github.com/Eltarras/thunc/pull/34">#34</a>).</li>
+<li><code>live_tests/eval_prompts.py</code>, an evaluation of the agent system prompt (bare / default / preset). 90/90 runs passed on the Claude API and Claude Code (<a href="https://github.com/Eltarras/thunc/pull/34">#34</a>).</li>
+<li>CI now also runs the offline tests on Windows (<a href="https://github.com/Eltarras/thunc/pull/34">#34</a>).</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+<li><strong><code>thunc.agent</code> is the decorator</strong> for one-task agents. <code>from thunc.agent import Agent</code> still works; only <code>import thunc.agent as m</code> now gives the decorator rather than the module.</li>
+<li>The <code>codex</code> backend leaves out Codex's own permission notes, which made it refuse allowed edits (<a href="https://github.com/Eltarras/thunc/pull/26">#26</a>).</li>
+<li>Agents refuse the <code>jev</code> backend with a <code>ThuncError</code> before a run starts; it only answers typed questions (<a href="https://github.com/Eltarras/thunc/pull/33">#33</a>).</li>
+</ul>
+<p>Nothing changes for <code>@thunc.function</code> and <code>thunc.call</code>.</p>
+<h2 id="v0-1-3">0.1.3 <span class="pill">beta</span></h2>
+<p class="release-meta">4 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.1.3">Release notes</a> · <a href="https://pypi.org/project/thunc/0.1.3/">PyPI</a></p>
+<ul>
+<li><strong><code>jev</code> backend</strong> for TypeSafe's Jev judgment model: <code>bool</code> and <code>Literal</code> answers in about 0.3 s (<a href="https://github.com/Eltarras/thunc/pull/27">#27</a>).</li>
+<li>The <strong><code>codex</code> backend</strong> runs with Codex's own tools off and ignores <code>~/.codex/config.toml</code> (<a href="https://github.com/Eltarras/thunc/pull/25">#25</a>).</li>
+<li><code>@thunc.function</code> bodies like <code>return 1</code> now raise <code>TypeError</code> at definition (<a href="https://github.com/Eltarras/thunc/pull/24">#24</a>).</li>
+</ul>
+<h2 id="v0-1-2">0.1.2 <span class="pill">beta</span></h2>
+<p class="release-meta">4 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.1.2">Release notes</a> · <a href="https://pypi.org/project/thunc/0.1.2/">PyPI</a></p>
+<ul>
+<li><strong><code>cache=True</code></strong> saves valid answers on disk; <code>thunc.clear_cache()</code>, <code>thunc.cache_info()</code> and the <code>thunc cache</code> command manage them (<a href="https://github.com/Eltarras/thunc/pull/18">#18</a>, <a href="https://github.com/Eltarras/thunc/pull/19">#19</a>).</li>
+<li><strong><code>system=</code></strong> replaces the opening of the default system prompt; Codex gets it as its instructions file (<a href="https://github.com/Eltarras/thunc/pull/21">#21</a>).</li>
+<li><strong>Sturdier parsing</strong>: common near-misses are read, and wrong values are retried instead of returned. Only <code>ThuncError</code> escapes (<a href="https://github.com/Eltarras/thunc/pull/20">#20</a>).</li>
+<li>An empty reply is no longer a valid <code>str</code>.</li>
+</ul>
+<h2 id="v0-1-1">0.1.1 <span class="pill">beta</span></h2>
+<p class="release-meta">3 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.1.1">Release notes</a> · <a href="https://pypi.org/project/thunc/0.1.1/">PyPI</a></p>
+<ul>
+<li><strong><code>openai</code> backend</strong> on the Responses API, and local models through <code>OPENAI_BASE_URL</code>.</li>
+<li>The Claude API backend tested live; CONTRIBUTING.md and Discussions added.</li>
+</ul>
+<h2 id="v0-1-0">0.1.0 <span class="pill">beta</span></h2>
+<p class="release-meta">3 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.1.0">Release notes</a> · <a href="https://pypi.org/project/thunc/0.1.0/">PyPI</a></p>
+<ul>
+<li>First release: <code>@thunc.function</code>, <code>thunc.call</code>, typed and validated results with retries and <code>ensure=</code>, <code>thunc.map</code>, JSONL tracing; the <code>anthropic</code>, <code>claude-code</code> and <code>codex</code> backends.</li>
+</ul>
+</div>
+<nav class="pager" aria-label="Pages"><a class="prev" href="api.html"><span>Previous</span>API reference</a></nav>
+<p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Edit the changelog on GitHub</a></p>
+</main>
+</div>
+<footer class="sitefoot"><div class="wrap">
+  <span>thunc() · beta · MIT</span>
+  <span><a href="../docs/">Docs</a> · <a href="../docs/changelog.html">Changelog</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+</div></footer>
+<script src="../site.js"></script>
+</body>
+</html>

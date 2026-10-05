@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Caching and tracing · thunc docs</title>
-<meta name="description" content="Save answers on disk with cache=True, clear them from Python or the command line, and trace every call.">
+<title>Caching, tracing and profiling · thunc docs</title>
+<meta name="description" content="Save answers on disk with cache=True, clear them from Python or the command line, trace every call, and profile where the time goes.">
 <link rel="canonical" href="https://eltarras.github.io/thunc/docs/caching.html">
-<meta property="og:title" content="Caching and tracing · thunc docs">
-<meta property="og:description" content="Save answers on disk with cache=True, clear them from Python or the command line, and trace every call.">
+<meta property="og:title" content="Caching, tracing and profiling · thunc docs">
+<meta property="og:description" content="Save answers on disk with cache=True, clear them from Python or the command line, trace every call, and profile where the time goes.">
 <meta property="og:image" content="https://eltarras.github.io/thunc/og.png">
 <meta property="og:url" content="https://eltarras.github.io/thunc/docs/caching.html">
 <meta property="og:type" content="website">
@@ -41,21 +41,22 @@
     <a href="./">Get started</a>
     <a href="functions.html">Functions</a>
     <a href="backends.html">Backends</a>
-    <a href="caching.html" class="active" aria-current="page">Caching and tracing</a>
+    <a href="caching.html" class="active" aria-current="page">Caching, tracing and profiling</a>
     <a href="agents.html">Agents</a>
     <div class="eyebrow">Going further</div>
     <a href="temporal.html">Durable agents</a>
     <a href="jev.html">Jev backend</a>
     <div class="eyebrow">Reference</div>
     <a href="api.html">API reference</a>
+    <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
   <div class="eyebrow">Guide</div>
-  <h1>Caching and tracing</h1>
-  <p class="lede">Save answers on disk so the model is asked once per input, clear them from Python or the command line, and record every call to a file.</p>
+  <h1>Caching, tracing and profiling</h1>
+  <p class="lede">Save answers on disk so the model is asked once per input, clear them from Python or the command line, record every call to a file, and see where a program's time goes.</p>
 </header>
 <h2 id="cache">Caching answers: cache=True</h2>
 <p><code>cache=True</code> saves each answer on disk and reuses it when the same inputs come again, so the model is asked once.</p>
@@ -94,6 +95,21 @@ thunc cache clear --older-than 30d --dry-run       # what would go, without dele
 <div class="codeblock"><pre><code class="py">thunc.configure(trace="calls.jsonl")</code></pre></div>
 <p>Every call is appended to the file as one JSON line, or set <code>THUNC_TRACE</code> instead. An agent run is one line too, with every model reply in it. <a href="https://github.com/Eltarras/thunc/blob/main/examples/log_triage.py">log_triage.py</a> and <a href="https://github.com/Eltarras/thunc/blob/main/examples/repo_guide.py">repo_guide.py</a> read their traces back.</p>
 
+<h2 id="profiling">Profiling: thunc run --profile</h2>
+<p>Run your program through the <code>thunc</code> command to see where the time went when it ends:</p>
+<div class="codeblock"><pre><code class="sh">thunc run --profile support_inbox.py --limit 20   # a script and its arguments
+thunc run --profile -m myapp.triage               # a module, as with python -m</code></pre></div>
+<p>The report goes to stderr. Per function: the calls, cache hits, retries and failures, the total, mean, p95 and slowest time, and how much of it was the model and how much thunc's own work (building the prompt, parsing, the cache). Agent runs get their steps, model time and time in each tool. It also says what share of the program's wall time was spent in thunc, and how much calls overlapped under <code>thunc.map</code>.</p>
+<div class="codeblock"><div class="label">stderr</div><pre><code>CALLS
+FUNCTION  CALLS  CACHED  RETRIES  FAILED  TOTAL   MEAN    P95    MAX  MODEL  LOCAL
+urgency      11       1        1       0  1.70s  155ms  309ms  309ms  1.69s   12ms
+
+In thunc:      774ms of 980ms wall time (79%); the rest was the program's own code
+Model time:    1.69s, 99% of the time in calls (anthropic/default model 1.69s)
+Concurrency:   calls overlapped 2.2x on average (thunc.map or threads)
+Slowest:       urgency took 309ms</code></pre></div>
+<p>Without <code>--profile</code>, <code>thunc run</code> just runs the program and records nothing. The program's exit code is passed through.</p>
+
 <h2 id="testing">Testing code that calls a model</h2>
 <p>There's no record/replay switch for tests yet: <code>cache=True</code> is per function, and nothing serves every call from disk and fails on a miss. thunc's own offline tests use a fake backend instead of a real model.</p>
 <nav class="pager" aria-label="Pages"><a class="prev" href="backends.html"><span>Previous</span>Backends</a><a class="next" href="agents.html"><span>Next</span>Agents</a></nav>
@@ -102,7 +118,7 @@ thunc cache clear --older-than 30d --dry-run       # what would go, without dele
 </div>
 <footer class="sitefoot"><div class="wrap">
   <span>thunc() · beta · MIT</span>
-  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+  <span><a href="../docs/">Docs</a> · <a href="../docs/changelog.html">Changelog</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
 </div></footer>
 <script src="../site.js"></script>
 </body>
