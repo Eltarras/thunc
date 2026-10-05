@@ -56,13 +56,36 @@ What changed, and what the run found:
   API's keep-alive pings kept the SDK's read timeout from firing. A reply that sends nothing for
   `timeout` seconds is now stopped and asked again; the rerun had no stalls.
 
+Codex, with native calls (`thunc-codex`, through the same MCP relay as Claude Code), the text
+protocol (`thunc-codex-text`) and Codex itself (`codex`, its own tools in its workspace-write
+sandbox), on Codex's default model, `--harness thunc-codex,thunc-codex-text,codex --runs 3 --model
+default`. The third run of every column hit the Codex subscription's usage limit partway through
+and failed for that reason alone, so the table is the first two runs of each task (16 per harness):
+
+| Harness | Passed | Seconds per task | Tool errors |
+|---|---|---|---|
+| thunc on Codex, native calls | 16/16 | 30 | 0 |
+| thunc on Codex, `protocol="text"` | 16/16 | 45 | 0 |
+| codex | 16/16 | 27 | 15 |
+
+- **Native calls take a third less time than the text protocol on Codex**, and come within 3
+  seconds a task of Codex itself, with thunc's permissions and run record.
+- **Steps aren't comparable across these columns.** Codex's events don't say which calls came from
+  the same model reply, so on native calls each forwarded call counts as a step: 10.1 per task on
+  average, and 22 on `rename`, against `max_steps=40`. The text protocol counts replies (5.6 per
+  task, its batches included).
+- **Tokens aren't measured for native calls on Codex.** `codex exec --json` reports usage only at
+  the end of a turn, and a run on native calls ends inside one, when the model calls `finish`.
+
 Still open after 0.2.3's changes:
 
 - **`deep_fix` takes 8 turns on native calls** (Claude Code: 4.3). Multi-edit didn't change it: the
   turns go to finding and reading the code around the bug in a 1,900-line file, not to editing. A
   larger `read` limit is the next thing to measure.
-- **The text protocol is still 4 times the cost of native calls**, as each turn resends the whole
-  transcript. It remains the path for Codex until native calls reach it.
+- **The text protocol is still 4 times the cost of native calls on Claude Code**, as each turn
+  resends the whole transcript. It remains the path for durable runs on Claude Code and Codex.
+- **Steps on native Codex runs count calls, not replies.** A long task can reach `max_steps`
+  sooner than on Claude Code.
 
 ## Rerun after the fixes
 
