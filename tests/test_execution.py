@@ -80,3 +80,27 @@ def test_a_reply_without_calls_asks_again_and_turns_are_bounded():
     assert state.pending() is None
     with pytest.raises(ThuncError, match="t: the agent didn't finish within max_steps=1"):
         state.begin_turn(1, "t")
+
+
+def test_the_last_replies_before_max_steps_say_how_many_are_left():
+    state = AgentState()
+    sent = []
+    for _ in range(5):
+        state.begin_turn(5)
+        state.receive(Reply([Call(None, "read", {"path": "a"}), Call(None, "list")], "raw"))
+        state.done(state.calls[0], "first")
+        state.done(state.calls[1], "second")
+        sent.append(state.results_to_send(5))
+    notes = [results[-1][1].partition("\n\n")[2] for results in sent]
+    soon = "(You have {} replies left before the run's step limit: call finish soon with what you have.)"
+    last = "(This is your last reply before the run's step limit: call finish now with what you have.)"
+    # After reply 1, 4 are left: nothing yet. Then 3, 2 and 1. After reply 5 none are: the run ends.
+    assert notes == ["", soon.format(3), soon.format(2), last, ""]
+    assert all(results[0][1] == "first" for results in sent)  # only the last result carries it
+    assert state.results[-1][1] == "second"  # what's recorded is unchanged
+
+
+def test_a_reply_with_no_results_gets_no_countdown():
+    state = AgentState()
+    state.begin_turn(1)
+    assert state.results_to_send(1) == []

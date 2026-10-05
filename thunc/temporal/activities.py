@@ -280,7 +280,7 @@ class Activities:
         if not engine.receive(reply):
             conversation.nudge(reply)
         elif engine.pending() is None:
-            conversation.results(engine.results)
+            conversation.results(engine.results_to_send(state["max_steps"]))
         state["agent"] = engine.to_json()
         state["conversation"] = native.snapshot(conversation)
         return self.save(state, "tool" if engine.pending() else "turn")
@@ -337,7 +337,7 @@ class Activities:
         state["agent"] = engine.to_json()
         if engine.pending() is None:
             conversation = self.conversation(definition, state)
-            conversation.results(engine.results)
+            conversation.results(engine.results_to_send(state["max_steps"]))
             state["conversation"] = native.snapshot(conversation)
             return self.save(state, "turn")
         return self.save(state, "tool")

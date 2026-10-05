@@ -21,10 +21,11 @@ from typing import Any, Protocol
 from .backends import _FALLBACK_MODELS, DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL, sdk_client
 from .config import resolve_backend, setting
 from .core import _send, _sendable
-from .errors import ThuncError
+from .errors import ThuncError, TransientError, transient_status
 from .schema import parse, shorten
 
 NUDGE = "Reply by calling one of your tools. When you're done, call finish with your result."
+EFFORTS = ("low", "medium", "high", "xhigh", "max")  # Agent(effort=...): how hard the model thinks
 CLI_BACKENDS = frozenset({"claude-code", "codex"})
 CLI_STEP_TIMEOUT = 120.0  # seconds one text-protocol step on a CLI may take before it's retried
 
@@ -89,16 +90,24 @@ def restore(conversation: Conversation, data: dict[str, Any]) -> None:
 
 
 class TextConversation:
-    def __init__(self, system: str, request: str, names: Sequence[str], backend: str | None, model: str | None):
+    def __init__(
+        self,
+        system: str,
+        request: str,
+        names: Sequence[str],
+        backend: str | None,
+        model: str | None,
+        effort: str | None = None,
+    ):
         self.system, self.request, self.names = system, request, list(names)
-        self.backend, self.model = backend, model
+        self.backend, self.model, self.effort = backend, model, effort
         self.steps: list[str] = []
 
     def next(self) -> Reply:
         timeout = setting("timeout")
         if resolve_backend(self.backend) in CLI_BACKENDS:  # a step that hangs is retried sooner (see agent.py)
             timeout = min(timeout, CLI_STEP_TIMEOUT)
-        answer = _send(self._transcript(), self.system, self.backend, self.model, timeout)
+        answer = _send(self._transcript(), self.system, self.backend, self.model, timeout, self.effort)
         try:
             calls = actions(answer, self.names)
         except ValueError as problem:
@@ -180,12 +189,61 @@ def _calls_text(calls: Sequence[Call]) -> str:
 # --- the Claude API -----------------------------------------------------------------------------
 
 
+MAX_TOKENS = 64_000  # per Claude API reply; streamed, so a long write isn't cut off by an HTTP timeout
+CONTINUATIONS = 5  # pause_turn replies in a row before the run fails
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
+CLEARING_BETA = "context-management-2025-06-27"
+CUT_OFF = (
+    "Your reply was cut off at max_tokens, so its tool call wasn't run: its arguments were incomplete. "
+    "Write a large file in parts: write the start, then add the rest with edit."
+)
+# Claude 4.6 and later: they take effort, which thunc sets to high for agents (Claude Opus 5.5 defaults
+# to medium), and clearing old tool results on long runs. Other models get the API's defaults unless
+# effort= is given.
+_CURRENT = (
+    "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-sonnet-4-6", "claude-sonnet-5",
+    "claude-fable-", "claude-mythos-",
+)  # fmt: skip
+# Models that take strict tool schemas (arguments guaranteed to match).
+_STRICT = (
+    "claude-opus-4-1", "claude-opus-4-5", "claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5",
+    "claude-fable-5", "claude-mythos-5",
+)  # fmt: skip
+# Schema keywords strict mode doesn't take (numeric, string and array constraints).
+_NOT_STRICT = frozenset(
+    {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength", "maxLength"}
+    | {"pattern", "minItems", "maxItems", "uniqueItems"}
+)
+
+
+def strict_schema(schema: Any) -> bool:
+    """Whether a tool's input schema can be strict: every object closed (additionalProperties false),
+    no constraint strict mode leaves out, and no recursion ($ref)."""
+    if isinstance(schema, list):
+        return all(strict_schema(item) for item in schema)
+    if not isinstance(schema, dict):
+        return True
+    if _NOT_STRICT & set(schema) or "$ref" in schema:
+        return False
+    if schema.get("type") == "object" and schema.get("additionalProperties") is not False:
+        return False
+    return all(strict_schema(value) for key, value in schema.items() if key not in ("enum", "const"))
+
+
 class AnthropicConversation:
     """Messages API tool use. The fixed system prompt is one block marked for caching and the
     memory a second block after it, so a changed memory doesn't undo the cache; automatic caching
-    covers the growing conversation. Replies are appended unchanged, thinking blocks included."""
+    covers the growing conversation. Replies are appended unchanged, thinking blocks included, and
+    nothing earlier is ever edited, so the history stays valid for preserved thinking.
 
-    def __init__(self, fixed: str, memory: str, request: str, tools: Sequence[Tool], model: str | None):
+    Replies are streamed, with room for a large write. A reply cut off at max_tokens isn't the end
+    of the run: its calls are answered with an error saying so, once in a row. pause_turn is asked
+    to carry on. On current models, effort defaults to high and old tool results are cleared by the
+    API on long runs (context editing), and the tools are strict where their schemas allow."""
+
+    def __init__(
+        self, fixed: str, memory: str, request: str, tools: Sequence[Tool], model: str | None, effort: str | None = None
+    ):
         try:
             import anthropic
         except ImportError as exc:
@@ -194,51 +252,87 @@ class AnthropicConversation:
         # api_key=None lets the SDK resolve ANTHROPIC_API_KEY or an `ant auth login` profile.
         self.client = sdk_client(anthropic.Anthropic, "ANTHROPIC_", setting("api_key"), setting("timeout"))
         self.model = model or setting("model") or DEFAULT_ANTHROPIC_MODEL
+        current = self.model.startswith(_CURRENT)
+        self.effort = effort or ("high" if current else None)
+        self.clearing = current
+        strict = self.model.startswith(_STRICT)
         self.system: list[Any] = [{"type": "text", "text": fixed, "cache_control": {"type": "ephemeral"}}]
         if memory:
             self.system.append({"type": "text", "text": memory})
         self.tools: list[Any] = [
-            {"name": t.name, "description": t.description, "input_schema": t.schema} for t in tools
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.schema,
+                **({"strict": True} if strict and strict_schema(t.schema) else {}),
+            }
+            for t in tools
         ]
         self.messages: list[Any] = [{"role": "user", "content": request}]
+        self.cut_off: list[str] | None = None  # the calls of a reply cut off at max_tokens, until answered
+        self.cut_offs = 0  # replies cut off in a row
 
     def next(self) -> Reply:
-        anthropic = self._anthropic
-        request: dict[str, Any] = dict(
-            model=self.model,
-            max_tokens=16000,
-            system=self.system,
-            tools=self.tools,
-            messages=self.messages,
-            cache_control={"type": "ephemeral"},
-        )
-        try:
-            if self.model in _FALLBACK_MODELS:
-                response = self.client.beta.messages.create(
-                    **request, betas=["server-side-fallback-2026-07-01"], fallbacks="default"
-                )
-            else:
-                response = self.client.messages.create(**request)
-        except anthropic.APIConnectionError as exc:
-            raise ThuncError(f"Could not reach the Claude API: {exc}") from exc
-        except anthropic.APIStatusError as exc:
-            raise ThuncError(f"Claude API error {exc.status_code}: {exc.message}") from exc
-        if response.stop_reason == "refusal":
-            raise ThuncError("The model declined this request.")
+        for _ in range(CONTINUATIONS + 1):
+            response = self._create()
+            if response.stop_reason == "refusal":
+                raise ThuncError("The model declined this request.")
+            if response.stop_reason == "model_context_window_exceeded":
+                raise ThuncError("The run outgrew the model's context window.")
+            if response.stop_reason not in ("tool_use", "end_turn", "stop_sequence", "max_tokens", "pause_turn"):
+                raise ThuncError(f"The Claude API stopped with {response.stop_reason!r}.")
+            self.messages.append({"role": "assistant", "content": response.content})  # unchanged, thinking too
+            if response.stop_reason != "pause_turn":  # paused: asked again with no new message, it carries on
+                break
+        else:
+            raise ThuncError(f"The Claude API paused the turn {CONTINUATIONS + 1} times in a row.")
+        text = "".join(block.text for block in response.content if block.type == "text")
         if response.stop_reason == "max_tokens":
-            raise ThuncError("The answer was cut off at max_tokens.")
-        if response.stop_reason not in ("tool_use", "end_turn", "stop_sequence"):
-            raise ThuncError(f"The Claude API stopped with {response.stop_reason!r}.")
-        self.messages.append({"role": "assistant", "content": response.content})  # unchanged, thinking blocks too
+            self.cut_offs += 1
+            if self.cut_offs > 1:
+                raise ThuncError(f"Two replies in a row were cut off at max_tokens={MAX_TOKENS}.")
+            self.cut_off = [block.id for block in response.content if block.type == "tool_use"]
+            return Reply([], text, "the reply was cut off at max_tokens")
+        self.cut_offs = 0
         calls = [
             Call(block.id, block.name, block.input if isinstance(block.input, dict) else {})
             for block in response.content
             if block.type == "tool_use"
         ]
-        text = "".join(block.text for block in response.content if block.type == "text")
         if not calls:
             return Reply([], text, "no tool call")
         return Reply(calls, _calls_text(calls))
+
+    def _create(self) -> Any:
+        anthropic = self._anthropic
+        request: dict[str, Any] = dict(
+            model=self.model,
+            max_tokens=MAX_TOKENS,
+            system=self.system,
+            tools=self.tools,
+            messages=self.messages,
+            cache_control={"type": "ephemeral"},
+        )
+        if self.effort:
+            request["output_config"] = {"effort": self.effort}
+        betas = []
+        if self.model in _FALLBACK_MODELS:
+            betas.append(FALLBACK_BETA)
+            request["fallbacks"] = "default"
+        if self.clearing:
+            betas.append(CLEARING_BETA)
+            request["context_management"] = {"edits": [{"type": "clear_tool_uses_20250919"}]}
+        try:
+            if betas:
+                with self.client.beta.messages.stream(**request, betas=betas) as stream:
+                    return stream.get_final_message()
+            with self.client.messages.stream(**request) as stream:
+                return stream.get_final_message()
+        except anthropic.APIConnectionError as exc:
+            raise TransientError(f"Could not reach the Claude API: {exc}") from exc
+        except anthropic.APIStatusError as exc:
+            error = TransientError if transient_status(exc.status_code) else ThuncError
+            raise error(f"Claude API error {exc.status_code}: {exc.message}") from exc
 
     def results(self, results: Sequence[tuple[Call, str, bool]]) -> None:
         # Every result in one message: split up, it teaches the model to stop calling tools in parallel.
@@ -249,7 +343,19 @@ class AnthropicConversation:
         self.messages.append({"role": "user", "content": content})
 
     def nudge(self, reply: Reply) -> None:
-        self.messages.append({"role": "user", "content": NUDGE})
+        if self.cut_off is None:
+            self.messages.append({"role": "user", "content": NUDGE})
+            return
+        # Each call of the cut-off reply needs its result, in the message right after it.
+        content: list[Any] = [
+            {"type": "tool_result", "tool_use_id": ident, "content": CUT_OFF, "is_error": True}
+            for ident in self.cut_off
+        ]
+        content.append(
+            {"type": "text", "text": NUDGE if self.cut_off else f"Your reply was cut off at max_tokens. {NUDGE}"}
+        )
+        self.messages.append({"role": "user", "content": content})
+        self.cut_off = None
 
 
 # --- the OpenAI Responses API -------------------------------------------------------------------
@@ -259,7 +365,9 @@ class OpenAIConversation:
     """Responses API function calling. With store=False nothing is kept on OpenAI's side, so every
     request carries the whole conversation, reasoning items included (encrypted)."""
 
-    def __init__(self, system: str, request: str, tools: Sequence[Tool], model: str | None):
+    def __init__(self, system: str, request: str, tools: Sequence[Tool], model: str | None, effort: str | None = None):
+        if effort == "max":
+            raise ThuncError("The openai backend takes effort low, medium, high or xhigh, not max.")
         try:
             import openai
         except ImportError as exc:
@@ -274,6 +382,7 @@ class OpenAIConversation:
             for t in tools
         ]
         self.input: list[Any] = [{"role": "user", "content": request}]
+        self.reasoning: Any = {"effort": effort} if effort else openai.omit
 
     def next(self) -> Reply:
         openai = self._openai
@@ -285,11 +394,13 @@ class OpenAIConversation:
                 tools=self.tools,
                 store=False,
                 include=["reasoning.encrypted_content"],
+                reasoning=self.reasoning,
             )
         except openai.APIConnectionError as exc:
-            raise ThuncError(f"Could not reach the OpenAI API: {exc}") from exc
+            raise TransientError(f"Could not reach the OpenAI API: {exc}") from exc
         except openai.APIStatusError as exc:
-            raise ThuncError(f"OpenAI API error {exc.status_code}: {exc.message}") from exc
+            error = TransientError if transient_status(exc.status_code) else ThuncError
+            raise error(f"OpenAI API error {exc.status_code}: {exc.message}") from exc
         if response.status == "incomplete":
             reason = response.incomplete_details.reason if response.incomplete_details else None
             raise ThuncError(f"The OpenAI response is incomplete ({reason or 'no reason given'}).")

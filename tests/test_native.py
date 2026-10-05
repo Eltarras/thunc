@@ -2,6 +2,7 @@
 replaced by scripted ones that record each request, so the requests and replies have the real shapes."""
 
 import json
+import sys
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -50,10 +51,25 @@ def claude(monkeypatch):
     """A scripted Messages API. Append replies to .replies; each request is in .requests."""
     script = SimpleNamespace(replies=[], requests=[])
 
+    class Stream:  # what messages.stream() returns: a context manager with the final message
+        def __init__(self, reply):
+            self.reply = reply
+
+        def __enter__(self):
+            if isinstance(self.reply, Exception):
+                raise self.reply
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get_final_message(self):
+            return self.reply
+
     class Client:
         def __init__(self, **kwargs):
-            self.messages = SimpleNamespace(create=self.create)
-            self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
+            self.messages = SimpleNamespace(create=self.create, stream=self.stream)
+            self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create, stream=self.stream))
 
         def with_options(self, **options):
             return self
@@ -61,6 +77,10 @@ def claude(monkeypatch):
         def create(self, **kwargs):
             script.requests.append(json.loads(json.dumps(kwargs, default=lambda o: o.model_dump())))
             return script.replies.pop(0)
+
+        def stream(self, **kwargs):
+            script.requests.append({**json.loads(json.dumps(kwargs, default=lambda o: o.model_dump())), "stream": True})
+            return Stream(script.replies.pop(0))
 
     monkeypatch.setattr(anthropic, "Anthropic", Client)
     thunc.configure(backend="anthropic")
@@ -102,8 +122,16 @@ def test_claude_tool_calls_end_to_end(claude, repo):
     assert tools["read"]["input_schema"]["required"] == ["path"]
     assert tools["finish"]["input_schema"]["properties"]["value"]["required"] == ["name", "seconds"]
     assert not tools["read"]["description"].startswith("{")  # the text-protocol example is left out
-    # Opus 5.5 gets the server-side refusal fallback (the beta endpoint), as single calls do.
-    assert first["betas"] == ["server-side-fallback-2026-07-01"] and first["fallbacks"] == "default"
+    # Strict where the schema allows it: finish's dataclass object isn't closed, so it isn't strict.
+    assert tools["read"]["strict"] is True and tools["remember"]["strict"] is True and "strict" not in tools["finish"]
+    assert "strict" not in tools["edit"]  # maxItems on edits is a constraint strict mode leaves out
+    # Opus 5.5 gets the server-side refusal fallback and old tool results cleared on long runs (both
+    # beta), effort high (its own default is medium), and a streamed reply with room for a large write.
+    assert first["betas"] == ["server-side-fallback-2026-07-01", "context-management-2025-06-27"]
+    assert first["fallbacks"] == "default"
+    assert first["context_management"] == {"edits": [{"type": "clear_tool_uses_20250919"}]}
+    assert first["output_config"] == {"effort": "high"}
+    assert first["max_tokens"] == 64_000 and first["stream"] is True
     assert "tool_choice" not in first  # forced tool choice is a 400 on current models
 
     # The reply goes back unchanged, thinking block included; both results in one message.
@@ -165,7 +193,11 @@ def test_claude_invalid_finish_is_an_error_result(claude, repo):
 
 
 @pytest.mark.parametrize(
-    "stop, problem", [("refusal", "declined"), ("max_tokens", "cut off"), ("pause_turn", "stopped with")]
+    "stop, problem",
+    [
+        ("refusal", "declined"),
+        ("model_context_window_exceeded", "outgrew the model's context window"),
+    ],
 )
 def test_claude_stops_that_end_the_run(claude, repo, stop, problem):
     claude.replies = [message({"type": "text", "text": "..."}, stop=stop)]
@@ -182,7 +214,123 @@ def test_claude_stops_that_end_the_run(claude, repo, stop, problem):
 def test_claude_models_without_the_fallback_use_the_plain_endpoint(claude, repo):
     claude.replies = [message(use("finish", "t1", value="ok"))]
     assert _task(thunc.Agent("x", workdir=repo, model="claude-haiku-4-5"))() == "ok"
-    assert "betas" not in claude.requests[0] and claude.requests[0]["model"] == "claude-haiku-4-5"
+    (request,) = claude.requests
+    assert "betas" not in request and request["model"] == "claude-haiku-4-5" and request["stream"] is True
+    # Before Claude 4.6: no effort or clearing unless asked for. Haiku 4.5 does take strict tools.
+    assert "output_config" not in request and "context_management" not in request
+    assert {t["name"]: t.get("strict") for t in request["tools"]}["read"] is True
+
+
+def test_claude_effort_given_is_sent_to_any_model(claude, repo):
+    claude.replies = [message(use("finish", "t1", value="ok")), message(use("finish", "t2", value="ok"))]
+    _task(thunc.Agent("x", workdir=repo, effort="max"))()
+    _task(thunc.Agent("y", workdir=repo, model="claude-opus-4-5", effort="low"))()
+    assert claude.requests[0]["output_config"] == {"effort": "max"}
+    assert claude.requests[1]["output_config"] == {"effort": "low"} and "betas" not in claude.requests[1]
+    with pytest.raises(ValueError, match="effort= is one of low, medium, high, xhigh, max"):
+        thunc.Agent("z", workdir=repo, effort="extreme")
+
+
+def test_claude_a_call_cut_off_at_max_tokens_gets_an_error_result(claude, repo):
+    claude.replies = [
+        message(use("write", "t1", path="big.md", content="half of it"), stop="max_tokens"),
+        message(use("finish", "t2", value="ok")),
+    ]
+    assert _task(thunc.Agent("x", workdir=repo, permissions=["write"]))() == "ok"
+    assert not (repo / "big.md").exists()  # the cut-off call isn't run
+    sent = claude.requests[1]["messages"]
+    assert sent[1]["content"][0]["type"] == "tool_use"  # the cut-off reply goes back unchanged
+    result, text = sent[2]["content"]
+    assert result == {"type": "tool_result", "tool_use_id": "t1", "content": native.CUT_OFF, "is_error": True}
+    assert text == {"type": "text", "text": native.NUDGE}
+
+
+def test_claude_a_text_reply_cut_off_at_max_tokens_is_nudged(claude, repo):
+    claude.replies = [
+        message({"type": "text", "text": "Long..."}, stop="max_tokens"),
+        message(use("finish", "t1", value="ok")),
+    ]
+    assert _task(thunc.Agent("x", workdir=repo))() == "ok"
+    (text,) = claude.requests[1]["messages"][2]["content"]
+    assert text["text"].startswith("Your reply was cut off at max_tokens.")
+
+
+def test_claude_two_replies_cut_off_in_a_row_end_the_run(claude, repo):
+    cut = message({"type": "text", "text": "Long..."}, stop="max_tokens")
+    claude.replies = [cut, cut]
+    with pytest.raises(thunc.AgentError, match="Two replies in a row were cut off at max_tokens"):
+        _task(thunc.Agent("x", workdir=repo))()
+
+
+def test_claude_a_paused_turn_is_asked_to_carry_on(claude, repo):
+    claude.replies = [
+        message({"type": "text", "text": "Working"}, stop="pause_turn"),
+        message(use("finish", "t1", value="ok")),
+    ]
+    agent = thunc.Agent("x", workdir=repo)
+    run = agent.run(_task(agent))
+    assert run.value == "ok" and run.steps == 1  # one reply, paused once on the way
+    first, second = claude.requests
+    assert second["messages"][-1]["role"] == "assistant"  # no new message: the API carries on from the pause
+
+
+def test_claude_pausing_again_and_again_ends_the_run(claude, repo):
+    claude.replies = [message({"type": "text", "text": "Working"}, stop="pause_turn")] * 6
+    with pytest.raises(thunc.AgentError, match="paused the turn 6 times in a row"):
+        _task(thunc.Agent("x", workdir=repo))()
+
+
+def test_claude_overloaded_and_unreachable_are_retried(claude, repo, monkeypatch):
+    import httpx2
+
+    monkeypatch.setattr(sys.modules["thunc.agent"], "RETRY_DELAY", 0)  # thunc.agent is also a function
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    overloaded = anthropic.APIStatusError("Overloaded", response=httpx2.Response(529, request=request), body=None)
+    claude.replies = [
+        overloaded,
+        anthropic.APIConnectionError(request=request),
+        message(use("finish", "t1", value="ok")),
+    ]
+    agent = thunc.Agent("x", workdir=repo)
+    run = agent.run(_task(agent))
+    assert run.value == "ok"
+    with open(run.session, encoding="utf-8") as f:
+        retries = [json.loads(line) for line in f if '"retry"' in line]
+    assert [r["error"][:20] for r in retries] == ["Claude API error 529", "Could not reach the "]
+
+
+def test_claude_a_bad_request_is_not_retried(claude, repo):
+    import httpx2
+
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    bad = anthropic.APIStatusError("Bad request", response=httpx2.Response(400, request=request), body=None)
+    claude.replies = [bad]
+    with pytest.raises(thunc.AgentError, match="Claude API error 400"):
+        _task(thunc.Agent("x", workdir=repo))()
+
+
+@pytest.mark.parametrize(
+    "schema, strict",
+    [
+        ({"type": "object", "properties": {"a": {"type": "string"}}, "additionalProperties": False}, True),
+        ({"type": "object", "properties": {"a": {"type": "string"}}}, False),  # not closed
+        (
+            {"type": "object", "properties": {"n": {"type": "integer", "minimum": 1}}, "additionalProperties": False},
+            False,
+        ),
+        (
+            {
+                "type": "object",
+                "properties": {"v": {"type": "array", "items": {"type": "object"}}},
+                "additionalProperties": False,
+            },
+            False,
+        ),
+        ({"type": "object", "properties": {"v": {"enum": [{"type": "object"}]}}, "additionalProperties": False}, True),
+    ],
+)
+def test_which_tool_schemas_are_strict(schema, strict):
+    assert native.strict_schema(schema) is strict
 
 
 def _task(agent):
@@ -243,7 +391,8 @@ def gpt(monkeypatch):
             return self
 
         def create(self, **kwargs):
-            script.requests.append(json.loads(json.dumps(kwargs)))
+            sent = {k: v for k, v in kwargs.items() if v is not openai.omit}  # as the SDK leaves them out
+            script.requests.append(json.loads(json.dumps(sent)))
             return script.replies.pop(0)
 
     monkeypatch.setattr(openai, "OpenAI", Client)
@@ -374,3 +523,12 @@ def test_openai_snapshot_preserves_encrypted_reasoning(gpt):
     restored.next()
     assert gpt.requests[1]["input"][1]["encrypted_content"] == "enc"
     assert gpt.requests[1]["input"][-1]["call_id"] == "c1"
+
+
+def test_openai_effort(gpt, repo):
+    gpt.replies = [response(call("finish", "c1", '{"value": "ok"}')), response(call("finish", "c2", '{"value": "ok"}'))]
+    _task(thunc.Agent("o", workdir=repo, effort="xhigh"))()
+    _task(thunc.Agent("p", workdir=repo))()
+    assert gpt.requests[0]["reasoning"] == {"effort": "xhigh"} and "reasoning" not in gpt.requests[1]
+    with pytest.raises(thunc.ThuncError, match="openai backend takes effort low, medium, high or xhigh"):
+        _task(thunc.Agent("q", workdir=repo, effort="max"))()

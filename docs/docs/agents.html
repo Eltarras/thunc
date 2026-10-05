@@ -145,7 +145,10 @@ triage = thunc.Agent("triage", workdir=".", tools=[open_issue])</code></pre></di
 <div class="codeblock"><pre><code class="py">coder = thunc.Agent("coder", workdir=".", system=thunc.prompts.CODING + "\n\nTarget Python 3.10.")</code></pre></div>
 
 <h2 id="limits">Time and step limits</h2>
-<p><code>max_steps=40</code> bounds the model replies in a run, and <code>timeout=</code> (seconds) bounds the run's time. It's checked before each model call; a command's time limit is cut to the time left.</p>
+<p><code>max_steps=40</code> bounds the model replies in a run, and <code>timeout=</code> (seconds) bounds the run's time. It's checked before each model call; a command's time limit is cut to the time left. In its last three replies before <code>max_steps</code>, the model is told how many are left, so it can finish with what it has.</p>
+
+<h2 id="effort">Effort</h2>
+<p><code>effort=</code> sets how hard the model thinks: <code>"low"</code>, <code>"medium"</code>, <code>"high"</code>, <code>"xhigh"</code> or <code>"max"</code> (<code>openai</code> and <code>codex</code> go up to <code>"xhigh"</code>). By default it's <code>"high"</code> on the <code>anthropic</code> backend for Claude 4.6 and later (Claude Opus 5.5's own default is <code>"medium"</code>, low for agentic coding), and each backend's own default elsewhere.</p>
 
 <h2 id="runs">What happened in a run</h2>
 <p>Calling a task returns its value. <code>agent.run(task, *args)</code> runs it the same way and returns a <code>thunc.Run</code> instead, typed like the task (<code>Run[int]</code>):</p>
@@ -155,12 +158,12 @@ run.files_changed  # ["src/mathutil.py"]  (by write, edit and commands)
 run.commands       # [Command("python3 tests/test_mathutil.py", exit_code=0, seconds=0.04)]
 run.denied         # [Denial("run", "git commit -am fix", "running ... is denied by '!run:git'")]
 run.notes, run.followed, run.steps, run.seconds, run.session</code></pre></div>
-<p><strong>Failures are loud.</strong> A run that hits <code>max_steps</code>, never gives a valid value, or loses its backend raises <code>thunc.AgentError</code> (a <code>ThuncError</code>), whose <code>.run</code> is the record up to that point. A step that fails for a reason asking again may fix (a timeout, a lost connection, a rate limit, a server error, a CLI call that ended in an error) is retried twice first, and each retry is in the run's record.</p>
+<p><strong>Failures are loud.</strong> A run that hits <code>max_steps</code>, never gives a valid value, or loses its backend raises <code>thunc.AgentError</code> (a <code>ThuncError</code>), whose <code>.run</code> is the record up to that point. A step that fails for a reason asking again may fix (a timeout, a lost connection, a rate limit, a server error, a CLI call that ended in an error) is retried twice first, and each retry is in the run's record. On the Claude API, a reply cut off at <code>max_tokens</code> doesn't end the run: its tool calls get an error result saying so (twice in a row does).</p>
 
 <h2 id="options">All options</h2>
 <div class="codeblock"><pre><code class="py">thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_timeout=120,
             follow=False, protocol=None, tools=(), timeout=None, max_steps=40,
-            retries=2, backend=None, model=None)
+            retries=2, backend=None, model=None, effort=None)
 
 @agent.task(instructions=..., ensure=...)
 @thunc.agent(name, workdir=..., instructions=..., ensure=..., **options)</code></pre></div>

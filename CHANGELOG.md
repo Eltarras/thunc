@@ -7,6 +7,8 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Behavior changes
 
+- **Agents on the Claude API think at effort `high` by default** on Claude 4.6 and later. Claude
+  Opus 5.5's own default is `medium`, which is low for agentic coding. `effort=` changes it (below).
 - **`edit` no longer needs the file to have been read first.** It only changes text the agent
   quotes exactly, so it can't overwrite what the agent hasn't seen. With the `shell` permission,
   agents often read files with `cat`, and `edit` refused them until they read the file again with
@@ -17,6 +19,13 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Added
 
+- **`Agent(effort=...)`**: `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, on every backend
+  (`output_config.effort` on the Claude API, `reasoning.effort` on OpenAI, `--effort` on Claude Code,
+  `model_reasoning_effort` on Codex; the last two go up to `"xhigh"`). Recorded in `agent.json` only
+  when set, so durable tasks registered without it keep their fingerprint.
+- **The model is told when few steps are left.** In its last three replies before `max_steps`, the
+  last tool result says how many replies remain, so the model can finish with what it has instead
+  of being cut off. Every protocol and durable runs get it; the run record keeps each tool's output.
 - **`edit` can replace every occurrence, and make several changes in one call.** With
   `"replace_all": true`, every occurrence of `old` is replaced and the result gives the count. With
   `"edits": [{"old": ..., "new": ..., "replace_all"?: ...}, ...]` (at most 50) instead of `old` and
@@ -24,6 +33,23 @@ All notable changes to thunc. The full notes for each release are on the
   made, and the error names it. In the tool-use benchmark, models renamed a symbol by writing a
   throwaway script instead of making 26 separate edits, and took twice Claude Code's turns on a
   multi-spot fix. In a durable run, a multi-edit is one effect, recovered as a whole.
+
+### Changed
+
+- **The Claude API agent path keeps runs going** (finding 7 of the tool-use benchmark report):
+  - Replies are streamed with `max_tokens=64000` (was 16,000 without streaming), so a large write
+    fits.
+  - A reply cut off at `max_tokens` no longer ends the run: its tool calls aren't run and get an
+    error result saying so, and the model is asked again. Two in a row end the run.
+  - `pause_turn` is asked to carry on (up to 6 times in a row) instead of ending the run.
+    `model_context_window_exceeded` ends it with a message that says so.
+  - On Claude 4.6 and later, the API clears old tool results on long runs (context editing, beta
+    `context-management-2025-06-27`).
+  - Tools are `strict` (arguments guaranteed to match their schema) on the models that support it,
+    when the schema allows it: the built-in tools except `edit`, `remember`, and `finish` and custom
+    tools whose schema is closed.
+  - A lost connection, a rate limit or a server error on the Claude and OpenAI APIs is retried as a
+    step, like the CLI backends' errors, instead of ending the run.
 
 ## 0.2.2 (beta)
 

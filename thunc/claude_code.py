@@ -58,11 +58,19 @@ class ClaudeCodeConversation:
     """A Conversation (see native.py) whose model replies and tool calls go through Claude Code."""
 
     def __init__(
-        self, system: str, request: str, tools: Sequence[Tool], model: str | None, workdir: str, timeout: float
+        self,
+        system: str,
+        request: str,
+        tools: Sequence[Tool],
+        model: str | None,
+        workdir: str,
+        timeout: float,
+        effort: str | None = None,
     ) -> None:
         if shutil.which("claude") is None:
             raise ThuncError("`claude` was not found on PATH.")
         self.system, self.request, self.tools, self.model = system, request, list(tools), model
+        self.effort = effort
         self.workdir = workdir
         self.timeout = timeout  # seconds to wait for the model's next step
         self.events: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -167,6 +175,8 @@ class ClaudeCodeConversation:
         ]  # fmt: skip
         if self.model:
             args += ["--model", self.model]
+        if self.effort:
+            args += ["--effort", self.effort]
         try:
             self.process = self._popen(args)
         except OSError as exc:

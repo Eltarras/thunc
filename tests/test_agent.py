@@ -1655,3 +1655,45 @@ def test_a_cli_step_has_a_shorter_time_limit(monkeypatch, repo):
     thunc.configure(backend="codex", timeout=600)
     make_task(thunc.Agent("x", workdir=repo))()
     assert seen == [native.CLI_STEP_TIMEOUT]
+
+
+# --- effort and the step countdown ------------------------------------------------------------
+
+
+def test_the_model_is_told_when_few_steps_are_left(fake, repo):
+    fake.replies = [act("list"), act("read", path="config.py"), act("list"), finish("ok")]
+    agent = thunc.Agent("c", workdir=repo, max_steps=4)
+    run = agent.run(make_task(agent))
+    assert run.value == "ok" and run.steps == 4
+    assert "You have 3 replies left before the run's step limit" in fake.prompts[1]
+    assert "You have 2 replies left" in fake.prompts[2]
+    assert "This is your last reply before the run's step limit: call finish now" in fake.prompts[3]
+    with open(run.session, encoding="utf-8") as f:
+        assert "replies left" not in f.read()  # the run record keeps each tool's own output
+
+
+def test_effort_reaches_the_backend_on_the_text_protocol(monkeypatch, repo):
+    from thunc import backends
+
+    seen = []
+
+    def backend(text, **kwargs):
+        seen.append(kwargs)
+        return finish("ok")
+
+    monkeypatch.setitem(backends.BACKENDS, "claude-code", backend)
+    thunc.configure(backend="claude-code")
+    make_task(thunc.Agent("e", workdir=repo, protocol="text", effort="xhigh"))()
+    make_task(thunc.Agent("f", workdir=repo, protocol="text"))()
+    assert seen[0]["effort"] == "xhigh" and "effort" not in seen[1]  # the CLI's own default otherwise
+
+
+def test_effort_is_recorded_only_when_set(fake, repo):
+    fake.replies = [finish("a"), finish("b")]
+    plain = thunc.Agent("p", workdir=repo)
+    hard = thunc.Agent("h", workdir=repo, effort="high")
+    make_task(plain)(), make_task(hard)()
+    with open(os.path.join(plain.folder, "agent.json")) as f:
+        assert "effort" not in json.load(f)  # unchanged without it, so durable fingerprints are too
+    with open(os.path.join(hard.folder, "agent.json")) as f:
+        assert json.load(f)["effort"] == "high"
