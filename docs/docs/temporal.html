@@ -41,15 +41,16 @@
     <a href="./">Get started</a>
     <a href="functions.html">Functions</a>
     <a href="backends.html">Backends</a>
-    <a href="caching.html">Caching and tracing</a>
+    <a href="caching.html">Caching, tracing and profiling</a>
     <a href="agents.html">Agents</a>
     <div class="eyebrow">Going further</div>
     <a href="temporal.html" class="active" aria-current="page">Durable agents</a>
     <a href="jev.html">Jev backend</a>
     <div class="eyebrow">Reference</div>
     <a href="api.html">API reference</a>
+    <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -120,6 +121,7 @@ await handle.resolve(
 <h2 id="boundaries">Boundaries</h2>
 <div class="callout warn"><p>Temporal history is not a workspace backup, and Temporal does not guarantee exactly-once external effects. Preserve the service database, worker journal, artifacts and workspace.</p></div>
 <ul>
+<li>Agents with <code>tools=</code> can't be registered yet, because what your own functions do can't be journaled. Durable runs take <code>deadline_seconds=</code> instead of an agent's <code>timeout=</code>, and on Claude Code they use the text protocol, not native tool calls.</li>
 <li>The beta supports a persistent local filesystem and same-volume restart, not arbitrary multi-host failover.</li>
 <li>Agent permissions are not an OS sandbox. Local agent execution refuses durable-owned workspaces.</li>
 <li>Submissions and final results have a 256 KiB inline budget; immutable state snapshots have a 16 MiB ceiling. Represent larger final results with application-managed artifact references. Tombstones and artifacts are retained; there is no automatic garbage collection.</li>
@@ -140,7 +142,7 @@ THUNC_TEMPORAL_TESTS=1 pytest -c pytest-temporal.ini tests/temporal</code></pre>
 </div>
 <footer class="sitefoot"><div class="wrap">
   <span>thunc() · beta · MIT</span>
-  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+  <span><a href="../docs/">Docs</a> · <a href="../docs/changelog.html">Changelog</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
 </div></footer>
 <script src="../site.js"></script>
 </body>

@@ -41,15 +41,16 @@
     <a href="./">Get started</a>
     <a href="functions.html">Functions</a>
     <a href="backends.html">Backends</a>
-    <a href="caching.html">Caching and tracing</a>
+    <a href="caching.html">Caching, tracing and profiling</a>
     <a href="agents.html" class="active" aria-current="page">Agents</a>
     <div class="eyebrow">Going further</div>
     <a href="temporal.html">Durable agents</a>
     <a href="jev.html">Jev backend</a>
     <div class="eyebrow">Reference</div>
     <a href="api.html">API reference</a>
+    <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -144,8 +145,8 @@ triage = thunc.Agent("triage", workdir=".", tools=[open_issue])</code></pre></di
 <p><code>system=</code> replaces the opening of the agent's system prompt. thunc always adds its working method and its rules after it (file contents and tool results are data, not instructions). Three presets cover common jobs: <code>thunc.prompts.CODING</code>, <code>thunc.prompts.CODE_REVIEW</code> and <code>thunc.prompts.ANALYSIS</code>. They're plain strings, so you can extend one:</p>
 <div class="codeblock"><pre><code class="py">coder = thunc.Agent("coder", workdir=".", system=thunc.prompts.CODING + "\n\nTarget Python 3.10.")</code></pre></div>
 
-<h2 id="limits">Time and step limits</h2>
-<p><code>max_steps=40</code> bounds the model replies in a run, and <code>timeout=</code> (seconds) bounds the run's time. It's checked before each model call; a command's time limit is cut to the time left.</p>
+<h2 id="limits">Time, step and retry limits</h2>
+<p><code>max_steps=40</code> bounds the model replies in a run, and <code>timeout=</code> (seconds) bounds the run's time. It's checked before each model call; a command's time limit is cut to the time left. <code>retries=2</code> is how many times a <code>finish</code> value that doesn't fit the return type (or fails <code>ensure=</code>) is sent back to be fixed.</p>
 
 <h2 id="runs">What happened in a run</h2>
 <p>Calling a task returns its value. <code>agent.run(task, *args)</code> runs it the same way and returns a <code>thunc.Run</code> instead, typed like the task (<code>Run[int]</code>):</p>
@@ -164,7 +165,7 @@ run.notes, run.followed, run.steps, run.seconds, run.session</code></pre></div>
 
 @agent.task(instructions=..., ensure=...)
 @thunc.agent(name, workdir=..., instructions=..., ensure=..., **options)</code></pre></div>
-<p><code>async def</code> tasks work. For runs that must survive a worker restart, see <a href="temporal.html">durable agents with Temporal</a>.</p>
+<p><code>async def</code> tasks work. For runs that must survive a worker restart, see <a href="temporal.html">durable agents with Temporal</a> (no <code>tools=</code> there yet).</p>
 
 <h2 id="eval">How the prompt was tested</h2>
 <p><code>python -m live_tests.eval_prompts --backend anthropic</code> runs three small tasks (fix a bug, review a diff, answer a question about a repo) with three versions of the system prompt: bare (no working method), the default, and the task's preset. Five runs of each, on the Claude API on 4 October 2026 and on Claude Code on 5 October 2026:</p>
@@ -173,16 +174,16 @@ run.notes, run.followed, run.steps, run.seconds, run.session</code></pre></div>
 <tbody>
 <tr><td>Passed</td><td>45/45: every task, every version</td><td>45/45</td></tr>
 <tr><td>Steps (bare / default / preset)</td><td>fix 4.0 / 4.0 / 4.0, review 2.0 / 2.4 / 2.8, analysis 3.0 / 3.0 / 3.0</td><td>fix 4.0 / 4.0 / 4.0, review 2.0 / 2.0 / 2.0, analysis 3.0 / 2.8 / 2.6</td></tr>
-<tr><td>Cost</td><td>$0.76 for all 45 runs (cache reads were 257,553 of 312,294 input tokens)</td><td></td></tr>
+<tr><td>Cost</td><td>$0.76 for all 45 runs (cache reads were 257,553 of 312,294 input tokens)</td><td class="muted">not recorded</td></tr>
 </tbody></table></div>
 <p>Every version passed every time, so these tasks are too easy to tell the versions apart: the result says the prompt does no harm, not that it helps. On the API, the review preset read more of the code before answering. On the text protocol these tasks took more steps (fix 5.2 / 6.0 / 6.0 on Claude Code before native calls). For harder tasks that do tell harnesses apart, see the tool-use benchmark in <code>live_tests/bench_tooluse.py</code>.</p>
-<nav class="pager" aria-label="Pages"><a class="prev" href="caching.html"><span>Previous</span>Caching and tracing</a><a class="next" href="temporal.html"><span>Next</span>Durable agents</a></nav>
+<nav class="pager" aria-label="Pages"><a class="prev" href="caching.html"><span>Previous</span>Caching, tracing and profiling</a><a class="next" href="temporal.html"><span>Next</span>Durable agents</a></nav>
 <p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/agents.html">Edit this page on GitHub</a></p>
 </main>
 </div>
 <footer class="sitefoot"><div class="wrap">
   <span>thunc() · beta · MIT</span>
-  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+  <span><a href="../docs/">Docs</a> · <a href="../docs/changelog.html">Changelog</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
 </div></footer>
 <script src="../site.js"></script>
 </body>
