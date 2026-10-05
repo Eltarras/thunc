@@ -26,7 +26,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator, Mapping, MutableSequence
+from collections.abc import Callable, Iterator, Mapping, MutableSequence, Sequence
 from typing import Any
 
 from .permissions import Denied, Permissions, join_command, split_command
@@ -43,6 +43,7 @@ MAX_SEARCH_FILE = 1_000_000  # bytes; bigger files are skipped by search
 MAX_TRACKED = 20_000  # files; past this, changes made by commands aren't tracked
 MAX_OUTPUT = 18_000  # characters of a command's output sent back: its start and its end
 OUTPUT_HEAD = 5_000  # of those, characters from the start
+MAX_EDITS = 50  # changes in one edit call
 # Environment variables a command gets by default: enough to find programs and run them, nothing else.
 PASSED_ENV = (
     "PATH",
@@ -207,7 +208,24 @@ class Workdir:
         lines = content.count("\n") + (0 if content.endswith("\n") or not content else 1)
         return f"{'replaced' if exists else 'created'} {self.show(full)} ({lines} lines)"
 
-    def edit(self, path: str, old: str, new: str) -> str:
+    def edit(
+        self,
+        path: str,
+        old: str | None = None,
+        new: str | None = None,
+        replace_all: bool = False,
+        edits: Sequence[Any] | None = None,
+    ) -> str:
+        """Replace `old` with `new`, or make each of `edits` in order. Every change is made to the text
+        in memory and the file is saved once, so if one of them fails, none is made."""
+        if edits is None:
+            if old is None or new is None:
+                raise ToolError("edit needs old and new, or a list of edits")
+            changes = [(old, new, replace_all)]
+        elif old is not None or new is not None or replace_all:
+            raise ToolError("give either old and new, or edits, not both")
+        else:
+            changes = _edits(edits)
         full = self.path(path)
         self._check(self.permissions.check_write, full)
         if not os.path.isfile(full):
@@ -217,18 +235,20 @@ class Workdir:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             raise ToolError(f"{path!r} isn't UTF-8 text, so it can't be edited") from None
-        if not old:
-            raise ToolError("old is empty; give the exact text to replace")
-        if old not in text and "\r\n" in text:  # the file uses Windows line endings; the model wrote \n
-            old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")
-        count = text.count(old)
-        if count != 1:
-            problem = "isn't in the file" if count == 0 else f"appears {count} times"
-            raise ToolError(
-                f"the old text {problem}; it must appear exactly once, so include more of the lines around it"
-            )
-        self._save(full, text.replace(old, new, 1))
-        return f"edited {self.show(full)}"
+        replaced = 0
+        for number, (old, new, every) in enumerate(changes, start=1):
+            which = f"edit {number} of {len(changes)}: " if edits is not None else ""
+            try:
+                text, count = _replace(text, old, new, every)
+            except ToolError as problem:
+                raise ToolError(which + str(problem) + ("; no edit was made" if edits is not None else "")) from None
+            replaced += count
+        self._save(full, text)
+        done = f"edited {self.show(full)}"
+        if edits is not None:
+            more = f", {_count(replaced, 'replacement')}" if replaced > len(changes) else ""
+            return f"{done} ({_count(len(changes), 'edit')}{more})"
+        return f"{done} ({_count(replaced, 'replacement')})" if replace_all else done
 
     def run(self, command: str, cwd: str = ".") -> str:
         folder = self.path(cwd)
@@ -438,6 +458,30 @@ class Workdir:
         yield from enumerate(data.decode("utf-8", errors="replace").splitlines(), start=1)
 
 
+# How an argument's type is named in an error, and its JSON Schema (an int argument isn't a bool).
+KINDS: dict[type, str] = {str: "a string", int: "an integer", bool: "true or false", list: "a list"}
+SCHEMAS: dict[type, dict[str, Any]] = {
+    str: {"type": "string"},
+    int: {"type": "integer"},
+    bool: {"type": "boolean"},
+}
+EDITS_SCHEMA: dict[str, Any] = {  # the edits argument of edit
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {"old": {"type": "string"}, "new": {"type": "string"}, "replace_all": {"type": "boolean"}},
+        "required": ["old", "new"],
+        "additionalProperties": False,
+    },
+    "maxItems": MAX_EDITS,
+}
+
+
+def schema(kind: type) -> dict[str, Any]:
+    """The JSON Schema of a built-in tool's argument of this type (list is only edits)."""
+    return EDITS_SCHEMA if kind is list else SCHEMAS[kind]
+
+
 # name -> (method name, {argument: (type, required)}, description for the prompt)
 TOOLS: dict[str, tuple[str, dict[str, tuple[type, bool]], str]] = {
     "list": (
@@ -466,9 +510,17 @@ TOOLS: dict[str, tuple[str, dict[str, tuple[type, bool]], str]] = {
     ),
     "edit": (
         "edit",
-        {"path": (str, True), "old": (str, True), "new": (str, True)},
+        {
+            "path": (str, True),
+            "old": (str, False),
+            "new": (str, False),
+            "replace_all": (bool, False),
+            "edits": (list, False),
+        },
         '{"path": "src/app.py", "old": "exact text", "new": "replacement"}  Replaces text that appears exactly '
-        "once in a file you read in this run.",
+        'once in a file you read in this run; with "replace_all": true, every occurrence. To make several '
+        'changes to one file in one call, give "edits": [{"old": ..., "new": ...}, ...] instead of old and new: '
+        "they apply in order, and if one fails, none is made.",
     ),
     "run": (
         "run",
@@ -504,13 +556,56 @@ def run(workdir: Workdir, name: str, args: dict[str, Any]) -> str:
         if param not in args:
             if required:
                 raise ToolError(f"{name} needs {param!r}")
-        elif not isinstance(args[param], kind) or isinstance(args[param], bool):
-            raise ToolError(f"{name}: {param!r} must be a {kind.__name__}")
+        elif not isinstance(args[param], kind) or (kind is not bool and isinstance(args[param], bool)):
+            raise ToolError(f"{name}: {param!r} must be {KINDS[kind]}")
     tool: Callable[..., str] = getattr(workdir, method)
     result = tool(**args)
     if len(result) > MAX_RESULT:
         result = result[:MAX_RESULT] + f"\n(cut at {MAX_RESULT} characters; ask for less, e.g. a smaller limit)"
     return result
+
+
+def _edits(edits: Sequence[Any]) -> list[tuple[str, str, bool]]:
+    """The edits argument of edit as (old, new, replace_all) triples, or ToolError for one that isn't valid."""
+    if not edits:
+        raise ToolError("edits is empty; give at least one {old, new}")
+    if len(edits) > MAX_EDITS:
+        raise ToolError(f"{len(edits)} edits in one call; make at most {MAX_EDITS}")
+    changes = []
+    for number, item in enumerate(edits, start=1):
+        if not isinstance(item, dict):
+            raise ToolError(f'edit {number}: each edit is an object like {{"old": "...", "new": "..."}}')
+        unknown = sorted(set(item) - {"old", "new", "replace_all"})
+        if unknown:
+            raise ToolError(f"edit {number} has no {', '.join(map(repr, unknown))}; it takes old, new and replace_all")
+        old, new, every = item.get("old"), item.get("new"), item.get("replace_all", False)
+        if not isinstance(old, str) or not isinstance(new, str):
+            raise ToolError(f"edit {number}: old and new must both be strings")
+        if not isinstance(every, bool):
+            raise ToolError(f"edit {number}: replace_all must be true or false")
+        changes.append((old, new, every))
+    return changes
+
+
+def _count(n: int, thing: str) -> str:
+    return f"{n} {thing}" + ("" if n == 1 else "s")
+
+
+def _replace(text: str, old: str, new: str, every: bool) -> tuple[str, int]:
+    """`text` with `old` replaced by `new` (once, or every time), and how many times it was."""
+    if not old:
+        raise ToolError("old is empty; give the exact text to replace")
+    if old not in text and "\r\n" in text:  # the file uses Windows line endings; the model wrote \n
+        old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")
+    count = text.count(old)
+    if count == 0:
+        raise ToolError("the old text isn't in the file; copy it exactly, with its whitespace")
+    if count > 1 and not every:
+        raise ToolError(
+            f"the old text appears {count} times; it must appear exactly once, so include more of the lines "
+            "around it, or set replace_all to replace every one"
+        )
+    return text.replace(old, new) if every else text.replace(old, new, 1), count
 
 
 def _file_glob(pattern: str) -> Callable[[str], bool]:

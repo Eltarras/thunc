@@ -108,7 +108,7 @@ repo.call(f"Where is {setting} set?", returns=str)</code></pre></div>
 <h2 id="tools">Tools</h2>
 <dl>
 <dt>list, read, search</dt><dd>Always available. <code>search</code> takes a regular expression and an optional <code>glob</code> such as <code>*.py</code>. Files the agent may not read are left out of <code>list</code> and <code>search</code>, and so is what git ignores, in a git repository; a folder named explicitly is still listed and searched.</dd>
-<dt>write, edit</dt><dd>When a write rule allows it. <code>write</code> creates a file or replaces one; <code>edit</code> replaces text that appears exactly once.</dd>
+<dt>write, edit</dt><dd>When a write rule allows it. <code>write</code> creates a file or replaces one; <code>edit</code> replaces text that appears exactly once, or every occurrence with <code>replace_all</code>. Several changes to one file can go in one call as <code>edits</code>: they apply in order, and if one fails, none is made.</dd>
 <dt>run</dt><dd>When a run or shell rule allows it. <code>cwd</code> runs the command in a folder inside <code>workdir</code>.</dd>
 <dt>remember</dt><dd>Saves a short note for later runs (see <a href="#memory">memory</a>).</dd>
 <dt>finish</dt><dd>Ends the run with the answer.</dd>

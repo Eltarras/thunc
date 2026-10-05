@@ -298,7 +298,9 @@ or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
   the run carries on. Bad rules fail when the agent is declared.
 - **Tools:** `list`, `read` and `search` (a regular expression, optionally limited with a `glob`
   such as `*.py`); `write` (create a file, or replace one) and `edit` (replace text that appears
-  exactly once) when a write rule allows it; `run` when a run or shell rule allows it; and
+  exactly once, or every occurrence with `replace_all`; several changes to one file can go in one
+  call as `edits`, all made or none) when a write rule allows it; `run` when a run or shell rule
+  allows it; and
   `remember`. Every path must stay inside `workdir`: `..`, absolute paths and symlinks that point
   outside are refused, and the rules are checked on where a link really leads. Files the agent may
   not read are left out of `list` and `search`, and so is what git ignores, in a git repository

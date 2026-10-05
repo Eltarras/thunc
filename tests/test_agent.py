@@ -349,7 +349,7 @@ def test_bad_actions_are_sent_back_and_the_run_continues(fake, repo):
     assert "error: not valid JSON" in feedback
     assert "error: unknown tool 'delete'" in feedback
     assert "error: read needs 'path'" in feedback
-    assert "error: read: 'limit' must be a int" in feedback
+    assert "error: read: 'limit' must be an integer" in feedback
     assert "error: 'nope.py' is not a file" in feedback
 
 
@@ -774,6 +774,99 @@ def test_edit_keeps_windows_line_endings(fake, repo):
     fake.replies = [act("read", path="win.txt"), act("edit", path="win.txt", old="one\ntwo", new="1\n2"), finish("ok")]
     writer(repo, "write")()
     assert (repo / "win.txt").read_bytes() == b"1\r\n2\r\nthree\r\n"
+
+
+def test_edit_replace_all(fake, repo):
+    (repo / "names.py").write_text("old_name = 1\nprint(old_name)\nreturn old_name\nsingle = 0\n")
+    fake.replies = [
+        act("read", path="names.py"),
+        act("edit", path="names.py", old="old_name", new="new_name", replace_all=True),
+        act("edit", path="names.py", old="single", new="one", replace_all=True),
+        finish("ok"),
+    ]
+    writer(repo, "write")()
+    assert (repo / "names.py").read_text() == "new_name = 1\nprint(new_name)\nreturn new_name\none = 0\n"
+    assert "edited names.py (3 replacements)" in fake.prompts[2]
+    assert "edited names.py (1 replacement)" in fake.prompts[3]
+
+
+def test_several_edits_in_one_call_apply_in_order(fake, repo):
+    (repo / "app.py").write_text("TIMEOUT = 30\nRETRIES = 1\nlog(x)\nlog(y)\n")
+    edits = [
+        {"old": "TIMEOUT = 30", "new": "TIMEOUT = 45"},
+        {"old": "TIMEOUT = 45", "new": "TIMEOUT = 60"},  # sees what the edit before it left
+        {"old": "log(", "new": "logger.info(", "replace_all": True},
+        {"old": "RETRIES = 1\n", "new": ""},
+    ]
+    fake.replies = [act("read", path="app.py"), act("edit", path="app.py", edits=edits), finish("ok")]
+    agent = thunc.Agent("w", workdir=repo, permissions=["write"])
+    run = agent.run(make_task(agent))
+    assert (repo / "app.py").read_text() == "TIMEOUT = 60\nlogger.info(x)\nlogger.info(y)\n"
+    assert "edited app.py (4 edits, 5 replacements)" in fake.prompts[2]
+    assert run.files_changed == ["app.py"]
+
+
+def test_several_edits_are_all_or_nothing(fake, repo):
+    (repo / "app.py").write_text("a = 1\nb = 2\n")
+    fake.replies = [
+        act("read", path="app.py"),
+        act("edit", path="app.py", edits=[{"old": "a = 1", "new": "a = 9"}, {"old": "c = 3", "new": "c = 4"}]),
+        act("edit", path="app.py", edits=[{"old": "a = 1", "new": "a = 9"}]),  # the file is as it was read
+        finish("ok"),
+    ]
+    writer(repo, "write")()
+    assert "error: edit 2 of 2: the old text isn't in the file" in fake.prompts[2]
+    assert "no edit was made" in fake.prompts[2]
+    assert "edited app.py (1 edit)" in fake.prompts[3]
+    assert (repo / "app.py").read_text() == "a = 9\nb = 2\n"
+
+
+@pytest.mark.parametrize(
+    "args, problem",
+    [
+        ({"old": "a = 1"}, "edit needs old and new, or a list of edits"),
+        ({"old": "a", "new": "b", "edits": [{"old": "a", "new": "b"}]}, "either old and new, or edits, not both"),
+        ({"replace_all": True, "edits": [{"old": "a", "new": "b"}]}, "either old and new, or edits, not both"),
+        ({"edits": []}, "edits is empty"),
+        ({"edits": [{"old": "a", "new": "b"}] * 51}, "51 edits in one call; make at most 50"),
+        ({"edits": ["a = 1"]}, "edit 1: each edit is an object"),
+        ({"edits": [{"old": "a", "new": "b", "all": True}]}, "edit 1 has no 'all'"),
+        ({"edits": [{"old": "a", "new": 2}]}, "edit 1: old and new must both be strings"),
+        ({"edits": [{"old": "a", "new": "b", "replace_all": "yes"}]}, "edit 1: replace_all must be true or false"),
+        ({"old": "a", "new": "b", "replace_all": "yes"}, "'replace_all' must be true or false"),
+        ({"edits": {"old": "a", "new": "b"}}, "'edits' must be a list"),
+        ({"old": "a", "new": "b", "replace_all": 1}, "'replace_all' must be true or false"),
+    ],
+)
+def test_edit_arguments_are_checked(fake, repo, args, problem):
+    (repo / "app.py").write_text("a = 1\n")
+    fake.replies = [act("read", path="app.py"), act("edit", path="app.py", **args), finish("ok")]
+    writer(repo, "write")()
+    assert "error: " in fake.prompts[2] and problem in fake.prompts[2]
+    assert (repo / "app.py").read_text() == "a = 1\n"
+
+
+def test_edit_tells_the_model_about_replace_all_and_edits(fake, repo):
+    from thunc.agent import _tool_specs
+
+    fake.replies = [finish("x")]
+    writer(repo, "write")()
+    assert '"edits": [{"old": ..., "new": ...}, ...]' in fake.systems[0] and '"replace_all": true' in fake.systems[0]
+    (edit,) = _tool_specs(["edit"], str, {})
+    assert edit.schema["required"] == ["path"] and edit.schema["additionalProperties"] is False
+    properties = edit.schema["properties"]
+    assert properties["replace_all"] == {"type": "boolean"} and properties["old"] == {"type": "string"}
+    assert properties["edits"]["items"]["required"] == ["old", "new"] and properties["edits"]["maxItems"] == 50
+    assert not edit.description.startswith("{")  # the text-protocol example is left out
+
+
+def test_the_run_record_shortens_each_edit():
+    from thunc.agent import _shortened
+
+    long = "x" * 10_000
+    shortened = _shortened({"path": "a.py", "edits": [{"old": long, "new": "y", "replace_all": True}]})
+    assert len(shortened["edits"][0]["old"]) < 5_000 and shortened["edits"][0]["replace_all"] is True
+    assert shortened["path"] == "a.py"
 
 
 def test_denied_files_are_hidden_from_list_and_search(fake, repo):

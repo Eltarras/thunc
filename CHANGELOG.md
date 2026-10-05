@@ -3,6 +3,18 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
+## Unreleased
+
+### Added
+
+- **`edit` can replace every occurrence, and make several changes in one call.** With
+  `"replace_all": true`, every occurrence of `old` is replaced and the result gives the count. With
+  `"edits": [{"old": ..., "new": ..., "replace_all"?: ...}, ...]` (at most 50) instead of `old` and
+  `new`, the changes apply in order, each to the text the ones before it left; if one fails, none is
+  made, and the error names it. In the tool-use benchmark, models renamed a symbol by writing a
+  throwaway script instead of making 26 separate edits, and took twice Claude Code's turns on a
+  multi-spot fix. In a durable run, a multi-edit is one effect, recovered as a whole.
+
 ## 0.2.2 (beta)
 
 **Agents that use their tools reliably, and faster calls.** Agents on Claude Code make native tool
