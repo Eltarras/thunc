@@ -758,7 +758,7 @@ def _tool_specs(
         if name in tools.TOOLS:
             _, params, _ = tools.TOOLS[name]
             description = tools.description(name, shell)
-            properties = {p: {"type": "string" if kind is str else "integer"} for p, (kind, _) in params.items()}
+            properties = {p: tools.schema(kind) for p, (kind, _) in params.items()}
             required = [p for p, (_, needed) in params.items() if needed]
         elif name == "remember":
             description, properties, required = REMEMBER, {"note": {"type": "string"}}, ["note"]
@@ -770,9 +770,15 @@ def _tool_specs(
     return specs
 
 
-def _shortened(args: dict[str, Any]) -> dict[str, Any]:
-    """Arguments for the run record, with long text (a whole file to write) cut down."""
-    return {k: shorten(v, 4000) if isinstance(v, str) else v for k, v in args.items()}
+def _shortened(args: Any) -> Any:
+    """Arguments for the run record, with long text (a whole file to write, or each of edit's edits) cut down."""
+    if isinstance(args, str):
+        return shorten(args, 4000)
+    if isinstance(args, dict):
+        return {k: _shortened(v) for k, v in args.items()}
+    if isinstance(args, list):
+        return [_shortened(v) for v in args]
+    return args
 
 
 def _request(instructions: str, inputs: dict[str, Any], returns: Any) -> str:

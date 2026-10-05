@@ -75,6 +75,30 @@ def test_stale_read_hash_cannot_overwrite(tmp_path):
     assert result["output"].startswith("error:") and (root / "note").read_text() == "external"
 
 
+def test_several_edits_are_one_effect_applied_once(tmp_path):
+    registry, item, state, root = definition(tmp_path)
+    (root / "note").write_text("a = 1\nb = 2\nb = 2\n")
+    read = perform(registry.storage, item, state, {"tool": "read", "args": {"path": "note"}}, "run/1/0")
+    state["seen"] = read["seen"]
+    edits = [{"old": "a = 1", "new": "a = 9"}, {"old": "b = 2", "new": "b = 3", "replace_all": True}]
+    call = {"tool": "edit", "args": {"path": "note", "edits": edits}}
+    first = perform(registry.storage, item, state, call, "run/2/0")
+    second = perform(registry.storage, item, state, call, "run/2/0")  # the activity's completion was lost
+    assert first == second and first["output"] == "edited note (2 edits, 3 replacements)"
+    assert (root / "note").read_text() == "a = 9\nb = 3\nb = 3\n"
+
+
+def test_several_edits_after_a_stale_read_change_nothing(tmp_path):
+    registry, item, state, root = definition(tmp_path)
+    (root / "note").write_text("a = 1\n")
+    read = perform(registry.storage, item, state, {"tool": "read", "args": {"path": "note"}}, "run/1/0")
+    state["seen"] = read["seen"]
+    (root / "note").write_text("a = 1\nexternal\n")
+    call = {"tool": "edit", "args": {"path": "note", "edits": [{"old": "a = 1", "new": "a = 2"}]}}
+    result = perform(registry.storage, item, state, call, "run/2/0")
+    assert result["output"].startswith("error:") and (root / "note").read_text() == "a = 1\nexternal\n"
+
+
 def test_command_receipt_blocks_retry_and_resolution_delivery_is_idempotent(tmp_path):
     registry, item, state, root = definition(tmp_path)
     call = {"tool": "run", "args": {"command": "echo must-not-run"}}
