@@ -745,6 +745,8 @@ def test_an_edit_needs_no_read_but_leaves_the_file_unread_for_write(fake, repo):
 def test_an_edit_after_reading_with_a_shell_command(fake, repo):
     # With the shell permission, agents often read with cat: the edit used to be refused until a read.
     show = script(repo, "show.py", "print(open('config.py').read())")
+    if sys.platform == "win32":  # the shell is cmd, which doesn't take POSIX quotes
+        show = subprocess.list2cmdline([sys.executable, "show.py"])
     fake.replies = [
         act("run", command=show),
         act("edit", path="config.py", old="TIMEOUT = 30", new="TIMEOUT = 45"),
