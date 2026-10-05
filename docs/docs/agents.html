@@ -49,7 +49,7 @@
     <div class="eyebrow">Reference</div>
     <a href="api.html">API reference</a>
   </nav>
-  <div class="version">thunc 0.2.1 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -167,15 +167,15 @@ run.notes, run.followed, run.steps, run.seconds, run.session</code></pre></div>
 <p><code>async def</code> tasks work. For runs that must survive a worker restart, see <a href="temporal.html">durable agents with Temporal</a>.</p>
 
 <h2 id="eval">How the prompt was tested</h2>
-<p><code>python -m live_tests.eval_prompts --backend anthropic</code> runs three small tasks (fix a bug, review a diff, answer a question about a repo) with three versions of the system prompt: bare (no working method), the default, and the task's preset. Five runs of each on 4 October 2026:</p>
+<p><code>python -m live_tests.eval_prompts --backend anthropic</code> runs three small tasks (fix a bug, review a diff, answer a question about a repo) with three versions of the system prompt: bare (no working method), the default, and the task's preset. Five runs of each, on the Claude API on 4 October 2026 and on Claude Code on 5 October 2026:</p>
 <div class="tablewrap"><table>
-<thead><tr><th></th><th>Claude API (Opus 5.5, native calls)</th><th>Claude Code (text protocol)</th></tr></thead>
+<thead><tr><th></th><th>Claude API (Opus 5.5, native calls)</th><th>Claude Code (Sonnet 5.5, native calls)</th></tr></thead>
 <tbody>
 <tr><td>Passed</td><td>45/45: every task, every version</td><td>45/45</td></tr>
-<tr><td>Steps (bare / default / preset)</td><td>fix 4.0 / 4.0 / 4.0, review 2.0 / 2.4 / 2.8, analysis 3.0 / 3.0 / 3.0</td><td>fix 5.2 / 6.0 / 6.0, review 2.2 / 2.0 / 3.8, analysis 4.2 / 3.8 / 4.2</td></tr>
+<tr><td>Steps (bare / default / preset)</td><td>fix 4.0 / 4.0 / 4.0, review 2.0 / 2.4 / 2.8, analysis 3.0 / 3.0 / 3.0</td><td>fix 4.0 / 4.0 / 4.0, review 2.0 / 2.0 / 2.0, analysis 3.0 / 2.8 / 2.6</td></tr>
 <tr><td>Cost</td><td>$0.76 for all 45 runs (cache reads were 257,553 of 312,294 input tokens)</td><td></td></tr>
 </tbody></table></div>
-<p>Every version passed every time, so these tasks are too easy to tell the versions apart: the result says the prompt does no harm, not that it helps. The one difference is that the review preset reads more of the code before answering. Harder tasks are needed to measure more.</p>
+<p>Every version passed every time, so these tasks are too easy to tell the versions apart: the result says the prompt does no harm, not that it helps. On the API, the review preset read more of the code before answering. On the text protocol these tasks took more steps (fix 5.2 / 6.0 / 6.0 on Claude Code before native calls). For harder tasks that do tell harnesses apart, see the tool-use benchmark in <code>live_tests/bench_tooluse.py</code>.</p>
 <nav class="pager" aria-label="Pages"><a class="prev" href="caching.html"><span>Previous</span>Caching and tracing</a><a class="next" href="temporal.html"><span>Next</span>Durable agents</a></nav>
 <p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/agents.html">Edit this page on GitHub</a></p>
 </main>

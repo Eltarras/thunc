@@ -3,13 +3,30 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
-## Unreleased
+## 0.2.2 (beta)
 
-**Agents on Claude Code make native tool calls.** On the `claude-code` backend the model wrote each
-action as JSON text, and current models drift back to their trained tool calls: they invented tool
-results and ran on to the timeout, or the CLI refused a tool call it couldn't parse. In a tool-use
-benchmark (`live_tests/bench_tooluse.py`), agents on Claude Sonnet 5.5 passed 12 of 24 runs this
-way, against 24 of 24 for Claude Code itself.
+**Agents that use their tools reliably, and faster calls.** Agents on Claude Code make native tool
+calls instead of writing each action as JSON text, a failed step is retried instead of ending the
+run, and the agent's tools fill gaps a benchmark found. In that tool-use benchmark
+(`live_tests/bench_tooluse.py`, 8 tasks, Claude Sonnet 5.5, 3 runs each), agents on Claude Code went
+from 12 of 24 runs passing to 24 of 24, from 99 to 10 seconds a task, and from $0.084 to $0.022 a
+task; Claude Code itself took 11 seconds and $0.069. The API backends also reuse their connections,
+Codex answers return sooner, and `thunc run --profile` shows where a program's time goes.
+
+### Behavior changes
+
+Nothing is removed, but these defaults change:
+
+- **Agents on `claude-code` make native tool calls** (see Added). With a `claude` CLI too old for
+  them, or with MCP servers turned off by a policy, a run falls back to the text protocol with a
+  warning. `protocol="text"` keeps the old way.
+- **`list` and `search` leave out what git ignores** in a git repository (build output, caches,
+  vendored code). A folder named explicitly is still listed and searched.
+- **Long command output keeps its start and its end** (the first error and the summary), not only
+  the end.
+- **The `claude-code` backend loads none of your Claude Code settings** (`--setting-sources ""`):
+  no `CLAUDE.md`, settings or hooks reach thunc's calls, plain function calls included, so an
+  agent's `workdir` can't give it instructions unless `follow=` asks for them.
 
 ### Added
 
@@ -22,7 +39,8 @@ way, against 24 of 24 for Claude Code itself.
 - **`run` takes `cwd`**, a folder inside `workdir` to run the command in.
 - **The `shell` permission** runs command lines through the system shell, so pipes, `&&`, `cd`
   and redirects work. Off by default; it can't be combined with `!run:` rules.
-- **`search` takes `glob`** (`*.py` by file name, `src/**/*.ts` by path) to limit the files searched.
+- **`search` takes `glob`** (`*.py` by file name, `src/**/*.ts` by path) to limit the files
+  searched.
 - **`thunc run --profile`**: runs a script (or `-m module`) and prints a performance report to
   stderr when it ends: per function, calls, cache hits, retries, failures, total/mean/p95/max time
   and the split between model time and thunc's own; for agents, steps and time in each tool; and
@@ -34,26 +52,20 @@ way, against 24 of 24 for Claude Code itself.
   that ended in an error (`thunc.errors.TransientError`) is retried twice in an agent run, with a
   note in the run record, before the run fails. A text-protocol step on Claude Code or Codex may
   take 120 seconds before it's retried, instead of the whole `timeout`.
-- **`list` and `search` leave out what git ignores** in a git repository; a folder named
-  explicitly is still listed and searched.
-- **Long command output keeps its start and its end** (the first error and the summary), not only
-  the end.
-- **The `claude-code` backend loads none of your Claude Code settings** (`--setting-sources ""`):
-  no `CLAUDE.md`, settings or hooks reach thunc's calls, so an agent's `workdir` can't give it
-  instructions unless `follow=` asks for them.
 - **The `anthropic` and `openai` backends reuse their connections.** One SDK client is shared by
   every call in the process (`thunc.map`'s threads and agent runs included), instead of a new
   client, and so a new TCP and TLS handshake, for each call. A new client is made when the API key,
   the SDK's environment variables (`ANTHROPIC_*`, `OPENAI_*`) or the process change. In a local
   benchmark with 60 ms of connection setup, 20 calls in a row went from 1.47 s to 68 ms.
-- **Agents on the text protocol can act several times per reply.** On Codex and
-  `protocol="text"` (and on Claude Code when it falls back to the text protocol), a reply can be a
-  JSON array of independent actions (reading three files) instead of one. They run in order, at most 16 per reply, and every result comes back together,
-  as with native tool calls. Each turn resends the whole transcript and, on the CLI backends,
-  starts the CLI, so fewer turns save both. A single JSON action works as before. On Codex, with
-  `live_tests/eval_prompts.py` (default prompt, 5 runs of each task), every run batched its first
-  reads: replies went from 6.0 / 4.8 / 5.0 to 5.0 / 3.0 / 3.6 (fix / review / analysis) and the
-  mean time from 37 / 27 / 27 s to 29 / 19 / 21 s, with the same work done and 30/30 passing.
+- **Agents on the text protocol can act several times per reply.** On Codex and `protocol="text"`
+  (and on Claude Code when it falls back to the text protocol), a reply can be a JSON array of
+  independent actions (reading three files) instead of one. They run in order, at most 16 per reply,
+  and every result comes back together, as with native tool calls. Each turn resends the whole
+  transcript and, on the CLI backends, starts the CLI, so fewer turns save both. A single JSON
+  action works as before. On Codex, with `live_tests/eval_prompts.py` (default prompt, 5 runs of
+  each task), every run batched its first reads: replies went from 6.0 / 4.8 / 5.0 to 5.0 / 3.0 /
+  3.6 (fix / review / analysis) and the mean time from 37 / 27 / 27 s to 29 / 19 / 21 s, with the
+  same work done and 30/30 passing.
 - **The `codex` backend returns as soon as the answer arrives.** It reads Codex's JSON events as
   they come (`codex exec --json`) instead of waiting for the process to exit and reading the answer
   from a file. Codex takes about 0.4 s to shut down after answering; that now happens in the
