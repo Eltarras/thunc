@@ -89,6 +89,9 @@ def perform(
                 elif not permissions.may("memory"):
                     raise Attention("Memory permission revoked with a pending operation")
                 return storage.apply_file(operation, state["id"], body)
+            started = (body.get("call") or {}).get("tool")
+            if started and started != "run" and agent.custom.get(started):
+                raise Attention(f"{started!r} may or may not have run; check what it did before resolving")
             raise Attention("Command outcome is uncertain; inspect the process and effects before resolving")
         plan = None
         if tool == "remember" and permissions.may("memory"):
@@ -111,10 +114,15 @@ def perform(
                     output, denied = "saved. Later runs of this agent will see this note in their memory.", False
         else:
             offered = [name for name in state["offered"] if name != "remember" or permissions.may("memory")]
-            if tool == "run" and tool in offered:
-                # Intent is committed before process creation, so a crash is conservatively ambiguous.
+            custom = agent.custom.get(tool) if tool in offered else None
+            if (tool == "run" and tool in offered) or (custom and tool not in definition.retry_safe):
+                # Intent is committed before the effect starts, so a crash is conservatively ambiguous:
+                # a command, or one of the agent's own tools, that may have run isn't run again unasked.
                 storage.save_effect(operation, state["id"], "started", {"call": call})
-            output, denied = _use(tool, args, workdir, store, offered)
+            if custom is not None:
+                output, denied = custom.call(args), False  # an exception in it is an error result
+            else:
+                output, denied = _use(tool, args, workdir, store, offered)
             plan = workdir.plan
         result = {
             "output": output,

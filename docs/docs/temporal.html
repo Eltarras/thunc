@@ -81,6 +81,8 @@ python client.py</code></pre></div>
 # Worker process; review_task is an existing @agent.task function.
 registry = Registry(state_dir="/srv/thunc-state")
 registry.agent_task("repo.review", review_task, version="1", workspace_id="repo")
+# An agent's own tools (tools=) run at most once; name those that may run again after a crash:
+# registry.agent_task("issues.triage", triage, version="1", workspace_id="repo", retry_safe_tools=["find_issue"])
 worker = await Worker.connect("localhost:7233", task_queue="repo-v1", registry=registry)
 # await worker.run() in the worker's async entry point
 
@@ -106,6 +108,7 @@ print(run.value)</code></pre></div>
 <li>File writes use intentions, before and after hashes, atomic replacement and completion receipts. Permission revocations narrow access on resume.</li>
 <li>Memory notes use stable operation identities; native reasoning, signatures and read hashes survive serialization.</li>
 <li>Runs against one workspace are serialized. A command with an uncertain outcome pauses the lane for operator reconciliation instead of running twice.</li>
+<li>The agent's own tools (<code>tools=</code>) are journaled like commands: the intent is recorded before the function runs and its result after, so a retried activity replays the result instead of calling it again. If a worker stops during the call, the run waits for <code>resolve()</code>, unless the tool is named in <code>retry_safe_tools=</code>, which lets it run again. A tool's description, arguments and retry marking are part of the task's fingerprint, so changing one needs a new version.</li>
 </ul>
 
 <h2 id="resolve">Resolve an uncertain effect</h2>
@@ -121,7 +124,7 @@ await handle.resolve(
 <h2 id="boundaries">Boundaries</h2>
 <div class="callout warn"><p>Temporal history is not a workspace backup, and Temporal does not guarantee exactly-once external effects. Preserve the service database, worker journal, artifacts and workspace.</p></div>
 <ul>
-<li>Agents with <code>tools=</code> can't be registered yet, because what your own functions do can't be journaled. Durable runs take <code>deadline_seconds=</code> instead of an agent's <code>timeout=</code>, and on Claude Code they use the text protocol, not native tool calls.</li>
+<li>Durable runs take <code>deadline_seconds=</code> instead of an agent's <code>timeout=</code>, and on Claude Code they use the text protocol, not native tool calls.</li>
 <li>The beta supports a persistent local filesystem and same-volume restart, not arbitrary multi-host failover.</li>
 <li>Agent permissions are not an OS sandbox. Local agent execution refuses durable-owned workspaces.</li>
 <li>Submissions and final results have a 256 KiB inline budget; immutable state snapshots have a 16 MiB ceiling. Represent larger final results with application-managed artifact references. Tombstones and artifacts are retained; there is no automatic garbage collection.</li>

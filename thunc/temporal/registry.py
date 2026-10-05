@@ -7,8 +7,8 @@ import json
 import math
 import os
 import typing
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,7 @@ class Definition:
     fingerprint: str
     store_folder: str | None
     endpoint: str | None
+    retry_safe: frozenset[str] = field(default_factory=frozenset)  # custom tools that may run again after a crash
 
     def inputs(self, values: dict[str, Any]) -> dict[str, Any]:
         bound = self.spec.sig.bind(**values)
@@ -49,18 +50,41 @@ class Registry:
         self.definitions: dict[tuple[str, str], Definition] = {}
         self.roots: dict[str, str] = {}
 
-    def agent_task(self, name: str, task: Callable[..., Any], *, version: str, workspace_id: str) -> None:
+    def agent_task(
+        self,
+        name: str,
+        task: Callable[..., Any],
+        *,
+        version: str,
+        workspace_id: str,
+        retry_safe_tools: Iterable[str] = (),
+    ) -> None:
+        """Register an agent task. The agent's own tools (tools=) run at most once each: if a worker
+        stops during one, the run waits for resolve(), as for a command. Name in retry_safe_tools
+        those that may run again instead (a lookup, or an action that checks it hasn't happened)."""
         agent = getattr(task, "__thunc_agent__", None)
         if not isinstance(agent, Agent):
             raise ValueError("Expected an @agent.task function")
-        self._register(name, task, version, workspace_id, agent)
+        retry_safe = frozenset(retry_safe_tools)
+        unknown = sorted(retry_safe - set(agent.custom))
+        if unknown:
+            raise ValueError(f"retry_safe_tools names tools the agent doesn't have: {', '.join(unknown)}")
+        self._register(name, task, version, workspace_id, agent, retry_safe)
 
     def function(self, name: str, function: Callable[..., Any], *, version: str, workspace_id: str) -> None:
         if not hasattr(function, "__thunc_function__"):
             raise ValueError("Expected an @thunc.function function")
         self._register(name, function, version, workspace_id, None)
 
-    def _register(self, name: str, fn: Callable[..., Any], version: str, workspace: str, agent: Agent | None) -> None:
+    def _register(
+        self,
+        name: str,
+        fn: Callable[..., Any],
+        version: str,
+        workspace: str,
+        agent: Agent | None,
+        retry_safe: frozenset[str] = frozenset(),
+    ) -> None:
         if not all(isinstance(x, str) and 0 < len(x) <= 200 for x in (name, version, workspace)):
             raise ValueError("Task, version and workspace IDs must be 1–200 characters")
         if (name, version) in self.definitions:
@@ -81,8 +105,6 @@ class Registry:
         if not agent and options.get("system") is None:
             options["system"] = setting("system")
         if agent:
-            if agent.custom:
-                raise ValueError("Durable agents don't support tools= yet: their effects can't be journaled")
             if agent.timeout is not None:
                 raise ValueError("Durable agents take a run deadline: use deadline_seconds= instead of timeout=")
             agent = copy.copy(agent)
@@ -101,8 +123,15 @@ class Registry:
                 raise ValueError("state_dir must be outside the agent workspace")
             self.roots[workspace] = root
         endpoint = os.environ.get("OPENAI_BASE_URL") if backend == "openai" else os.environ.get("ANTHROPIC_BASE_URL")
+        # A changed tool (its description, arguments or retry marking) needs a new task version. Only
+        # agents with tools get the key, so other tasks keep the fingerprint they were registered with.
+        tools = {
+            tool.name: {"description": tool.description, "schema": tool.schema, "retry_safe": tool.name in retry_safe}
+            for tool in (agent.custom.values() if agent else ())
+        }
         fingerprint = digest(
             {
+                **({"tools": tools} if tools else {}),
                 "instructions": spec.instructions,
                 "returns": json_schema(spec.returns),
                 "backend": backend,
@@ -124,6 +153,7 @@ class Registry:
             fingerprint,
             Store(agent.name).folder if agent else None,
             endpoint,
+            retry_safe,
         )
 
     def get(self, request: dict[str, Any]) -> Definition:

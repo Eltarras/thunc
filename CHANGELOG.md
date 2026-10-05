@@ -26,6 +26,12 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Added
 
+- **Durable agents can have `tools=`.** Each call of one of the agent's own functions is journaled
+  like a command: the intent is recorded before it runs and its result after, so a retried activity
+  replays the result instead of calling it again, and a call interrupted by a worker stopping waits
+  for `resolve()`. `registry.agent_task(..., retry_safe_tools=["find_issue"])` names the tools that
+  may run again instead. A tool's description, arguments and retry marking are part of the task's
+  fingerprint, so changing one needs a new version; tasks without tools keep their fingerprint.
 - **Native calls on `codex`**: the agent's tools are an MCP server (thunc's relay, given with
   `-c mcp_servers.thunc.*`) that Codex calls; thunc carries out each call with its own tools,
   permissions and run record. Each `codex exec` is a turn: one that ends without `finish` is

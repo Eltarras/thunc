@@ -490,3 +490,65 @@ async def test_native_workflow_composes_registered_tasks_without_slot_deadlock(s
                 30,
             )
             assert result == "summary" and len(fake.prompts) == 3
+
+
+@pytest.mark.asyncio
+async def test_custom_tools_run_in_a_durable_run_and_an_uncertain_one_waits(service, tmp_path, fake, monkeypatch):
+    from thunc.temporal.activities import Activities
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    opened = []
+
+    def open_issue(title: str) -> int:
+        """Open an issue in the tracker. Returns its number."""
+        opened.append(title)
+        return 41 + len(opened)
+
+    agent = thunc.Agent("issues", workdir=root, tools=[open_issue])
+
+    @agent.task
+    def report() -> int:
+        """Open an issue for the flaky test and finish with its number."""
+        ...
+
+    fake.replies = [
+        json.dumps({"tool": "open_issue", "args": {"title": "Flaky test"}}),
+        json.dumps({"tool": "finish", "args": {"value": 42}}),
+        json.dumps({"tool": "open_issue", "args": {"title": "Slow build"}}),
+        json.dumps({"tool": "finish", "args": {"value": 99}}),
+    ]
+    registry = Registry(state_dir=tmp_path / "state")
+    registry.agent_task("report", report, version="1", workspace_id="issues")
+    original = Activities.tool
+
+    def uncertain(self, definition, state):  # the second run's worker "stopped" during open_issue
+        titles = [c["args"].get("title") for c in state["agent"]["calls"]]
+        if "Slow build" in titles and not injected:
+            injected.append(True)
+            call = {"tool": "open_issue", "args": {"title": "Slow build"}}
+            self.storage.save_effect(state["id"] + "/1/0", state["id"], "started", {"call": call})
+        return original(self, definition, state)
+
+    injected: list[bool] = []
+    monkeypatch.setattr(Activities, "tool", uncertain)
+    runtime = Runtime(service.client, task_queue="issues")
+    async with Worker(service.client, task_queue="issues", registry=registry):
+        first = await runtime.start(
+            "report", version="1", workspace_id="issues", inputs={}, returns=int, request_id="one"
+        )
+        assert (await asyncio.wait_for(first.result(), 20)).value == 42 and opened == ["Flaky test"]
+
+        second = await runtime.start(
+            "report", version="1", workspace_id="issues", inputs={}, returns=int, request_id="two"
+        )
+
+        async def attention():
+            while (await second.status())["status"] != "needs_attention":
+                await asyncio.sleep(0.05)
+
+        await asyncio.wait_for(attention(), 20)
+        assert opened == ["Flaky test"]  # not run again unasked
+        status = await second.status()
+        await second.resolve(status["operation_id"], "complete", "Checked the tracker: issue 99 exists", output="99")
+        assert (await asyncio.wait_for(second.result(), 20)).value == 99 and opened == ["Flaky test"]

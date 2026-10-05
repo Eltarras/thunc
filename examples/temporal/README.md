@@ -54,6 +54,8 @@ from thunc.temporal import Registry, Runtime, Worker
 registry = Registry(state_dir="/srv/thunc-state")
 registry.agent_task("repo.review", review_task, version="1", workspace_id="repo")
 # Typed @thunc.function definitions use registry.function(...).
+# An agent's own tools (tools=) run at most once; name those that may run again after a crash:
+# registry.agent_task(..., retry_safe_tools=["find_issue"])
 
 # Client: submitting and waiting are separate operations.
 runtime = await Runtime.connect("localhost:7233", task_queue="repo-v1")
@@ -106,6 +108,12 @@ are rejected. Values are JSON, never pickled Python objects.
 - Arbitrary commands are never automatically executed a second time after an
   uncertain start. Temporal can retry the **receipt check**, which reports
   `needs_attention`. It does not blindly rerun the command.
+- The agent's own tools (`tools=`) are treated the same way: the intent is recorded
+  before the function runs and the result after, so a completed call is replayed,
+  not repeated, and one interrupted mid-call waits for `resolve()`. Tools named in
+  `retry_safe_tools=` (a lookup, or an action that checks whether it already
+  happened) run again instead. A tool's description, arguments and retry marking
+  are part of the task's fingerprint.
 - Read hashes, native provider reasoning/signatures, pending calls and all repair
   counters survive restarts. Native multi-tool replies are executed in order.
 - Commands support cooperative cancellation and process-group cleanup. A hard
