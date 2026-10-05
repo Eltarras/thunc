@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
 import typing
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -419,10 +421,8 @@ class AnthropicConversation:
             request["context_management"] = {"edits": [{"type": "clear_tool_uses_20250919"}]}
         try:
             if betas:
-                with self.client.beta.messages.stream(**request, betas=betas) as stream:
-                    return stream.get_final_message()
-            with self.client.messages.stream(**request) as stream:
-                return stream.get_final_message()
+                return _streamed(self.client.beta.messages.stream(**request, betas=betas), setting("timeout"))
+            return _streamed(self.client.messages.stream(**request), setting("timeout"))
         except anthropic.APIConnectionError as exc:
             raise TransientError(f"Could not reach the Claude API: {exc}") from exc
         except anthropic.APIStatusError as exc:
@@ -451,6 +451,35 @@ class AnthropicConversation:
         )
         self.messages.append({"role": "user", "content": content})
         self.cut_off = None
+
+
+def _streamed(manager: Any, quiet: float) -> Any:
+    """The final message of a streamed reply. A reply may stream for minutes (a large write), but one
+    that sends nothing for `quiet` seconds is stopped and raises TransientError, to be asked again.
+    The SDK's own read timeout doesn't catch it: the API's keep-alive pings count as reading. In the
+    tool-use benchmark, one reply on Claude Opus 5.5 sent nothing for an hour."""
+    with manager as stream:
+        last = [time.monotonic()]
+        box: dict[str, Any] = {}
+
+        def read() -> None:
+            try:
+                for _ in stream:  # pings aren't events: only the reply itself counts
+                    last[0] = time.monotonic()
+                box["message"] = stream.get_final_message()
+            except BaseException as exc:  # raised again below, in the run's thread
+                box["error"] = exc
+
+        reader = threading.Thread(target=read, name="thunc-claude-stream", daemon=True)
+        reader.start()
+        while reader.is_alive():
+            reader.join(min(1.0, quiet))
+            if reader.is_alive() and time.monotonic() - last[0] > quiet:
+                stream.close()  # ends the read; the thread's error goes nowhere
+                raise TransientError(f"The Claude API's reply stalled: nothing arrived for {quiet:g}s.")
+        if "error" in box:
+            raise box["error"]
+        return box["message"]
 
 
 # --- the OpenAI Responses API -------------------------------------------------------------------
