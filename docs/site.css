@@ -95,6 +95,12 @@ th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-top: 
 th { font: 500 11.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); border-top: 0; background: var(--sunk); }
 td code { white-space: nowrap; }
 td.wrap code { white-space: normal; }
+td.nowrap { white-space: nowrap; }
+
+/* changelog */
+.release h2 { display: flex; align-items: center; gap: 10px; }
+.release h2 .pill { font-size: 11px; padding: 4px 8px; }
+.release-meta { font: 13px var(--mono); color: var(--muted); margin-top: -4px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chips span { font: 500 14px var(--mono); padding: 7px 12px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line); }
 .gif { border-radius: 10px; border: 1px solid var(--line); box-shadow: 0 18px 50px #00000022; }
