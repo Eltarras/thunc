@@ -276,7 +276,7 @@ continued with `codex exec resume`, Codex's own tools stay off and its sandbox r
 run's Codex session is deleted when the run ends. With `protocol="text"` the model replies with
 JSON actions as text instead: one at a time, or several independent ones (reading three files) as
 a JSON array, which saves turns. That works on any backend, for example with a server behind
-`OPENAI_BASE_URL` that has no function calling. (Durable runs on Claude Code and Codex use it.) A reply that wraps its
+`OPENAI_BASE_URL` that has no function calling. (Durable runs on Codex use it.) A reply that wraps its
 action in prose or tool-call markup, or carries on past it, is read for its first complete action,
 and on Claude Code the step stops as soon as that action has arrived.
 The `jev` backend only answers typed questions and cannot run agents, even for a task returning

@@ -108,6 +108,7 @@ print(run.value)</code></pre></div>
 <li>File writes use intentions, before and after hashes, atomic replacement and completion receipts. Permission revocations narrow access on resume.</li>
 <li>Memory notes use stable operation identities; native reasoning, signatures and read hashes survive serialization.</li>
 <li>Runs against one workspace are serialized. A command with an uncertain outcome pauses the lane for operator reconciliation instead of running twice.</li>
+<li>On Claude Code a run makes native tool calls, in segments: one activity keeps one <code>claude -p</code> process for many model replies, and before each reply's calls are carried out it saves a checkpoint of the run and of Claude Code's session. If the worker stops or the CLI dies, the retried activity restores the session and continues it with <code>--resume</code>; the model asks again for the call that was in flight, which gets the journal entry it had, so it's replayed, waits for <code>resolve()</code>, or runs. The session is removed when the run ends. When Claude Code can't start native calls, the run goes on with the text protocol.</li>
 <li>The agent's own tools (<code>tools=</code>) are journaled like commands: the intent is recorded before the function runs and its result after, so a retried activity replays the result instead of calling it again. If a worker stops during the call, the run waits for <code>resolve()</code>, unless the tool is named in <code>retry_safe_tools=</code>, which lets it run again. A tool's description, arguments and retry marking are part of the task's fingerprint, so changing one needs a new version.</li>
 </ul>
 
@@ -124,7 +125,7 @@ await handle.resolve(
 <h2 id="boundaries">Boundaries</h2>
 <div class="callout warn"><p>Temporal history is not a workspace backup, and Temporal does not guarantee exactly-once external effects. Preserve the service database, worker journal, artifacts and workspace.</p></div>
 <ul>
-<li>Durable runs take <code>deadline_seconds=</code> instead of an agent's <code>timeout=</code>, and on Claude Code they use the text protocol, not native tool calls.</li>
+<li>Durable runs take <code>deadline_seconds=</code> instead of an agent's <code>timeout=</code>. On Codex they use the text protocol, not native tool calls.</li>
 <li>The beta supports a persistent local filesystem and same-volume restart, not arbitrary multi-host failover.</li>
 <li>Agent permissions are not an OS sandbox. Local agent execution refuses durable-owned workspaces.</li>
 <li>Submissions and final results have a 256 KiB inline budget; immutable state snapshots have a 16 MiB ceiling. Represent larger final results with application-managed artifact references. Tombstones and artifacts are retained; there is no automatic garbage collection.</li>

@@ -77,7 +77,7 @@ class Agent:
     protocol:  "native" for native tool calls, "text" for JSON actions written as text. By default
                native: the APIs' own tool calls on anthropic and openai, and an MCP server on
                claude-code and codex (falling back to text with a warning when the CLI can't start
-               it; durable runs on them use text). Use "text" with a server behind OPENAI_BASE_URL
+               it; durable runs on codex use text). Use "text" with a server behind OPENAI_BASE_URL
                that has no function calling.
     tools:     your own Python functions the agent may call, like open_issue(title: str) -> int. Each
                needs type hints and a docstring (its description); arguments are checked against the

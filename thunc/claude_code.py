@@ -34,7 +34,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from .errors import ThuncError
@@ -57,11 +57,19 @@ class ClaudeCodeConversation:
         workdir: str,
         timeout: float,
         effort: str | None = None,
+        *,
+        session: str | None = None,
+        resume: bool = False,
+        cancelled: Callable[[], bool] | None = None,
     ) -> None:
+        """`session` keeps the conversation in Claude Code's saved session with this id (a durable run
+        restores it after a crash), continued with --resume when `resume`; then `request` is the
+        message that starts the next turn. `cancelled()` true stops waiting for the model."""
         if shutil.which("claude") is None:
             raise ThuncError("`claude` was not found on PATH.")
         self.system, self.request, self.tools, self.model = system, request, list(tools), model
         self.effort = effort
+        self.session, self.resume, self.cancelled = session, resume, cancelled
         self.workdir = workdir
         self.timeout = timeout  # seconds to wait for the model's next step
         self.events: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -90,8 +98,12 @@ class ClaudeCodeConversation:
         while True:
             left = deadline - time.monotonic()
             try:
-                kind, event = self.events.get(timeout=max(left, 0.001))
+                kind, event = self.events.get(timeout=max(min(left, 1.0), 0.001))
             except queue.Empty:
+                if self.cancelled is not None and self.cancelled():
+                    raise ThuncError("the run was cancelled") from None
+                if time.monotonic() < deadline:
+                    continue
                 if not self.connected:
                     raise StartupError(f"thunc's tool server didn't connect within {self.timeout:g}s") from None
                 raise ThuncError(f"claude took no step within {self.timeout:g}s") from None
@@ -158,9 +170,13 @@ class ClaudeCodeConversation:
             "claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
             "--system-prompt-file", system_file, "--tools", "",
             "--mcp-config", json.dumps({"mcpServers": {"thunc": relay}}), "--strict-mcp-config",
-            "--allowedTools", *(PREFIX + t.name for t in self.tools), "--no-session-persistence",
+            "--allowedTools", *(PREFIX + t.name for t in self.tools),
             "--setting-sources", "",  # no CLAUDE.md, settings or hooks: the workdir can't instruct the agent
         ]  # fmt: skip
+        if self.session is None:
+            args.append("--no-session-persistence")
+        else:  # saved, so a durable run can continue it after a crash
+            args += ["--resume" if self.resume else "--session-id", self.session]
         if self.model:
             args += ["--model", self.model]
         if self.effort:

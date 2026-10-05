@@ -83,7 +83,7 @@ Still open after 0.2.3's changes:
   turns go to finding and reading the code around the bug in a 1,900-line file, not to editing. A
   larger `read` limit is the next thing to measure.
 - **The text protocol is still 4 times the cost of native calls on Claude Code**, as each turn
-  resends the whole transcript. It remains the path for durable runs on Claude Code and Codex.
+  resends the whole transcript. It remains the path for durable runs on Codex.
 - **Steps on native Codex runs count calls, not replies.** A long task can reach `max_steps`
   sooner than on Claude Code.
 

@@ -1,4 +1,13 @@
-"""All nondeterministic work lives here, outside Workflow replay."""
+"""All nondeterministic work lives here, outside Workflow replay.
+
+Agents on the claude-code backend run in segments: one activity keeps one `claude -p` process (its
+native tool calls come through the relay, see thunc/relay.py) for many model replies. Before each
+reply's calls are carried out, a checkpoint saves the engine state and Claude Code's session file.
+A retried segment (after a worker stopped, or the CLI died) restores the session and continues it
+with --resume; Claude Code marks the call that was in flight as interrupted and the model asks for
+it again. That call gets the same operation id as before, so the effect journal replays it, waits
+for resolve(), or runs it, as for any durable effect.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +16,12 @@ import contextlib
 import contextvars
 import copy
 import os
+import re
 import threading
+import uuid
 from dataclasses import asdict
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, cast
 
 import temporalio.exceptions
@@ -18,17 +30,47 @@ from temporalio.client import Client
 from temporalio.exceptions import ApplicationError
 
 from thunc import native
-from thunc.agent import _memory_section, _request
-from thunc.config import runtime_settings
+from thunc.agent import _memory_section, _request, _tool_specs
+from thunc.claude_code import ClaudeCodeConversation
+from thunc.config import runtime_settings, setting
 from thunc.core import _build_prompt, _check, _send, _sendable, system_prompt
+from thunc.errors import ThuncError
 from thunc.execution import KNOWN, AgentState
+from thunc.relay import StartupError
 from thunc.schema import describe, shorten
 from thunc.store import Store
 
 from .effects import Restricted, perform, resolve
 from .models import INLINE_LIMIT, DurableError, encoded, identifiers, plain
 from .registry import Definition, Registry
-from .storage import Attention
+from .storage import Attention, atomic
+
+# The message that continues a restored session: the turn the crash cut off.
+RESUMED = (
+    "Your session was interrupted and has been restored. Carry on with the task with your tools, "
+    "and repeat any call whose result you didn't get."
+)
+
+
+def claude_home() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser()
+
+
+def session_path(workdir: str, session: str) -> Path:
+    """Where Claude Code keeps the session it runs in `workdir`: an existing file wherever it is, or
+    the folder Claude Code names after the working directory."""
+    found = sorted((claude_home() / "projects").glob(f"*/{session}.jsonl"))
+    if found:
+        return found[0]
+    return claude_home() / "projects" / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(workdir)) / f"{session}.jsonl"
+
+
+def forget_session(path: str) -> None:
+    """Remove a finished run's Claude Code session, and its folder if nothing else is in it."""
+    with contextlib.suppress(OSError):
+        os.unlink(path)
+    with contextlib.suppress(OSError):
+        os.rmdir(os.path.dirname(path))
 
 
 @contextlib.contextmanager
@@ -167,6 +209,9 @@ class Activities:
             )
             return {"resolved": operation}
         if action == "record":
+            pointer = self.storage.effect(request["id"] + "/segment")
+            if pointer:  # a run in Claude Code segments: its saved session isn't needed any more
+                forget_session(pointer[1]["path"])
             if len(encoded(message["result"])) > INLINE_LIMIT:
                 raise ValueError("Final result exceeds 256 KiB; return a small artifact reference instead")
             self.storage.finish(request["id"], message["result"])
@@ -179,6 +224,8 @@ class Activities:
         state["retries"] += activity.info().attempt - 1
         if action == "turn":
             return self.turn(definition, state)
+        if action == "segment":
+            return self.segment(definition, state)
         if action == "tool":
             return self.tool(definition, state)
         if action == "validate":
@@ -190,7 +237,13 @@ class Activities:
             "ref": self.storage.put(state),
             "next": action,
             "turns": state["agent"]["turns"],
-            "attempt_seconds": max(150, state.get("command_timeout", 120) + 30) if action == "tool" else 150,
+            "attempt_seconds": (
+                state["request"]["deadline_seconds"] + 60  # a segment may run for the whole run
+                if action == "segment"
+                else max(150, state.get("command_timeout", 120) + 30)
+                if action == "tool"
+                else 150
+            ),
             **extra,
         }
 
@@ -231,6 +284,12 @@ class Activities:
                     max_steps=agent.max_steps,
                     repairs=agent.retries,
                 )
+                if agent._mcp() and agent.backend == "claude-code":  # native calls, in segments
+                    state.update(
+                        mode="segments",
+                        fixed=agent._fixed_prompt(followed, True),
+                        fixed_text=agent._fixed_prompt(followed, False),  # if Claude Code can't start them
+                    )
                 conversation = self.conversation(definition, state, restore=False)
                 state["conversation"] = native.snapshot(conversation)
             if not agent:
@@ -238,7 +297,7 @@ class Activities:
                 state["original_text"] = state["text"]
                 state["system"] = system_prompt(definition.options.get("system"))
                 state["max_steps"] = definition.options["retries"] + 1
-            result = self.save(state, "turn")
+            result = self.save(state, "segment" if state.get("mode") == "segments" else "turn")
             self.storage.save_effect(key, request["id"], "done", {"result": result})
             return result
 
@@ -342,6 +401,129 @@ class Activities:
             state["conversation"] = native.snapshot(conversation)
             return self.save(state, "turn")
         return self.save(state, "tool")
+
+    def segment(self, definition: Definition, state: dict[str, Any]) -> dict[str, Any]:
+        """Run the agent on Claude Code's native calls until it finishes or an effect needs resolve(),
+        from the latest checkpoint, continuing its saved session if it has one (see the module doc)."""
+        agent = definition.agent
+        assert agent is not None
+        pointer = self.storage.effect(state["id"] + "/segment")
+        if pointer:  # the latest checkpoint: a retry, or the segment after a resolve()
+            retries = state["retries"]  # counted for this attempt, after the checkpoint was saved
+            state = self.storage.get(pointer[1]["ref"])
+            state["retries"] = max(state["retries"], retries)
+        engine = AgentState.from_json(state["agent"])
+        resume = bool(state.get("session_text"))
+        if not resume:
+            state["session_id"] = str(uuid.uuid4())
+        path = session_path(agent.workdir, state["session_id"])
+        if resume:
+            atomic(path, state["session_text"].encode("utf-8"))
+        permissions = Restricted(state["permissions"], agent.permissions.written)
+        returns = definition.spec.returns
+        ensure = definition.function.__dict__["__thunc_ensure__"]
+        known = {*KNOWN, *agent.custom}
+        conversation = ClaudeCodeConversation(
+            state["fixed"] + state["memory"],
+            RESUMED if resume else _request(definition.spec.instructions, state["inputs"], returns),
+            _tool_specs(state["offered"], returns, agent.custom, permissions.may("shell")),
+            agent.model,
+            agent.workdir,
+            setting("timeout"),
+            agent.effort,
+            session=state["session_id"],
+            resume=resume,
+            cancelled=activity.is_cancelled if activity.in_activity() else None,
+        )
+
+        def checkpoint(engine_state: dict[str, Any]) -> dict[str, Any]:
+            """Save the engine as it was before this reply, with the session as the CLI has written it."""
+            text = path.read_text(encoding="utf-8") if path.exists() else ""
+            text = text[: text.rfind("\n") + 1]  # a line still being written isn't part of it
+            saved = {**copy.deepcopy(state), "agent": engine_state, "session_text": text}
+            ref = self.storage.put(saved)
+            body = {"ref": ref, "session_id": state["session_id"], "path": str(path)}
+            self.storage.save_effect(state["id"] + "/segment", state["id"], "done", body)
+            return saved
+
+        saved = state
+        try:
+            while True:
+                before = engine.to_json()
+                engine.begin_turn(state["max_steps"], definition.name)
+                try:
+                    reply = conversation.next()
+                except StartupError as exc:
+                    if agent.protocol is not None or engine.turns > 1 or resume:
+                        raise
+                    # Claude Code can't run thunc's tools: this run goes on with the text protocol.
+                    state.update(mode="text", fixed=state["fixed_text"], agent=before, startup_error=str(exc))
+                    return self.save(state, "turn")
+                except ThuncError as exc:  # the CLI died or stalled: a retry continues from the checkpoint
+                    raise ApplicationError(
+                        f"Claude Code segment interrupted: {shorten(str(exc), 300)}", type="SegmentInterrupted"
+                    ) from None
+                if reply.same_turn:
+                    engine.same_turn()  # more calls of the reply already counted
+                elif reply.calls:
+                    saved = checkpoint(before)
+                if not engine.receive(reply):
+                    conversation.nudge(reply)
+                    continue
+                while (call := engine.pending()) is not None:
+                    outcome = engine.check(call, returns, ensure, state["repairs"], definition.name, known)
+                    if outcome.finished:
+                        state["agent"] = engine.to_json()
+                        state["value"] = plain(outcome.value)
+                        conversation.close()
+                        forget_session(str(path))
+                        return self.save(state, "finish", result=self.record(state))
+                    if outcome.error:
+                        raise outcome.error
+                    if outcome.output is None:
+                        operation = self.operation(state["id"], engine, call)
+                        shield = (
+                            activity.shield_thread_cancel_exception()  # the receipt is saved before a cancel lands
+                            if activity.in_activity()
+                            else contextlib.nullcontext()
+                        )
+                        try:
+                            with shield:
+                                result = perform(self.storage, definition, state, asdict(call), operation)
+                        except Attention as exc:
+                            # Resolved, the same reply is asked for again from the checkpoint.
+                            return self.save(
+                                saved, "attention", operation_id=operation, reason=str(exc), resume="segment"
+                            )
+                        state["seen"].update(result.get("seen", {}))
+                        state["files_changed"] = list(
+                            dict.fromkeys([*state["files_changed"], *result.get("changed", [])])
+                        )
+                        state["commands"].extend(result.get("commands", []))
+                        output, denied = result["output"], result["denied"]
+                    else:
+                        output, denied = outcome.output, False
+                    engine.done(call, output, denied)
+                    if engine.operations > 4096:
+                        raise ValueError("Agent exceeded 4096 tool operations")
+                conversation.results(engine.results_to_send(state["max_steps"]))
+                state["agent"] = engine.to_json()
+        finally:
+            conversation.close()
+
+    def operation(self, run: str, engine: AgentState, call: native.Call) -> str:
+        """The journal id of a call: from the engine's count, so the call the model asks for again after
+        a resume gets the id it had. If that id holds a different call (the model chose otherwise this
+        time), the call gets an id of its own; the old one's effect stays as the journal has it."""
+        base = f"{run}/{engine.turns}/{engine.operations}"
+        operation, n = base, 0
+        while (previous := self.storage.effect(operation)) is not None:
+            recorded = previous[1].get("call") or {}
+            if (recorded.get("tool"), recorded.get("args")) == (call.tool, call.args):
+                break
+            n += 1
+            operation = f"{base}.{n}"
+        return operation
 
     def record(self, state: dict[str, Any]) -> dict[str, Any]:
         return {

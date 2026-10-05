@@ -26,6 +26,14 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Added
 
+- **Durable runs on Claude Code make native tool calls.** A run goes in segments: one activity keeps
+  one `claude -p` process for many model replies, and before each reply's calls are carried out it
+  saves a checkpoint of the run and of Claude Code's session. If the worker stops or the CLI dies,
+  the retried activity restores the session and continues it with `--resume`; Claude Code marks the
+  call that was in flight as interrupted, the model asks for it again, and it gets the journal entry
+  it had, so it's replayed, waits for `resolve()`, or runs (one the model doesn't ask for again
+  keeps its entry). The session is removed when the run ends. When Claude Code can't start native
+  calls, the run goes on with the text protocol. Runs already in progress keep the text protocol.
 - **Durable agents can have `tools=`.** Each call of one of the agent's own functions is journaled
   like a command: the intent is recorded before it runs and its result after, so a retried activity
   replays the result instead of calling it again, and a call interrupted by a worker stopping waits
@@ -66,7 +74,7 @@ All notable changes to thunc. The full notes for each release are on the
   is still sent back, as before. A reply read this way runs, but its results carry a note to reply
   with the JSON action alone: without it, a model that slipped into markup was never corrected, and
   on Sonnet 5.5 fell into repeating empty markup until the step timed out.
-  This is the text protocol on Codex, `protocol="text"`, durable runs on Claude Code, and Claude
+  This is the text protocol on Codex, `protocol="text"`, durable runs on Codex, and Claude
   Code's fallback from native calls.
 - **A text-protocol step on Claude Code stops once its action is complete.** The reply is streamed
   (`--output-format stream-json --include-partial-messages`) and the CLI is stopped as soon as a

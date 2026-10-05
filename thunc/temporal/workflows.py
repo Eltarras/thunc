@@ -103,7 +103,7 @@ class AgentWorkflow:
                     break
                 if progress["next"] == "attention":
                     await self.attention(progress["operation_id"], progress["reason"])
-                    progress["next"] = "tool"
+                    progress["next"] = progress.get("resume", "tool")  # a Claude Code segment, or the tool step
                     continue
                 self.state = {"status": "running", "steps": progress.get("turns", 0)}
                 self.active = asyncio.create_task(
