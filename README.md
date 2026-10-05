@@ -273,7 +273,9 @@ text protocol below instead, with a warning, and so do later runs in the process
 `protocol="native"` fails instead. On Codex the model replies with JSON actions as text: one at a
 time, or several independent ones (reading three files) as a JSON array, which saves turns.
 `protocol="text"` uses that way on any backend, for example with a server behind `OPENAI_BASE_URL`
-that has no function calling. (Durable runs on Claude Code use it too.)
+that has no function calling. (Durable runs on Claude Code use it too.) A reply that wraps its
+action in prose or tool-call markup, or carries on past it, is read for its first complete action,
+and on Claude Code the step stops as soon as that action has arrived.
 The `jev` backend only answers typed questions and cannot run agents, even for a task returning
 `bool` or `Literal[...]`. An agent run using it raises `ThuncError` before creating any run files
 or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.

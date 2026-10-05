@@ -2,7 +2,10 @@
 
 - TextConversation works on text backends: the model replies with JSON actions as text (one, or
   an array of independent ones), and the whole transcript is sent again each turn (the CLI
-  backends keep no conversation), so every action saved by batching saves a resend.
+  backends keep no conversation), so every action saved by batching saves a resend. Models trained
+  for native tool calls often wrap the action in prose or tool-call markup, or carry on past it with
+  results they make up; the first complete action is read, and on Claude Code the step stops as
+  soon as it has arrived.
 - AnthropicConversation and OpenAIConversation use the APIs' own tool calls: tools are declared
   with JSON Schemas, the model can call several at once, and the conversation grows by appending.
 
@@ -13,11 +16,13 @@ back what its calls did, and nudge() when a reply had no usable call.
 from __future__ import annotations
 
 import json
+import re
 import typing
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from . import tools as builtin_tools
 from .backends import _FALLBACK_MODELS, DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL, sdk_client
 from .config import resolve_backend, setting
 from .core import _send, _sendable
@@ -107,7 +112,9 @@ class TextConversation:
         timeout = setting("timeout")
         if resolve_backend(self.backend) in CLI_BACKENDS:  # a step that hangs is retried sooner (see agent.py)
             timeout = min(timeout, CLI_STEP_TIMEOUT)
-        answer = _send(self._transcript(), self.system, self.backend, self.model, timeout, self.effort)
+        # On Claude Code the reply is streamed and the step ends once an action is complete.
+        until = _complete if resolve_backend(self.backend) == "claude-code" else None
+        answer = _send(self._transcript(), self.system, self.backend, self.model, timeout, self.effort, until)
         try:
             calls = actions(answer, self.names)
         except ValueError as problem:
@@ -137,8 +144,22 @@ MAX_ACTIONS = 16  # in one text-protocol reply; Temporal's limit per reply is hi
 def actions(answer: str, names: Sequence[str]) -> list[Call]:
     """A text-protocol reply as its calls: one JSON action, or a JSON array of them, carried out in
     order. Raises ValueError, with a reason the model can act on, for a reply with no usable call. In
-    an array, an action that isn't valid becomes a call with a problem: it fails, the others run."""
-    value = parse(answer, dict[str, Any] | list[Any])  # reads code fences and <think> blocks like any answer
+    an array, an action that isn't valid becomes a call with a problem: it fails, the others run.
+
+    A reply that isn't only the action is read too: the first complete action in it, whatever prose,
+    code fence or made-up results surround it (literal newlines in its strings accepted), or else
+    tool calls written as <invoke name="..."> markup."""
+    try:
+        value = parse(answer, dict[str, Any] | list[Any])  # reads code fences and <think> blocks like any answer
+    except ValueError as problem:
+        found = first_action(answer)
+        invoked = _invoked(answer) if found is None else None
+        if found is not None:
+            value = found[0]
+        elif invoked:
+            value = invoked[0] if len(invoked) == 1 else invoked
+        else:
+            raise problem from None
     if isinstance(value, dict):
         return [Call(None, *_action(value, names))]
     if not value:
@@ -161,6 +182,55 @@ def actions(answer: str, names: Sequence[str]) -> list[Call]:
                 )
             )
     return calls
+
+
+_ACTION_START = re.compile(r'(\[\s*)?\{\s*"tool"\s*:')
+_INVOKE = re.compile(r'<invoke name="([^"<>]+)">(.*?)</invoke>', re.DOTALL)
+_PARAMETER = re.compile(r'<parameter name="([^"<>]+)">(.*?)</parameter>', re.DOTALL)
+
+
+def first_action(text: str, final: bool = True) -> tuple[Any, int] | None:
+    """The first complete action (an object with a "tool"), or array of them, in `text`, and where
+    it ends; None if there is none. Literal newlines in its strings are accepted, as models write
+    file contents. While the reply is still arriving (final=False), an array that has begun is
+    waited for rather than read as its first action."""
+    decoder = json.JSONDecoder(strict=False)
+    for match in _ACTION_START.finditer(text):
+        try:
+            value, end = decoder.raw_decode(text, match.start())
+        except (ValueError, RecursionError):
+            if match.group(1) and not final:
+                return None
+            continue
+        items = value if isinstance(value, list) else [value]
+        if items and all(isinstance(item, dict) and isinstance(item.get("tool"), str) for item in items):
+            return value, end
+    return None
+
+
+def _complete(reply: str) -> bool:
+    """Whether a reply still arriving holds a complete action: the step can stop there."""
+    return first_action(reply, final=False) is not None
+
+
+def _invoked(text: str) -> list[dict[str, Any]]:
+    """Tool calls written as markup, <invoke name="read"><parameter name="path">a.py</parameter>
+    </invoke>, as actions. A built-in tool's text arguments are taken as they are; its other
+    arguments, and a custom tool's, are read as JSON where they parse (5, true, a list)."""
+    found = []
+    for tool, body in _INVOKE.findall(text):
+        kinds = builtin_tools.TOOLS[tool][1] if tool in builtin_tools.TOOLS else {}
+        args: dict[str, Any] = {}
+        for name, raw in _PARAMETER.findall(body):
+            if tool == "finish" or kinds.get(name, (None,))[0] is str:
+                args[name] = raw  # finish reads a value written as text against the task's type itself
+                continue
+            try:
+                args[name] = json.loads(raw)
+            except ValueError:
+                args[name] = raw
+        found.append({"tool": tool, "args": args})
+    return found
 
 
 def _action(obj: Any, names: Sequence[str]) -> tuple[str, dict[str, Any]]:

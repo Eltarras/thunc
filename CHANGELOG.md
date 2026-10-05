@@ -36,6 +36,20 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Changed
 
+- **The text protocol reads replies that aren't only the action** (finding 1 of the tool-use
+  benchmark report). Models trained for native tool calls often wrap the action in prose, a code
+  fence or `<invoke>` markup, or carry on past it with results they make up: on Sonnet 5.5, 25% of
+  text-protocol replies were sent back as "not valid JSON" with a correct action inside. Now the
+  first complete action (or array of them) in the reply is used, with literal newlines in its
+  strings accepted, and a reply written only as `<invoke name="...">` markup is read as its calls,
+  each argument in its tool's type. A reply with no action in it is still sent back, as before.
+  This is the text protocol on Codex, `protocol="text"`, durable runs on Claude Code, and Claude
+  Code's fallback from native calls.
+- **A text-protocol step on Claude Code stops once its action is complete.** The reply is streamed
+  (`--output-format stream-json --include-partial-messages`) and the CLI is stopped as soon as a
+  complete action has arrived, rather than left to make up the tool's result until the step times
+  out (7 of 8 replayed first steps on Sonnet ran past 120 seconds that way). A batch that has begun
+  is waited for. Plain `@thunc.function` calls on Claude Code aren't streamed.
 - **The Claude API agent path keeps runs going** (finding 7 of the tool-use benchmark report):
   - Replies are streamed with `max_tokens=64000` (was 16,000 without streaming), so a large write
     fits.

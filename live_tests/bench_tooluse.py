@@ -477,7 +477,7 @@ def _counting_run_cli(args: list[str], text: str, timeout: float) -> subprocess.
     if meter is not None:
         meter["calls"] += 1
         meter["call_seconds"].append(round(time.monotonic() - started, 2))
-        meter["prompt_chars"].append(len(text) + len(args[args.index("--system-prompt") + 1]))
+        meter["prompt_chars"].append(len(text) + _system_chars(args))
         try:
             data = json.loads(proc.stdout)
             u = data.get("usage") or {}
@@ -487,6 +487,46 @@ def _counting_run_cli(args: list[str], text: str, timeout: float) -> subprocess.
         except (ValueError, AttributeError):
             pass
     return proc
+
+
+_real_cli_events = backends._cli_events
+
+
+def _counting_cli_events(args: list[str], text: str, timeout: float, last: str, stop: Any = None) -> Any:
+    """backends._cli_events, also adding up the usage of a streamed `claude -p` step (the text
+    protocol stops it once an action is complete, so there may be no result event to read it from)."""
+    started = time.monotonic()
+    events, code, stderr = _real_cli_events(args, text, timeout, last, stop)
+    meter = getattr(_local, "meter", None)
+    if meter is not None and args[0] == "claude":
+        meter["calls"] += 1
+        meter["call_seconds"].append(round(time.monotonic() - started, 2))
+        meter["prompt_chars"].append(len(text) + _system_chars(args))
+        usage: collections.Counter[str] = collections.Counter()
+        for event, _ in events:
+            inner = event.get("event") or {}
+            if inner.get("type") == "message_start":
+                usage.update(
+                    {k: v for k, v in (inner.get("message", {}).get("usage") or {}).items() if isinstance(v, int)}
+                )
+            elif inner.get("type") == "message_delta":
+                usage["output_tokens"] += (inner.get("usage") or {}).get("output_tokens") or 0
+        result = next((e for e, _ in events if e.get("type") == "result"), None)
+        meter["early_stops"] += result is None and code is None
+        model = args[args.index("--model") + 1] if "--model" in args else ""
+        prices = _PRICES.get(model, _PRICES["claude-sonnet-5-5"])
+        for key in TOKEN_KEYS:
+            meter[key] += usage[key]
+        meter["cost"] += sum(usage[key] * price for key, price in zip(TOKEN_KEYS, prices, strict=True)) / 1e6
+    return events, code, stderr
+
+
+def _system_chars(args: list[str]) -> int:
+    """The length of the system prompt a `claude -p` call was given, on its command line or in a file."""
+    if "--system-prompt-file" in args:  # still there: claude_code removes it when it returns
+        with open(args[args.index("--system-prompt-file") + 1], encoding="utf-8") as f:
+            return len(f.read())
+    return len(args[args.index("--system-prompt") + 1]) if "--system-prompt" in args else 0
 
 
 def run_thunc(task: Task, root: str, model: str, max_steps: int, n: int, variant: str = "thunc") -> dict[str, Any]:
@@ -880,6 +920,7 @@ def main() -> None:
             report(json.load(f))
         return
     backends._run_cli = _counting_run_cli
+    backends._cli_events = _counting_cli_events
     ClaudeCodeConversation.close = _counting_close  # type: ignore[method-assign]
     harnesses = args.harness.split(",")
     if "thunc-fixed" in harnesses:
