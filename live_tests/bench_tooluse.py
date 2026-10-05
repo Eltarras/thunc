@@ -477,7 +477,9 @@ def _counting_run_cli(args: list[str], text: str, timeout: float) -> subprocess.
     if meter is not None:
         meter["calls"] += 1
         meter["call_seconds"].append(round(time.monotonic() - started, 2))
-        meter["prompt_chars"].append(len(text) + len(args[args.index("--system-prompt") + 1]))
+        # The prompt file is still there: claude_code removes it when it returns.
+        with open(args[args.index("--system-prompt-file") + 1], encoding="utf-8") as f:
+            meter["prompt_chars"].append(len(text) + len(f.read()))
         try:
             data = json.loads(proc.stdout)
             u = data.get("usage") or {}
