@@ -1,0 +1,46 @@
+name: Release notes
+
+# Run by hand (Actions > Release notes > Run workflow) with a version like 0.2.2. It writes the
+# notes in .github/release-notes/v<version>.md to that release, and sets its title to
+# "v<version> (beta)". A release that doesn't exist yet is created as a draft pre-release on the
+# commit the workflow runs from, for you to review and publish. Editing or drafting a release
+# doesn't trigger publish.yml, which runs only when you publish one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, like 0.2.2"
+        required: true
+
+permissions:
+  contents: write  # create and edit releases
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write the notes to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like 0.2.2, not '$VERSION'"
+            exit 1
+          fi
+          tag="v$VERSION"
+          notes=".github/release-notes/$tag.md"
+          if [[ ! -f "$notes" ]]; then
+            echo "::error::$notes doesn't exist; add it first"
+            exit 1
+          fi
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release edit "$tag" --title "$tag (beta)" --notes-file "$notes"
+            echo "Updated the notes of $tag."
+          else
+            gh release create "$tag" --draft --prerelease --target "$GITHUB_SHA" \
+              --title "$tag (beta)" --notes-file "$notes"
+            echo "Created $tag as a draft pre-release."
+          fi
