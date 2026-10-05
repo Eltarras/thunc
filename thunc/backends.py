@@ -316,8 +316,8 @@ def _claude_streamed(args: list[str], text: str, timeout: float, until: Callable
         if not isinstance(delta, dict) or delta.get("type") != "text_delta" or not isinstance(delta.get("text"), str):
             return False
         reply.append(delta["text"])
-        # Only a closing brace or bracket can complete an action, so the reply is checked then.
-        return ("}" in delta["text"] or "]" in delta["text"]) and until("".join(reply))
+        # Only a closing brace, bracket or tag can complete an action, so the reply is checked then.
+        return any(c in delta["text"] for c in "}]>") and until("".join(reply))
 
     events, code, stderr = _cli_events(args, text, timeout, "result", stop=done)
     bad = next((line for _, line in events if _not_utf8(line)), None)

@@ -104,3 +104,13 @@ def test_a_reply_with_no_results_gets_no_countdown():
     state = AgentState()
     state.begin_turn(1)
     assert state.results_to_send(1) == []
+
+
+def test_finish_with_other_calls_in_its_reply_is_refused_except_beside_a_note():
+    state = AgentState()
+    state.receive(Reply([Call(None, "read", {"path": "a"}), Call(None, "finish", {"value": 1})], "raw"))
+    refused = state.check(state.calls[1], int, None, 2, "t")
+    assert not refused.finished and refused.output and refused.output.startswith("error: finish wasn't run")
+    assert state.bad_finishes == 0  # not an invalid value: no repair is used up
+    state.receive(Reply([Call(None, "remember", {"note": "n"}), Call(None, "finish", {"value": 1})], "raw"))
+    assert state.check(state.calls[1], int, None, 2, "t").finished

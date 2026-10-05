@@ -301,9 +301,12 @@ def test_empty_and_oversized_batches_are_sent_back(fake, repo, reply, problem):
     assert f"error: {problem}" in fake.prompts[1] and "src/app.py" not in fake.prompts[1]
 
 
-def test_finish_in_a_batch_ends_the_run_and_skips_what_follows(fake, repo):
+def test_finish_batched_with_calls_it_hasnt_seen_waits_for_a_reply_of_its_own(fake, repo):
+    # In the tool-use benchmark a model batched [search, read, finish 0.0]: a guess, written before
+    # the read it asked for came back. finish is refused; the other calls run.
     fake.replies = [
-        batch(act("read", path="config.py"), finish(30), act("write", path="late.txt", content="x")),
+        batch(act("read", path="config.py"), finish(0), act("write", path="late.txt", content="x")),
+        batch(act("remember", note="The timeout is in config.py."), finish(30)),  # a note may go with it
     ]
 
     @thunc.Agent("a", workdir=repo, permissions=["write"]).task
@@ -312,7 +315,8 @@ def test_finish_in_a_batch_ends_the_run_and_skips_what_follows(fake, repo):
         ...
 
     assert timeout() == 30
-    assert not (repo / "late.txt").exists()
+    assert "error: finish wasn't run: call it on its own" in fake.prompts[1]
+    assert "2  TIMEOUT = 30" in fake.prompts[1] and (repo / "late.txt").exists()
 
 
 def test_max_steps_counts_replies_not_actions(fake, repo):

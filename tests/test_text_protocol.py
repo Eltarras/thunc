@@ -217,3 +217,56 @@ def test_plain_calls_on_claude_code_are_not_streamed(monkeypatch):
     thunc.configure(backend="claude-code")
     assert thunc.call("ping") == "pong"
     assert calls[0][calls[0].index("--output-format") + 1] == "json"
+
+
+# --- keeping the model to JSON --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "reply, note",
+    [
+        (f"Let me read it.\n{READ}", native.EXTRA_TEXT),
+        (invoke("read", path="config.py"), native.MARKUP),
+        (READ, None),
+    ],
+)
+def test_a_reply_read_leniently_gets_a_note_with_its_results(fake, tmp_path, reply, note):
+    # Without the note, a model that slips into markup is never corrected; in the benchmark it then
+    # repeated empty markup until the step timed out.
+    (tmp_path / "config.py").write_text("TIMEOUT = 30\n")
+    fake.replies = [reply, '{"tool": "finish", "args": {"value": 30}}']
+    agent = thunc.Agent("n", workdir=tmp_path)
+
+    @agent.task
+    def timeout() -> int:
+        """Find the timeout."""
+        ...
+
+    assert timeout() == 30
+    assert "1  TIMEOUT = 30" in fake.prompts[1]
+    if note:
+        assert f"(Note: {note})" in fake.prompts[1]
+    else:
+        assert "(Note:" not in fake.prompts[1]
+
+
+def test_repeated_markup_ends_the_step():
+    one = invoke("read")
+    assert not native._complete(one)  # it may be followed by the JSON action
+    assert native._complete(f"{one}\n\n{one}")  # repeating itself: stop
+
+
+def test_a_step_repeating_empty_markup_is_stopped(streaming_claude):
+    streaming_claude(deltas=['<invoke name="read">\n</invoke>\n\n'] * 200, pause=0.01, linger=30)
+    started = time.monotonic()
+    answer = step()
+    assert time.monotonic() - started < 10 and answer.count("</invoke>") == 2
+    assert native.read_actions(answer, NAMES) == (
+        [native.Call(None, "read", {}), native.Call(None, "read", {})],
+        native.MARKUP,
+    )
+
+
+def test_markup_with_all_its_arguments_in_one_json_parameter():
+    answer = invoke("edit", args='{"path": "a.py", "old": "x = 1", "new": "x = 2"}')
+    assert tools_of(answer) == [("edit", {"path": "a.py", "old": "x = 1", "new": "x = 2"}, None)]

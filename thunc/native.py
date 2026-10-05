@@ -107,6 +107,7 @@ class TextConversation:
         self.system, self.request, self.names = system, request, list(names)
         self.backend, self.model, self.effort = backend, model, effort
         self.steps: list[str] = []
+        self.note: str | None = None  # for the model with the results of a reply read leniently
 
     def next(self) -> Reply:
         timeout = setting("timeout")
@@ -116,15 +117,18 @@ class TextConversation:
         until = _complete if resolve_backend(self.backend) == "claude-code" else None
         answer = _send(self._transcript(), self.system, self.backend, self.model, timeout, self.effort, until)
         try:
-            calls = actions(answer, self.names)
+            calls, self.note = read_actions(answer, self.names)
         except ValueError as problem:
             return Reply([], answer, str(problem))
         return Reply(calls, answer)
 
     def results(self, results: Sequence[tuple[Call, str, bool]]) -> None:
-        for call, output, _ in results:
+        for n, (call, output, _) in enumerate(results, start=1):
             shown = json.dumps({"tool": call.tool, "args": call.args}, ensure_ascii=False)
+            if n == len(results) and self.note:  # the run goes on, but the model is told to keep to JSON
+                output = f"{output}\n\n(Note: {self.note})"
             self.steps.append(_step(len(self.steps) + 1, shown, output))
+        self.note = None
 
     def nudge(self, reply: Reply) -> None:
         self.steps.append(
@@ -141,25 +145,42 @@ class TextConversation:
 MAX_ACTIONS = 16  # in one text-protocol reply; Temporal's limit per reply is higher (64)
 
 
+# Told to the model with the results of a reply that wasn't only its action. Without it, a model
+# that slips into tool-call markup is never corrected, and can fall into repeating empty markup.
+EXTRA_TEXT = "Your reply had text besides the action, and only its first action was used. Reply with the action alone."
+MARKUP = (
+    "Your reply was tool-call markup, which this program reads only as well as it can. Write each action "
+    'as JSON instead, like {"tool": "read", "args": {"path": "README.md"}}, and nothing else.'
+)
+
+
 def actions(answer: str, names: Sequence[str]) -> list[Call]:
     """A text-protocol reply as its calls: one JSON action, or a JSON array of them, carried out in
     order. Raises ValueError, with a reason the model can act on, for a reply with no usable call. In
-    an array, an action that isn't valid becomes a call with a problem: it fails, the others run.
+    an array, an action that isn't valid becomes a call with a problem: it fails, the others run."""
+    return read_actions(answer, names)[0]
 
-    A reply that isn't only the action is read too: the first complete action in it, whatever prose,
-    code fence or made-up results surround it (literal newlines in its strings accepted), or else
-    tool calls written as <invoke name="..."> markup."""
+
+def read_actions(answer: str, names: Sequence[str]) -> tuple[list[Call], str | None]:
+    """actions(), and a note for the model when the reply wasn't only the action but was read anyway:
+    the first complete action in it, whatever prose, code fence or made-up results surround it
+    (literal newlines in its strings accepted), or else tool calls written as <invoke> markup."""
+    note = None
     try:
         value = parse(answer, dict[str, Any] | list[Any])  # reads code fences and <think> blocks like any answer
     except ValueError as problem:
         found = first_action(answer)
         invoked = _invoked(answer) if found is None else None
         if found is not None:
-            value = found[0]
+            value, note = found[0], EXTRA_TEXT
         elif invoked:
-            value = invoked[0] if len(invoked) == 1 else invoked
+            value, note = (invoked[0] if len(invoked) == 1 else invoked), MARKUP
         else:
             raise problem from None
+    return _calls(value, names), note
+
+
+def _calls(value: Any, names: Sequence[str]) -> list[Call]:
     if isinstance(value, dict):
         return [Call(None, *_action(value, names))]
     if not value:
@@ -209,8 +230,10 @@ def first_action(text: str, final: bool = True) -> tuple[Any, int] | None:
 
 
 def _complete(reply: str) -> bool:
-    """Whether a reply still arriving holds a complete action: the step can stop there."""
-    return first_action(reply, final=False) is not None
+    """Whether a reply still arriving holds a complete action, so the step can stop there: a JSON
+    action, or two blocks of tool-call markup (one may be followed by the JSON action; more are
+    usually the model repeating itself, which it would do until the step times out)."""
+    return first_action(reply, final=False) is not None or len(_INVOKE.findall(reply)) >= 2
 
 
 def _invoked(text: str) -> list[dict[str, Any]]:
@@ -229,6 +252,8 @@ def _invoked(text: str) -> list[dict[str, Any]]:
                 args[name] = json.loads(raw)
             except ValueError:
                 args[name] = raw
+        if set(args) == {"args"} and isinstance(args["args"], dict) and "args" not in kinds:
+            args = args["args"]  # all its arguments as one JSON object, as in a text-protocol action
         found.append({"tool": tool, "args": args})
     return found
 

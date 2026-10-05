@@ -17,6 +17,8 @@ Harnesses, on the same model:
                through an MCP server), permissions ["write", "run"] so nothing is held back by rules.
 - thunc-text:  the same with protocol="text" (one JSON action per reply as text).
 - thunc-shell: the default, with permissions ["write", "shell"]: commands run in a shell.
+- thunc-api:   the default on the anthropic backend (the Claude API's own tool calls). Needs
+               ANTHROPIC_API_KEY, and is billed to it.
 - thunc-fixed: the text protocol with two fixes patched in (lenient reading of the first action,
                stopping the CLI once an action has arrived). A prototype; it
                patches the text protocol for the whole process, so run it on its own.
@@ -51,6 +53,7 @@ from typing import Any
 import thunc
 from thunc import backends
 from thunc.claude_code import ClaudeCodeConversation
+from thunc.native import AnthropicConversation
 from thunc.schema import describe, parse
 
 PY = sys.executable
@@ -533,13 +536,13 @@ def run_thunc(task: Task, root: str, model: str, max_steps: int, n: int, variant
     meter = collections.Counter()  # type: ignore[var-annotated]
     meter["call_seconds"], meter["prompt_chars"] = [], []  # type: ignore[assignment]
     _local.meter = meter
-    protocol, permissions = THUNC_VARIANTS[variant]
+    protocol, permissions, backend = THUNC_VARIANTS[variant]
     agent = thunc.Agent(
         f"bench-{task.name}-{n}-{os.getpid()}-{threading.get_ident()}",
         workdir=root,
         permissions=permissions,
         protocol=protocol,
-        backend="claude-code",
+        backend=backend,
         model=model,
         max_steps=max_steps,
         timeout=1200,
@@ -582,6 +585,23 @@ def _counting_close(self: Any) -> None:
 
 
 _real_close = ClaudeCodeConversation.close
+_real_create = AnthropicConversation._create
+# $/M tokens on the Claude API: input, output, cache read, cache write (5-minute entries: 1.25x input)
+_API_PRICES = {"claude-sonnet-5-5": (2.0, 10.0, 0.20, 2.5), "claude-opus-5-5": (4.0, 20.0, 0.20, 5.0)}
+
+
+def _counting_create(self: Any) -> Any:
+    """AnthropicConversation._create, also adding up the tokens and cost of each API reply."""
+    response = _real_create(self)
+    meter = getattr(_local, "meter", None)
+    if meter is not None:
+        prices = _API_PRICES.get(self.model, _API_PRICES["claude-sonnet-5-5"])
+        usage = {key: getattr(response.usage, key, 0) or 0 for key in TOKEN_KEYS}
+        meter["calls"] += 1
+        meter["cost"] += sum(usage[key] * price for key, price in zip(TOKEN_KEYS, prices, strict=True)) / 1e6
+        for key in TOKEN_KEYS:
+            meter[key] += usage[key]
+    return response
 
 
 def _retyped(agent: thunc.Agent, task: Task) -> Callable[..., Any]:
@@ -822,12 +842,13 @@ def _claude_stream(args: list[str], prompt: str, cwd: str) -> dict[str, Any]:
     }
 
 
-# thunc variants: (protocol, permissions)
+# thunc variants: (protocol, permissions, backend)
 THUNC_VARIANTS = {
-    "thunc": (None, ["write", "run"]),
-    "thunc-text": ("text", ["write", "run"]),
-    "thunc-shell": (None, ["write", "shell"]),
-    "thunc-fixed": ("text", ["write", "run"]),
+    "thunc": (None, ["write", "run"], "claude-code"),
+    "thunc-text": ("text", ["write", "run"], "claude-code"),
+    "thunc-shell": (None, ["write", "shell"], "claude-code"),
+    "thunc-fixed": ("text", ["write", "run"], "claude-code"),
+    "thunc-api": (None, ["write", "run"], "anthropic"),
 }
 HARNESSES = {
     **{name: functools.partial(run_thunc, variant=name) for name in THUNC_VARIANTS},
@@ -922,6 +943,7 @@ def main() -> None:
     backends._run_cli = _counting_run_cli
     backends._cli_events = _counting_cli_events
     ClaudeCodeConversation.close = _counting_close  # type: ignore[method-assign]
+    AnthropicConversation._create = _counting_create  # type: ignore[method-assign]
     harnesses = args.harness.split(",")
     if "thunc-fixed" in harnesses:
         if len(harnesses) > 1:
