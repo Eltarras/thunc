@@ -51,6 +51,16 @@ All notable changes to thunc. The full notes for each release are on the
   - A lost connection, a rate limit or a server error on the Claude and OpenAI APIs is retried as a
     step, like the CLI backends' errors, instead of ending the run.
 
+### Fixed
+
+- **A large system prompt no longer stops the `claude-code` backend from starting.** It went on the
+  command line, so large `follow=` files and memory could pass the operating system's limit on its
+  length (128 KB for one argument on Linux, 32,767 characters for the whole line on Windows), and
+  starting `claude` failed with a raw `OSError: Argument list too long`. The prompt now goes in a
+  temporary file (`--system-prompt-file`), as it already did for agents' native calls and on Codex.
+  This covers `@thunc.function` and `thunc.call`, agents on the text protocol, and durable runs on
+  Claude Code. A command line that is still too long raises a `ThuncError` that gives its size.
+
 ## 0.2.2 (beta)
 
 **Agents that use their tools reliably, and faster calls.** Agents on Claude Code make native tool

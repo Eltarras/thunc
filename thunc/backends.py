@@ -6,7 +6,8 @@
 - codex:       headless `codex exec` using the local Codex login (cheap testing).
 
 The API backends send `system` as the API's system prompt. The CLIs replace their own built-in
-prompt with it: `claude -p --system-prompt`, and Codex's `model_instructions_file` setting.
+prompt with it, read from a file: `claude -p --system-prompt-file`, and Codex's `model_instructions_file`
+setting. On the command line, a long prompt could pass the operating system's limit on its length.
 
 Typed backends answer a typed question instead of writing text, so they take the instructions,
 inputs and return type separately: (instructions, inputs, returns, *, system, timeout).
@@ -18,6 +19,7 @@ They return the answer as JSON text, so parsing, ensure=, the cache and the trac
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import queue
@@ -27,7 +29,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any, Literal, TypeVar, cast, get_args, get_origin
 
 from .errors import ThuncError, TransientError, transient_status
@@ -179,6 +181,33 @@ def _run_cli(args: list[str], text: str, timeout: float) -> subprocess.Completed
         )
     except subprocess.TimeoutExpired as exc:
         raise TransientError(f"`{exe}` timed out after {timeout:.0f}s.") from exc
+    except OSError as exc:
+        raise _start_error(exc, args) from None
+
+
+def _start_error(exc: OSError, args: list[str]) -> Exception:
+    """The error to raise for a CLI that couldn't be started: a ThuncError for a command line over the
+    operating system's limit (E2BIG; on Windows, error 206), the OSError itself otherwise."""
+    if exc.errno == errno.E2BIG or getattr(exc, "winerror", None) == 206:
+        size = sum(len(arg) + 1 for arg in args)
+        return ThuncError(f"`{args[0]}` couldn't be started: its command line is too long ({size} characters).")
+    return exc
+
+
+@contextlib.contextmanager
+def _prompt_file(system: str) -> Iterator[str]:
+    """The system prompt in a temporary file, for a CLI that reads it from one, and the file's absolute
+    path (the CLIs run in a temp dir). On the command line, a prompt with large followed files or
+    memory could pass the operating system's limit on its length: 32,767 characters on Windows,
+    128 KB for one argument on Linux. Removed afterwards, after an error or timeout too."""
+    fd, path = tempfile.mkstemp(suffix=".md")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as f:  # no lone surrogates
+            f.write(system)
+        yield path
+    finally:
+        with contextlib.suppress(OSError):  # gone, or not a file any more: nothing to clean up
+            os.unlink(path)
 
 
 Events = list[tuple[dict[str, Any], str]]  # (event, the line it was printed as)
@@ -205,6 +234,9 @@ def _cli_events(args: list[str], text: str, timeout: float, last: str) -> tuple[
             errors="surrogateescape",
             cwd=tempfile.gettempdir(),
         )
+    except OSError as exc:
+        stderr.close()
+        raise _start_error(exc, args) from None
     except BaseException:
         stderr.close()
         raise
@@ -253,25 +285,26 @@ def _cli_events(args: list[str], text: str, timeout: float, last: str) -> tuple[
 def claude_code(
     text: str, *, system: str, model: str | None, api_key: str | None, timeout: float, effort: str | None = None
 ) -> str:
-    args = [
-        "claude",
-        "-p",
-        "--output-format",
-        "json",
-        "--tools",
-        "",  # plain answer only; no file or shell access
-        "--strict-mcp-config",  # no MCP servers
-        "--setting-sources",
-        "",  # no CLAUDE.md, settings or hooks from the user's Claude Code setup
-        "--system-prompt",
-        system,  # replaces the large default coding prompt
-        "--no-session-persistence",
-    ]
-    if model:
-        args += ["--model", model]
-    if effort:
-        args += ["--effort", effort]
-    proc = _run_cli(args, text, timeout)
+    with _prompt_file(system) as system_path:
+        args = [
+            "claude",
+            "-p",
+            "--output-format",
+            "json",
+            "--tools",
+            "",  # plain answer only; no file or shell access
+            "--strict-mcp-config",  # no MCP servers
+            "--setting-sources",
+            "",  # no CLAUDE.md, settings or hooks from the user's Claude Code setup
+            "--system-prompt-file",
+            system_path,  # replaces the large default coding prompt
+            "--no-session-persistence",
+        ]
+        if model:
+            args += ["--model", model]
+        if effort:
+            args += ["--effort", effort]
+        proc = _run_cli(args, text, timeout)
     if _not_utf8(proc.stdout):
         raise ThuncError(f"claude printed output that isn't UTF-8: {_printable(proc.stdout)[-500:]}")
     try:
@@ -338,11 +371,8 @@ def codex(
     if effort == "max":
         raise ThuncError("The codex backend takes effort low, medium, high or xhigh, not max.")
     # codex exec has no system-prompt flag; the model_instructions_file setting replaces Codex's
-    # built-in instructions with the file's text. The path is absolute because the CLI runs in a temp dir.
-    fd, system_path = tempfile.mkstemp(suffix=".md")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(system)
-    try:
+    # built-in instructions with the file's text. Codex reads it when it starts.
+    with _prompt_file(system) as system_path:
         args = [
             "codex",
             "exec",
@@ -364,9 +394,6 @@ def codex(
             args += ["--config", f"model_reasoning_effort={json.dumps(effort)}"]
         args.append("-")  # read the prompt from stdin
         events, code, stderr = _cli_events(args, text, timeout, "turn.completed")
-    finally:
-        with contextlib.suppress(OSError):  # gone, or not a file any more: nothing to clean up
-            os.unlink(system_path)  # read when codex started
     if code is not None:  # it ended without finishing the turn
         problems = [_codex_problem(event) for event, _ in events]
         problem = next((p for p in reversed(problems) if p), None) or stderr
