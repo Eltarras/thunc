@@ -370,20 +370,22 @@ or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
 
 **How the prompt was tested.** `python -m live_tests.eval_prompts --backend anthropic` runs three
 small tasks (fix a bug, review a diff, answer a question about a repo) with three versions of the
-system prompt: bare (no working method), the default, and the task's preset. Five runs of each on
-4 October 2026:
+system prompt: bare (no working method), the default, and the task's preset. Five runs of each, on
+the Claude API on 4 October 2026 and on Claude Code on 5 October 2026:
 
-| | Claude API (Opus 5.5, native calls) | Claude Code (text protocol) |
+| | Claude API (Opus 5.5, native calls) | Claude Code (Sonnet 5.5, native calls) |
 |---|---|---|
 | Passed | 45/45: every task, every version | 45/45 |
-| Steps (bare / default / preset) | fix 4.0 / 4.0 / 4.0, review 2.0 / 2.4 / 2.8, analysis 3.0 / 3.0 / 3.0 | fix 5.2 / 6.0 / 6.0, review 2.2 / 2.0 / 3.8, analysis 4.2 / 3.8 / 4.2 |
+| Steps (bare / default / preset) | fix 4.0 / 4.0 / 4.0, review 2.0 / 2.4 / 2.8, analysis 3.0 / 3.0 / 3.0 | fix 4.0 / 4.0 / 4.0, review 2.0 / 2.0 / 2.0, analysis 3.0 / 2.8 / 2.6 |
 | Cost | $0.76 for all 45 runs (cache reads were 257,553 of 312,294 input tokens) | |
 
 Every version passed every time, so these tasks are too easy to tell the versions apart: the result
-says the prompt does no harm, not that it helps. The one difference is that the review preset reads
-more of the code before answering. Each review flagged the renamed function as a minor issue
-(outside code importing the old name breaks), never as blocking. Harder tasks are needed to measure
-more.
+says the prompt does no harm, not that it helps. On the API, the review preset read more of the code
+before answering, and each review flagged the renamed function as a minor issue (outside code
+importing the old name breaks), never as blocking. On Claude Code, only the review preset flagged
+it (2 of 5 runs, as minor). On the text protocol these tasks took more steps (fix 5.2 / 6.0 / 6.0
+on Claude Code before native calls). For harder tasks that do tell harnesses apart, see the tool-use
+benchmark in `live_tests/bench_tooluse.py` and its report.
 
 ## Durable agents with Temporal
 

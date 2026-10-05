@@ -153,6 +153,18 @@ no reliable way to tell them from a real one. Only an empty reply is retried.
 
 **Open: agents and durable runs.**
 
+- Durable runs on `claude-code` use the JSON text protocol, not native calls: the MCP path keeps
+  one CLI process for the whole run, which a durable step can't snapshot. The text protocol is the
+  weaker one: in `live_tests/bench_tooluse.py` on Sonnet 5.5 it passed 12 of 24 runs, and 20 of 24
+  with step retries (measured before action arrays), against 24 of 24 for native calls.
+- The `shell` permission isn't tested on Windows: its test is skipped there, so `cmd /c` has never
+  run in CI.
+- With `shell`, a file read with `cat` doesn't count as read for `edit`, which refuses until the
+  agent reads it with `read` (the no-blind-overwrite rule). Agents work around it with a short
+  `read`, at the cost of a step.
+- The agent loops on the Claude and OpenAI APIs have no live tool-use benchmark yet (only
+  `live_tests/eval_prompts.py`); their `max_tokens`, effort and stop-reason handling were reviewed
+  from the code only (`live_tests/bench_tooluse_report.md`, finding 7).
 - Durable agents can't use `tools=` yet: the effects of the program's own functions can't be
   journaled.
 - Durable runs have no garbage collection: the journal, transcript artifacts and request-ID

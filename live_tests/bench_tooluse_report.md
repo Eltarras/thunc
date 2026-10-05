@@ -88,6 +88,10 @@ integration tests couldn't run here: the network policy blocks downloading the T
 Durable runs keep the text protocol, so the change they see is the shorter CLI step timeout; the
 Temporal unit tests pass.
 
+**Check on `main` after merging the performance change** (#45, which changed the text protocol and
+the agent loop), 5 October 2026, Sonnet 5.5, 1 run of each task: thunc passed 8/8 at 9.8 s and
+$0.025 a task with no tool errors; Claude Code passed 8/8 at 13 s and $0.093.
+
 ### Still open
 
 - **Reading with the shell doesn't count for `edit`.** With the `shell` permission, the agent
