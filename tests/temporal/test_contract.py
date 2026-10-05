@@ -99,6 +99,19 @@ def test_several_edits_after_a_stale_read_change_nothing(tmp_path):
     assert result["output"].startswith("error:") and (root / "note").read_text() == "a = 1\nexternal\n"
 
 
+def test_an_edit_without_a_read_keeps_the_file_unread_for_a_later_write(tmp_path):
+    registry, item, state, root = definition(tmp_path)
+    (root / "note").write_text("a = 1\nsecret = 2\n")
+    edit = {"tool": "edit", "args": {"path": "note", "old": "a = 1", "new": "a = 9"}}
+    result = perform(registry.storage, item, state, edit, "run/1/0")
+    assert result["output"] == "edited note" and "note" not in result["seen"]
+    state["seen"] = result["seen"]
+    write = {"tool": "write", "args": {"path": "note", "content": "overwritten\n"}}
+    result = perform(registry.storage, item, state, write, "run/2/0")
+    assert result["output"].startswith("error: read 'note' with read before replacing it")
+    assert (root / "note").read_text() == "a = 9\nsecret = 2\n"
+
+
 def test_command_receipt_blocks_retry_and_resolution_delivery_is_idempotent(tmp_path):
     registry, item, state, root = definition(tmp_path)
     call = {"tool": "run", "args": {"command": "echo must-not-run"}}

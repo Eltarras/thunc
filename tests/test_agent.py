@@ -719,16 +719,45 @@ def test_a_write_tool_without_any_write_rule_is_denied(fake, repo):
     assert not (repo / "x.txt").exists()
 
 
-def test_files_must_be_read_before_they_are_changed(fake, repo):
+def test_a_file_must_be_read_before_write_replaces_it(fake, repo):
+    fake.replies = [act("write", path="config.py", content="TIMEOUT = 45\n"), finish("ok")]
+    writer(repo, "write")()
+    assert "error: read 'config.py' with read before replacing it; or change parts of it with edit" in fake.prompts[-1]
+    assert (repo / "config.py").read_text() == "NAME = 'demo'\nTIMEOUT = 30\n"
+
+
+def test_an_edit_needs_no_read_but_leaves_the_file_unread_for_write(fake, repo):
     fake.replies = [
-        act("edit", path="config.py", old="TIMEOUT = 30", new="TIMEOUT = 45"),
-        act("write", path="config.py", content="TIMEOUT = 45\n"),
+        act("edit", path="config.py", old="TIMEOUT = 30", new="TIMEOUT = 45"),  # the exact text is the guard
+        act("edit", path="config.py", old="NAME = 'demo'", new="NAME = 'app'"),
+        act("write", path="config.py", content="TIMEOUT = 1\n"),  # it never saw the whole file
+        act("read", path="config.py"),
+        act("write", path="config.py", content="TIMEOUT = 1\n"),
         finish("ok"),
     ]
     writer(repo, "write")()
-    feedback = fake.prompts[-1]
-    assert feedback.count("error: read 'config.py' before changing it") == 2
-    assert (repo / "config.py").read_text() == "NAME = 'demo'\nTIMEOUT = 30\n"
+    assert "edited config.py" in fake.prompts[1] and "edited config.py" in fake.prompts[2]
+    assert "error: read 'config.py' with read before replacing it" in fake.prompts[3]
+    assert "replaced config.py" in fake.prompts[5]
+    assert (repo / "config.py").read_text() == "TIMEOUT = 1\n"
+
+
+def test_an_edit_after_reading_with_a_shell_command(fake, repo):
+    # With the shell permission, agents often read with cat: the edit used to be refused until a read.
+    show = script(repo, "show.py", "print(open('config.py').read())")
+    fake.replies = [
+        act("run", command=show),
+        act("edit", path="config.py", old="TIMEOUT = 30", new="TIMEOUT = 45"),
+        act("write", path="config.py", content="TIMEOUT = 1\n"),
+        finish("ok"),
+    ]
+    runner(repo, "shell", "write:config.py")()
+    assert "TIMEOUT = 30" in fake.prompts[1] and "edited config.py" in fake.prompts[2]
+    assert (
+        "error: read 'config.py' with read before replacing it (output of a command doesn't count)" in (fake.prompts[3])
+    )
+    assert (repo / "config.py").read_text() == "NAME = 'demo'\nTIMEOUT = 45\n"
+    assert "Read files with read rather than cat" in fake.systems[0]
 
 
 def test_a_file_changed_on_disk_since_it_was_read_is_not_overwritten(monkeypatch, repo):

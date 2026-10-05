@@ -305,9 +305,11 @@ or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
   outside are refused, and the rules are checked on where a link really leads. Files the agent may
   not read are left out of `list` and `search`, and so is what git ignores, in a git repository
   (build output, caches, vendored code); a folder named explicitly is still listed and searched.
-- **No blind overwrites.** A file is only replaced or edited after the agent read it in the same
-  run, and only if it hasn't changed on disk since. There is no undo, so run agents that write in a
-  git repository with a clean tree, and review their changes with `git diff`.
+- **No blind overwrites.** A file is only replaced (`write`) after the agent read it with `read` in
+  the same run, and only if it hasn't changed on disk since. An `edit` needs no read, because it
+  only changes text the agent quotes exactly, but a file the agent did read must not have changed
+  since. There is no undo, so run agents that write in a git repository with a clean tree, and
+  review their changes with `git diff`.
 - **Commands** run in `workdir`, or in a folder inside it given as `cwd`. Without the `shell`
   permission there's no shell, so `&&`, pipes, `cd`, redirects and `$VARIABLES` don't work (the
   agent is told). They get a minimal environment: `PATH`, `HOME`, the locale and temp-folder

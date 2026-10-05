@@ -5,6 +5,16 @@ All notable changes to thunc. The full notes for each release are on the
 
 ## Unreleased
 
+### Behavior changes
+
+- **`edit` no longer needs the file to have been read first.** It only changes text the agent
+  quotes exactly, so it can't overwrite what the agent hasn't seen. With the `shell` permission,
+  agents often read files with `cat`, and `edit` refused them until they read the file again with
+  `read`: 7 times in 24 runs of the tool-use benchmark. A file the agent did read must still not
+  have changed on disk since, and `write` still replaces only a file read with `read` (a file
+  changed by an edit alone still counts as unread). The `run` tool's description, with `shell`, now
+  says to read files with `read`.
+
 ### Added
 
 - **`edit` can replace every occurrence, and make several changes in one call.** With
