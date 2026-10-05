@@ -1659,7 +1659,7 @@ def test_a_cli_step_has_a_shorter_time_limit(monkeypatch, repo):
 
     monkeypatch.setitem(backends.BACKENDS, "codex", cli)
     thunc.configure(backend="codex", timeout=600)
-    make_task(thunc.Agent("x", workdir=repo))()
+    make_task(thunc.Agent("x", workdir=repo, protocol="text"))()  # codex makes native calls by default
     assert seen == [native.CLI_STEP_TIMEOUT]
 
 

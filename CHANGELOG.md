@@ -7,6 +7,9 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Behavior changes
 
+- **Agents on `codex` make native tool calls**, as on Claude Code since 0.2.2 (see Added). When
+  Codex can't start them, a run falls back to the text protocol with a warning; `protocol="text"`
+  keeps the old way, and durable runs on Codex still use it.
 - **`finish` called in the same reply as other calls is refused** (except beside `remember`): its
   value can't account for results the model hasn't seen yet. The other calls run, and the model is
   told to call `finish` on its own. In the tool-use benchmark, a run on the text protocol batched
@@ -23,6 +26,13 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Added
 
+- **Native calls on `codex`**: the agent's tools are an MCP server (thunc's relay, given with
+  `-c mcp_servers.thunc.*`) that Codex calls; thunc carries out each call with its own tools,
+  permissions and run record. Each `codex exec` is a turn: one that ends without `finish` is
+  continued with `codex exec resume`, as is one that fails (twice at most). Codex's own tools and
+  your `~/.codex` config stay out and its sandbox stays read-only; only thunc's server is approved
+  to run without asking, with a tool timeout above `command_timeout`. Resuming needs the session
+  saved, so thunc deletes the run's Codex session (`codex delete --force`) when the run ends.
 - **`Agent(effort=...)`**: `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, on every backend
   (`output_config.effort` on the Claude API, `reasoning.effort` on OpenAI, `--effort` on Claude Code,
   `model_reasoning_effort` on Codex; the last two go up to `"xhigh"`). Recorded in `agent.json` only

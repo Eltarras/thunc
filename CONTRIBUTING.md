@@ -86,8 +86,9 @@ THUNC_TEMPORAL_TESTS=1 .venv/bin/pytest -c pytest-temporal.ini tests/temporal
 5. Agents work on any text backend through the JSON text protocol. For native tool calls, add a
    `Conversation` for the API in `thunc/native.py`, add the backend to `native.NATIVE`, and pick
    the class where `thunc/agent.py` builds the conversation. Test it like `tests/test_native.py`.
-   A CLI that can call MCP tools can get native calls the way Claude Code does
-   (`thunc/claude_code.py`, tested with a fake CLI in `tests/test_claude_code_agent.py`).
+   A CLI that can call MCP tools can get native calls the way Claude Code and Codex do: through the
+   relay in `thunc/relay.py` (see `thunc/claude_code.py` and `thunc/codex.py`, tested with fake CLIs
+   in `tests/test_claude_code_agent.py` and `tests/test_codex_agent.py`).
    Raise `TransientError` for failures worth asking again, so agent runs retry them.
    Agents and durable runs refuse typed backends.
 6. Run `THUNC_BACKEND=<name> .venv/bin/pytest live_tests` against the real service, and say in

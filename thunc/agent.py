@@ -9,9 +9,9 @@
 
 Each call is one run: the model calls tools one reply at a time, thunc carries the calls out and
 sends back the results, until the model calls finish with a value of the return type. On the Claude
-and OpenAI APIs the calls are the APIs' own tool calls; on claude-code they're native calls too,
-through an MCP server Claude Code starts (see claude_code.py); on codex (and with protocol="text")
-each reply is one JSON action written as text, or an array of them. See native.py. The tools: list,
+and OpenAI APIs the calls are the APIs' own tool calls; on claude-code and codex they're native calls
+too, through an MCP server the CLI starts (see relay.py, claude_code.py and codex.py); with
+protocol="text" each reply is one JSON action written as text, or an array of them. See native.py. The tools: list,
 read and search; write, edit and run where the permissions allow; and remember, which saves a note
 to the agent's memory. A step that fails for a reason asking again may fix (a timeout, a lost
 connection, a rate limit) is retried twice before the run fails.
@@ -38,7 +38,7 @@ import warnings
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from typing import Any, ParamSpec, TypeVar, overload
 
-from . import claude_code, native, profiling, tools
+from . import claude_code, codex, native, profiling, relay, tools
 from .backends import TYPED_BACKENDS
 from .config import _check_backend, resolve_backend, setting
 from .core import _plain, _render, _trace
@@ -75,9 +75,9 @@ class Agent:
     system:    replaces the opening of the agent's system prompt. thunc's working method and rules
                are always sent after it.
     protocol:  "native" for native tool calls, "text" for JSON actions written as text. By default
-               native on the anthropic, openai and claude-code backends (claude-code through an MCP
-               server, falling back to text with a warning when Claude Code can't start it; durable
-               runs on it use text), text on codex. Use "text" with a server behind OPENAI_BASE_URL
+               native: the APIs' own tool calls on anthropic and openai, and an MCP server on
+               claude-code and codex (falling back to text with a warning when the CLI can't start
+               it; durable runs on them use text). Use "text" with a server behind OPENAI_BASE_URL
                that has no function calling.
     tools:     your own Python functions the agent may call, like open_issue(title: str) -> int. Each
                needs type hints and a docstring (its description); arguments are checked against the
@@ -286,7 +286,7 @@ class Agent:
         return False
 
     def _mcp(self) -> bool:
-        """Whether a local run makes native calls through Claude Code and an MCP server (claude_code.py)."""
+        """Whether a local run makes native calls through a CLI and an MCP server (claude_code.py, codex.py)."""
         return self.protocol != "text" and resolve_backend(self.backend) in MCP_BACKENDS
 
     def tools(self) -> list[str]:
@@ -447,31 +447,44 @@ class Agent:
                 def text_protocol() -> native.Conversation:
                     return self._conversation(False, self._fixed_prompt(followed, False), memory_text, request, returns)
 
+                backend = resolve_backend(self.backend)
+                cli = "Claude Code" if backend == "claude-code" else "Codex"
+
                 def switched(reason: str) -> None:
                     session.write("fallback", protocol="text", reason=reason)
                     warnings.warn(
-                        f"Agent {self.name!r}: Claude Code couldn't run thunc's tools as native calls ({reason}); "
-                        "using the text protocol. Update the claude CLI, or pass protocol='text' to skip this.",
+                        f"Agent {self.name!r}: {cli} couldn't run thunc's tools as native calls ({reason}); "
+                        f"using the text protocol. Update the {backend.split('-')[0]} CLI, or pass protocol='text' "
+                        "to skip this.",
                         RuntimeWarning,
                         4,
                     )
 
-                if mcp and self.protocol is None and claude_code.unavailable is not None:
-                    session.write("fallback", protocol="text", reason=claude_code.unavailable)
+                if mcp and self.protocol is None and backend in relay.unavailable:
+                    session.write("fallback", protocol="text", reason=relay.unavailable[backend])
                     conversation = text_protocol()  # a run in this process already found native calls unavailable
                 elif mcp:
                     specs = _tool_specs(self.tools(), returns, self.custom, self.permissions.may("shell"))
-                    conversation = claude_code.ClaudeCodeConversation(
-                        system,
-                        request,
-                        specs,
-                        self.model or setting("model"),
-                        self.workdir,
-                        setting("timeout"),
-                        self.effort,
-                    )
+                    model = self.model or setting("model")
+                    through: relay.Native
+                    if backend == "claude-code":
+                        through = claude_code.ClaudeCodeConversation(
+                            system, request, specs, model, self.workdir, setting("timeout"), self.effort
+                        )
+                    else:
+                        through = codex.CodexConversation(
+                            system,
+                            request,
+                            specs,
+                            model,
+                            self.workdir,
+                            setting("timeout"),
+                            self.effort,
+                            tool_timeout=self.command_timeout,
+                        )
+                    conversation = through
                     if self.protocol is None:  # protocol="native" asked for native calls: no fallback
-                        conversation = claude_code.WithFallback(conversation, text_protocol, switched)
+                        conversation = relay.WithFallback(backend, through, text_protocol, switched)
                 else:
                     conversation = self._conversation(native_calls, fixed, memory_text, request, returns)
                 names = [path for path, _ in followed]
@@ -595,7 +608,7 @@ class Agent:
 
 FOLLOW_LIMIT = 50_000  # characters of one followed file put in the prompt
 FOLLOW_DEFAULT = ("AGENTS.md", "CLAUDE.md")
-MCP_BACKENDS = frozenset({"claude-code"})  # backends whose local runs make native calls through MCP
+MCP_BACKENDS = frozenset({"claude-code", "codex"})  # backends whose local runs make native calls through MCP
 STEP_RETRIES = 2  # times a step that failed with a TransientError is tried again
 RETRY_DELAY = 2.0  # seconds before the first retry; doubled for each one after
 

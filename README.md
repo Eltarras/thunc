@@ -168,8 +168,8 @@ or takes `--cache-dir`; it can't see a `configure(cache_dir=...)` in your code.
   `pip install "thunc[openai]"`. The default model is `gpt-5.5`. `OPENAI_BASE_URL` points it at
   any server that speaks the OpenAI Responses API.
 - `claude-code` and `codex` call your local CLI login, and are meant for cheap testing.
-  Both run with their own tools turned off, so the model can only answer; an agent on
-  `claude-code` gets only its thunc tools, as native calls (see Agents). `codex` also ignores
+  Both run with their own tools turned off, so the model can only answer; an agent on either
+  gets only its thunc tools, as native calls (see Agents). `codex` also ignores
   `~/.codex/config.toml` (your MCP servers, plugins, `notify` command and model settings); your
   login still works. Pick the model with `configure(model=...)` or `model=`.
 - `jev` is TypeSafe's [Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
@@ -270,10 +270,13 @@ calls are native too: the agent's tools are an MCP server that one `claude -p` p
 calls, while thunc carries out each call with its own tools, permissions and records. If Claude Code
 can't start them (an older `claude` CLI, or MCP servers turned off by a policy), the run uses the
 text protocol below instead, with a warning, and so do later runs in the process;
-`protocol="native"` fails instead. On Codex the model replies with JSON actions as text: one at a
-time, or several independent ones (reading three files) as a JSON array, which saves turns.
-`protocol="text"` uses that way on any backend, for example with a server behind `OPENAI_BASE_URL`
-that has no function calling. (Durable runs on Claude Code use it too.) A reply that wraps its
+`protocol="native"` fails instead. On Codex it's the same: each `codex exec` is a turn in which
+the model calls the agent's tools through the MCP server, a turn that ends without `finish` is
+continued with `codex exec resume`, Codex's own tools stay off and its sandbox read-only, and the
+run's Codex session is deleted when the run ends. With `protocol="text"` the model replies with
+JSON actions as text instead: one at a time, or several independent ones (reading three files) as
+a JSON array, which saves turns. That works on any backend, for example with a server behind
+`OPENAI_BASE_URL` that has no function calling. (Durable runs on Claude Code and Codex use it.) A reply that wraps its
 action in prose or tool-call markup, or carries on past it, is read for its first complete action,
 and on Claude Code the step stops as soon as that action has arrived.
 The `jev` backend only answers typed questions and cannot run agents, even for a task returning
@@ -470,6 +473,8 @@ thunc/
   runs.py        thunc.Run and AgentError: what a run did
   native.py      how a run talks to its backend: native tool calls or the text protocol
   claude_code.py native tool calls on Claude Code, through an MCP server (mcp_relay.py)
+  codex.py       native tool calls on Codex, the same way
+  relay.py       the run's end of the MCP server: the connection the calls come through
   store.py       the agent's folder: memory, settings, run records, the lock
   prompts.py     the agent's system prompt
   __main__.py    the thunc command: thunc run [--profile], thunc cache list / clear
