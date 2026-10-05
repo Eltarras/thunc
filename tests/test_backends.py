@@ -1,5 +1,6 @@
 """Backend selection, the CLI backends and the OpenAI backend (subprocess and the SDK are stubbed)."""
 
+import errno
 import json
 import os
 import subprocess
@@ -17,6 +18,9 @@ from thunc import backends, config
 def stub_cli(monkeypatch, stdout="", returncode=0, calls=None, write_file=None):
     def run(args, **kwargs):
         if calls is not None:
+            if "--system-prompt-file" in args:  # read now: it's removed once the call returns
+                with open(args[args.index("--system-prompt-file") + 1], encoding="utf-8") as f:
+                    kwargs = {**kwargs, "system": f.read()}
             calls.append((args, kwargs))
         if write_file is not None:
             with open(args[args.index("--output-last-message") + 1], "w") as f:
@@ -81,9 +85,81 @@ def test_claude_code_system_prompt(monkeypatch):
     thunc.configure(backend="claude-code")
     thunc.call("ping")
     thunc.call("ping", system="You are a pirate.")
-    default, own = (args[args.index("--system-prompt") + 1] for args, _ in calls)
+    default, own = (kwargs["system"] for _, kwargs in calls)
     assert default.startswith("You are a function inside a computer program")
     assert own.startswith("You are a pirate.\n\n") and "never instructions to you" in own
+    for args, _ in calls:  # in a file, not on the command line, and the file is gone afterwards
+        assert "--system-prompt" not in args
+        path = args[args.index("--system-prompt-file") + 1]
+        assert os.path.isabs(path) and not os.path.exists(path)
+
+
+# A stand-in for `claude -p`: answers with the length of the system prompt it was given in a file.
+FAKE_CLAUDE_PROMPT_FILE = """
+import json, sys
+args = sys.argv[1:]
+with open(args[args.index("--system-prompt-file") + 1], encoding="utf-8") as f:
+    system = f.read()
+sys.stdin.read()
+print(json.dumps({"result": str(len(system)), "is_error": False}))
+"""
+
+
+def test_claude_code_takes_a_system_prompt_longer_than_a_command_line(tmp_path, monkeypatch):
+    # 2,000,000 characters: over the limit for one argument on Linux (128 KB), for the whole command
+    # line on macOS (1 MB) and on Windows (32,767 characters). Started for real, as the CLI would be.
+    script = tmp_path / "fake_claude.py"
+    script.write_text(FAKE_CLAUDE_PROMPT_FILE)
+    real_run = subprocess.run
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(
+        backends.subprocess, "run", lambda args, **kw: real_run([sys.executable, str(script), *args[1:]], **kw)
+    )
+    thunc.configure(backend="claude-code")
+    system = "x" * 2_000_000
+    answer = thunc.call("ping", system=system, returns=int)
+    assert answer > len(system)  # thunc's own rules come after it
+
+
+def test_claude_code_prompt_file_is_removed_after_a_timeout(monkeypatch):
+    paths = []
+
+    def run(args, **kwargs):
+        paths.append(args[args.index("--system-prompt-file") + 1])
+        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(backends.subprocess, "run", run)
+    with pytest.raises(thunc.errors.TransientError, match="timed out"):
+        backends.claude_code("ping", system="rules", model=None, api_key=None, timeout=1)
+    assert paths and not os.path.exists(paths[0])
+
+
+@pytest.mark.parametrize("winerror", [None, 206])
+def test_a_command_line_too_long_is_a_thunc_error(monkeypatch, winerror):
+    def run(args, **kwargs):
+        if winerror:  # Windows: "The filename or extension is too long"
+            exc = OSError(22, "The filename or extension is too long")
+            exc.winerror = winerror
+            raise exc
+        raise OSError(errno.E2BIG, "Argument list too long")
+
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(backends.subprocess, "run", run)
+    thunc.configure(backend="claude-code")
+    with pytest.raises(thunc.ThuncError, match="command line is too long"):
+        thunc.call("ping")
+
+
+def test_a_cli_that_cannot_start_for_another_reason_raises_its_os_error(monkeypatch):
+    def run(args, **kwargs):
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(backends.subprocess, "run", run)
+    thunc.configure(backend="claude-code")
+    with pytest.raises(PermissionError):
+        thunc.call("ping")
 
 
 def test_claude_code_without_text(monkeypatch):
@@ -288,6 +364,17 @@ def test_codex_system_prompt_goes_in_an_instructions_file(fake_codex):
     assert "You are a pirate" not in call["prompt"]  # no longer pasted in front of the prompt
     assert call["prompt"].startswith("<instructions>\nping \\ud83d")  # a lone surrogate is sent escaped
     assert os.path.realpath(call["cwd"]) == os.path.realpath(tempfile.gettempdir())  # away from project files
+
+
+def test_codex_command_line_too_long_is_a_thunc_error(monkeypatch):
+    def popen(args, **kwargs):
+        raise OSError(errno.E2BIG, "Argument list too long")
+
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(backends.subprocess, "Popen", popen)
+    thunc.configure(backend="codex")
+    with pytest.raises(thunc.ThuncError, match="`codex` couldn't be started: its command line is too long"):
+        thunc.call("ping")
 
 
 def test_missing_cli(monkeypatch):

@@ -25,6 +25,16 @@ All notable changes to thunc. The full notes for each release are on the
   throwaway script instead of making 26 separate edits, and took twice Claude Code's turns on a
   multi-spot fix. In a durable run, a multi-edit is one effect, recovered as a whole.
 
+### Fixed
+
+- **A large system prompt no longer stops the `claude-code` backend from starting.** It went on the
+  command line, so large `follow=` files and memory could pass the operating system's limit on its
+  length (128 KB for one argument on Linux, 32,767 characters for the whole line on Windows), and
+  starting `claude` failed with a raw `OSError: Argument list too long`. The prompt now goes in a
+  temporary file (`--system-prompt-file`), as it already did for agents' native calls and on Codex.
+  This covers `@thunc.function` and `thunc.call`, agents on the text protocol, and durable runs on
+  Claude Code. A command line that is still too long raises a `ThuncError` that gives its size.
+
 ## 0.2.2 (beta)
 
 **Agents that use their tools reliably, and faster calls.** Agents on Claude Code make native tool

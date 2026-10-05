@@ -41,15 +41,16 @@
     <a href="./">Get started</a>
     <a href="functions.html" class="active" aria-current="page">Functions</a>
     <a href="backends.html">Backends</a>
-    <a href="caching.html">Caching and tracing</a>
+    <a href="caching.html">Caching, tracing and profiling</a>
     <a href="agents.html">Agents</a>
     <div class="eyebrow">Going further</div>
     <a href="temporal.html">Durable agents</a>
     <a href="jev.html">Jev backend</a>
     <div class="eyebrow">Reference</div>
     <a href="api.html">API reference</a>
+    <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -130,7 +131,7 @@ order("2 oat lattes and a croissant pls. oh, one more latte!")
 <p>An unsupported return type fails when the function is declared, not at the first call. A function with no return annotation returns <code>str</code>.</p>
 
 <h2 id="retries">When the answer doesn't fit</h2>
-<p>Every answer is parsed and checked against the return type. If it doesn't fit, the problem is sent back to the model and it tries again, up to <code>retries=2</code> more times. After that, <code>thunc.ThuncError</code> is raised.</p>
+<p>Every answer is parsed and checked against the return type. If it doesn't fit, the problem is sent back to the model and it tries again, up to <code>retries=2</code> more times. After that, <code>thunc.ThuncError</code> is raised. A failing backend (a timeout, a rate limit, a CLI that exits with an error) isn't retried by thunc here: it raises <code>thunc.errors.TransientError</code>, a <code>ThuncError</code>, so you can retry it yourself. Agent runs do retry those steps.</p>
 <p><strong>Near-misses are read, not retried:</strong></p>
 <ul>
 <li>a code fence, with any language tag, even after a line of prose;</li>
@@ -165,7 +166,7 @@ scores = thunc.map(urgency, tickets, workers=8)  # same order as tickets</code><
 </div>
 <footer class="sitefoot"><div class="wrap">
   <span>thunc() · beta · MIT</span>
-  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+  <span><a href="../docs/">Docs</a> · <a href="../docs/changelog.html">Changelog</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
 </div></footer>
 <script src="../site.js"></script>
 </body>

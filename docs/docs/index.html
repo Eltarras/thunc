@@ -41,15 +41,16 @@
     <a href="./" class="active" aria-current="page">Get started</a>
     <a href="functions.html">Functions</a>
     <a href="backends.html">Backends</a>
-    <a href="caching.html">Caching and tracing</a>
+    <a href="caching.html">Caching, tracing and profiling</a>
     <a href="agents.html">Agents</a>
     <div class="eyebrow">Going further</div>
     <a href="temporal.html">Durable agents</a>
     <a href="jev.html">Jev backend</a>
     <div class="eyebrow">Reference</div>
     <a href="api.html">API reference</a>
+    <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -103,7 +104,7 @@ print(urgency("I was charged twice!"))  # 4</code></pre></div>
 <div class="callout"><p><strong>Beta (v0.2).</strong> The API may still change. Bug reports and feedback are welcome in <a href="https://github.com/Eltarras/thunc/issues">issues</a> or <a href="https://github.com/Eltarras/thunc/discussions">discussions</a>.</p></div>
 
 <h2 id="examples">Run the examples</h2>
-<p>Clone the repository and run the examples from its root. They need no install and run through your Claude Code login.</p>
+<p>Clone the repository and run the examples from its root. Most need no install and run through your Claude Code login; the Jev ones need the <a href="jev.html">jev CLI</a>, and <code>temporal/</code> a Temporal service.</p>
 <div class="codeblock"><pre><code class="sh">git clone https://github.com/Eltarras/thunc &amp;&amp; cd thunc
 python3 -m examples.hello
 python3 -m examples.support_inbox
@@ -115,8 +116,11 @@ THUNC_BACKEND=codex python3 -m examples.log_triage</code></pre></div>
 <tr><td><a href="https://github.com/Eltarras/thunc/blob/main/examples/support_inbox.py">support_inbox.py</a></td><td>Docstring functions returning a <code>Literal</code>, an <code>int</code> with <code>ensure=</code>, a dataclass and a reply; tickets processed in parallel</td></tr>
 <tr><td><a href="https://github.com/Eltarras/thunc/blob/main/examples/dynamic_prompts.py">dynamic_prompts.py</a></td><td>Prompts built from a style guide with <code>thunc.call</code>, and a grading function generated from a rubric</td></tr>
 <tr><td><a href="https://github.com/Eltarras/thunc/blob/main/examples/log_triage.py">log_triage.py</a></td><td>Plain Python and AI functions mixed, with tracing</td></tr>
-<tr><td><a href="https://github.com/Eltarras/thunc/blob/main/examples/repo_guide.py">repo_guide.py</a></td><td>Agents: read-only tasks over this repo returning a dataclass and lists, with each run's steps read from the trace</td></tr>
+<tr><td><a href="https://github.com/Eltarras/thunc/blob/main/examples/repo_guide.py">repo_guide.py</a></td><td>Agents: read-only tasks over this repo returning a dataclass and lists, on Codex by default, with each run's steps read from the trace</td></tr>
+<tr><td><a href="https://github.com/Eltarras/thunc/blob/main/examples/jev_hello.py">jev_hello.py</a></td><td>The smallest Jev calls: a yes/no, a label and a rating</td></tr>
+<tr><td><a href="https://github.com/Eltarras/thunc/blob/main/examples/jev_inbox.py">jev_inbox.py</a></td><td>A support inbox triaged on Jev: spam, team and urgency for 8 tickets in about a second</td></tr>
 <tr><td><a href="https://github.com/Eltarras/thunc/blob/main/examples/jev_with_claude.py">jev_with_claude.py</a></td><td>Jev decides which messages need a reply; Claude writes only those replies</td></tr>
+<tr><td><a href="https://github.com/Eltarras/thunc/tree/main/examples/temporal">temporal/</a></td><td>Durable agents: a worker, a client and a classify → agent analysis → typed summary pipeline (needs <code>thunc[temporal]</code> and a Temporal service)</td></tr>
 </tbody></table></div>
 
 <h2 id="next">Where next</h2>
@@ -132,7 +136,7 @@ THUNC_BACKEND=codex python3 -m examples.log_triage</code></pre></div>
 </div>
 <footer class="sitefoot"><div class="wrap">
   <span>thunc() · beta · MIT</span>
-  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+  <span><a href="../docs/">Docs</a> · <a href="../docs/changelog.html">Changelog</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
 </div></footer>
 <script src="../site.js"></script>
 </body>
