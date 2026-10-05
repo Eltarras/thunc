@@ -41,15 +41,16 @@
     <a href="./">Get started</a>
     <a href="functions.html">Functions</a>
     <a href="backends.html">Backends</a>
-    <a href="caching.html">Caching and tracing</a>
+    <a href="caching.html">Caching, tracing and profiling</a>
     <a href="agents.html">Agents</a>
     <div class="eyebrow">Going further</div>
     <a href="temporal.html">Durable agents</a>
     <a href="jev.html">Jev backend</a>
     <div class="eyebrow">Reference</div>
     <a href="api.html" class="active" aria-current="page">API reference</a>
+    <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="https://github.com/Eltarras/thunc/blob/main/CHANGELOG.md">Changelog</a></div>
+  <div class="version">thunc 0.2.2 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -66,7 +67,7 @@
 <tr><td><a href="functions.html#map"><code>thunc.map</code></a></td><td>Runs calls in parallel, keeping the input order.</td></tr>
 <tr><td><a href="#configure"><code>thunc.configure</code></a></td><td>Process-wide settings.</td></tr>
 <tr><td><a href="caching.html#clearing"><code>thunc.clear_cache</code></a></td><td>Deletes saved answers: all of them, one function's, or those older than an age. Returns how many.</td></tr>
-<tr><td><a href="caching.html#clearing"><code>thunc.cache_info</code></a></td><td>What's in the cache, one group per function.</td></tr>
+<tr><td><a href="caching.html#clearing"><code>thunc.cache_info</code></a></td><td>What's in the cache: a list of <code>thunc.CacheGroup</code>, one per function, with its entries, size on disk and newest answer.</td></tr>
 <tr><td><a href="agents.html"><code>thunc.Agent</code></a></td><td>An agent: a name, a working directory, permissions and tasks.</td></tr>
 <tr><td><a href="agents.html#declare"><code>@agent.task</code>, <code>@thunc.agent</code></a></td><td>Declare a task on an agent, or an agent with a single task.</td></tr>
 <tr><td><a href="agents.html#declare"><code>agent.call</code></a></td><td>A task built in code, like <code>thunc.call</code>.</td></tr>
@@ -96,7 +97,7 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 <dt>backend</dt><dd><code>"anthropic"</code>, <code>"openai"</code>, <code>"claude-code"</code>, <code>"codex"</code> or <code>"jev"</code>. See <a href="backends.html#choosing">choosing a backend</a>.</dd>
 <dt>api_key</dt><dd>The API key for <code>anthropic</code> or <code>openai</code>. An <code>api_key</code> with no backend means <code>anthropic</code>. Never sent to Jev.</dd>
 <dt>model</dt><dd>The default model. <code>anthropic</code> defaults to <code>claude-opus-5-5</code>, <code>openai</code> to <code>gpt-5.5</code>.</dd>
-<dt>timeout</dt><dd>The time limit for each backend request, in seconds.</dd>
+<dt>timeout</dt><dd>The time limit for each backend request, in seconds. Default 300.</dd>
 <dt>trace</dt><dd>Path of a JSONL file that records every call.</dd>
 <dt>cache_dir</dt><dd>Where <code>cache=True</code> answers go. Default <code>.thunc_cache</code>.</dd>
 <dt>system</dt><dd>A system prompt for every call in place of thunc's default. A per-call <code>system=</code> wins.</dd>
@@ -121,15 +122,18 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 <dl>
 <dt>thunc.ThuncError</dt><dd>No valid answer arrived after the retries, the backend failed, or nothing is configured. Also raised when a function is declared with an unsupported return type.</dd>
 <dt>thunc.AgentError</dt><dd>A <code>ThuncError</code> from an agent run that hit <code>max_steps</code>, never gave a valid value, or lost its backend. <code>.run</code> is the record up to that point.</dd>
+<dt>thunc.errors.TransientError</dt><dd>A <code>ThuncError</code> that asking again may fix: a timeout, a lost connection, a rate limit, a server error, or a CLI call that ended in an error. An agent run retries the step twice before failing; <code>thunc.call</code> and <code>@thunc.function</code> don't retry it.</dd>
 <dt>TypeError</dt><dd>Raised when a function is declared with code in its body, or with no docstring and no <code>instructions=</code>.</dd>
 </dl>
 
 <h2 id="cli">Command line</h2>
-<div class="codeblock"><pre><code class="sh">thunc cache list                                   # saved answers per function
+<div class="codeblock"><pre><code class="sh">thunc run --profile app.py --limit 20             # run a script, then print where the time went
+thunc run --profile -m myapp.triage               # a module, as with python -m
+thunc cache list                                   # saved answers per function
 thunc cache clear                                  # everything
 thunc cache clear --function urgency               # one function (repeat for several)
 thunc cache clear --older-than 30d --dry-run       # what would go, without deleting</code></pre></div>
-<p>Also <code>python -m thunc</code>. Takes <code>--cache-dir</code>, or reads <code>THUNC_CACHE_DIR</code>.</p>
+<p>Also <code>python -m thunc</code>, and <code>thunc --version</code>. <code>thunc run</code> runs the program as <code>python</code> would and passes its exit code through; <code>--profile</code> adds the <a href="caching.html#profiling">performance report</a>. The <code>cache</code> commands take <code>--cache-dir</code>, or read <code>THUNC_CACHE_DIR</code>.</p>
 
 <h2 id="limitations">Limitations</h2>
 <ul>
@@ -137,13 +141,13 @@ thunc cache clear --older-than 30d --dry-run       # what would go, without dele
 <li><strong><code>Literal</code> results from <code>thunc.call</code> are typed as <code>Any</code>.</strong> <code>@thunc.function</code> has no such gap.</li>
 <li><strong>Docstrings disappear under <code>python -OO</code>.</strong> Use <code>instructions=</code> there.</li>
 </ul>
-<nav class="pager" aria-label="Pages"><a class="prev" href="jev.html"><span>Previous</span>Jev backend</a></nav>
+<nav class="pager" aria-label="Pages"><a class="prev" href="jev.html"><span>Previous</span>Jev backend</a><a class="next" href="changelog.html"><span>Next</span>Changelog</a></nav>
 <p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/api.html">Edit this page on GitHub</a></p>
 </main>
 </div>
 <footer class="sitefoot"><div class="wrap">
   <span>thunc() · beta · MIT</span>
-  <span><a href="../docs/">Docs</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+  <span><a href="../docs/">Docs</a> · <a href="../docs/changelog.html">Changelog</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
 </div></footer>
 <script src="../site.js"></script>
 </body>
