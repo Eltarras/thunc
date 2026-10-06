@@ -3,7 +3,17 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
-## Unreleased
+## 0.2.3 (beta)
+
+**Native tool calls everywhere agents run, durable runs that keep them, and the last of 0.2.**
+Agents on Codex make native tool calls through the same MCP relay as Claude Code, durable runs on
+Claude Code do too and pick up after a crash mid-call, and durable agents can take `tools=`. On the
+Claude API, agents stream their replies, think at effort `high`, and no longer lose a run to
+`max_tokens` or a stalled reply. `edit` can replace every occurrence or make several changes at
+once, and no longer needs a prior `read`. In the tool-use benchmark (`live_tests/bench_tooluse.py`,
+8 tasks, Claude Sonnet 5.5, 3 runs each), every harness passed 24 of 24, the text protocol included
+(20 of 24 in 0.2.2) in about half the time; through the Claude API, Sonnet 5.5 and Opus 5.5 passed
+8 of 8; on Codex, native calls took 30 seconds a task against 45 for the text protocol.
 
 ### Behavior changes
 

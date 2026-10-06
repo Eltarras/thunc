@@ -154,20 +154,20 @@ no reliable way to tell them from a real one. Only an empty reply is retried.
 
 **Open: agents and durable runs.**
 
-- Durable runs on `claude-code` use the JSON text protocol, not native calls: the MCP path keeps
-  one CLI process for the whole run, which a durable step can't snapshot. The text protocol is the
-  weaker one: in `live_tests/bench_tooluse.py` on Sonnet 5.5 it passed 12 of 24 runs, and 20 of 24
-  with step retries (measured before action arrays), against 24 of 24 for native calls.
-- The `shell` permission isn't tested on Windows: its test is skipped there, so `cmd /c` has never
-  run in CI.
-- With `shell`, a file read with `cat` doesn't count as read for `edit`, which refuses until the
-  agent reads it with `read` (the no-blind-overwrite rule). Agents work around it with a short
-  `read`, at the cost of a step.
-- The agent loops on the Claude and OpenAI APIs have no live tool-use benchmark yet (only
-  `live_tests/eval_prompts.py`); their `max_tokens`, effort and stop-reason handling were reviewed
-  from the code only (`live_tests/bench_tooluse_report.md`, finding 7).
-- Durable agents can't use `tools=` yet: the effects of the program's own functions can't be
-  journaled.
+- On Codex, native calls count each tool call as a step: Codex's events don't say which calls came
+  from the same model reply. A long task reaches `max_steps` sooner than on Claude Code (22 steps on
+  `rename` in the tool-use benchmark, against `max_steps=40`).
+- Tokens aren't reported for native runs on Codex: `codex exec --json` reports usage at the end of
+  a turn, and a run ends inside one when the model calls `finish`.
+- Durable runs on `codex` use the JSON text protocol, not native calls.
+- On a fix in a long file (`deep_fix` in the tool-use benchmark), native calls take about twice
+  Claude Code's steps (8 against 4.3), reading around the file in pages. A larger `read` limit is
+  the next thing to measure.
+- Durable runs on Claude Code save the whole session file at each checkpoint, so a long run's saved
+  state grows with every reply, and counts toward the 16 MiB limit. A CLI that dies leaves Claude
+  Code's own `~/.claude/sessions/<pid>.json` behind.
+- The `shell` permission's own test (pipes, `cd`, redirects) is skipped on Windows; only a single
+  command line runs through `cmd /c` in CI.
 - Durable runs have no garbage collection: the journal, transcript artifacts and request-ID
   tombstones are kept forever. There's no context summarization either, so a long run fails once
   its saved state passes 16 MiB.
