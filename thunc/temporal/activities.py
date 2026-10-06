@@ -21,7 +21,7 @@ from thunc import native
 from thunc.agent import _memory_section, _request
 from thunc.config import runtime_settings
 from thunc.core import _build_prompt, _check, _send, _sendable, system_prompt
-from thunc.execution import AgentState
+from thunc.execution import KNOWN, AgentState
 from thunc.schema import describe, shorten
 from thunc.store import Store
 
@@ -310,7 +310,8 @@ class Activities:
             raise ValueError("No pending tool call")
         operation = f"{state['id']}/{engine.turns}/{engine.index}"
         ensure = definition.function.__dict__["__thunc_ensure__"]
-        outcome = engine.check(call, definition.spec.returns, ensure, state["repairs"], definition.name)
+        known = {*KNOWN, *(definition.agent.custom if definition.agent else ())}  # its own tools too, as locally
+        outcome = engine.check(call, definition.spec.returns, ensure, state["repairs"], definition.name, known)
         if outcome.finished:
             state["agent"] = engine.to_json()
             state["value"] = plain(outcome.value)

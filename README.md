@@ -440,8 +440,9 @@ print(run.value)
 ```
 
 Durable mode requires a Temporal service, a worker, and persistent storage on the
-same volume. File changes and memory updates use recovery receipts. Commands with
-uncertain outcomes pause for operator resolution instead of blindly running twice.
+same volume. File changes and memory updates use recovery receipts. Commands, and the agent's
+own `tools=` functions, with uncertain outcomes pause for operator resolution instead of blindly
+running twice (`retry_safe_tools=` names functions that may run again).
 Temporal does not back up your workspace or guarantee exactly-once external effects.
 
 The [Temporal guide and runnable example](examples/temporal/README.md) cover service

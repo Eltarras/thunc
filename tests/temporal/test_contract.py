@@ -153,3 +153,98 @@ def test_wire_values_and_ownership_conflicts(tmp_path):
     registry.claim("first")
     with pytest.raises(ValueError):
         registry.claim("second")
+
+
+def tool_definition(tmp_path, retry_safe=(), description="Open an issue. Returns its number."):
+    root = tmp_path / "repo"
+    root.mkdir(exist_ok=True)
+    calls = {"open_issue": 0, "find_issue": 0}
+
+    def open_issue(title: str) -> int:
+        calls["open_issue"] += 1
+        return 7
+
+    def find_issue(title: str) -> int:
+        """Find an issue by title. Returns its number."""
+        calls["find_issue"] += 1
+        return 7
+
+    open_issue.__doc__ = description
+    agent = thunc.Agent("tools", workdir=root, tools=[open_issue, find_issue], backend="codex")
+
+    @agent.task
+    def task() -> str:
+        """Do a task."""
+        ...
+
+    registry = Registry(state_dir=tmp_path / "state")
+    registry.agent_task("task", task, version="1", workspace_id="repo", retry_safe_tools=retry_safe)
+    item = registry.get({"task": "task", "version": "1", "workspace_id": "repo"})
+    state = {"id": "run", "seen": {}, "permissions": agent.permissions.written, "offered": agent.tools()}
+    return registry, item, state, calls
+
+
+def test_a_custom_tool_runs_once_and_its_receipt_is_replayed(tmp_path):
+    registry, item, state, calls = tool_definition(tmp_path)
+    call = {"tool": "open_issue", "args": {"title": "Flaky test"}}
+    first = perform(registry.storage, item, state, call, "run/1/0")
+    second = perform(registry.storage, item, state, call, "run/1/0")  # the activity's completion was lost
+    assert first == second and first["output"] == "7" and calls["open_issue"] == 1
+
+
+def test_a_custom_tool_interrupted_mid_call_waits_for_resolve(tmp_path):
+    registry, item, state, calls = tool_definition(tmp_path)
+    call = {"tool": "open_issue", "args": {"title": "Flaky test"}}
+    registry.storage.save_effect("run/1/0", "run", "started", {"call": call})  # the worker stopped mid-call
+    with pytest.raises(Attention, match="'open_issue' may or may not have run"):
+        perform(registry.storage, item, state, call, "run/1/0")
+    assert calls["open_issue"] == 0  # not run again unasked
+    resolve(registry.storage, "repo", "run/1/0", "retry", "checked the tracker: no such issue")
+    assert perform(registry.storage, item, state, call, "run/1/0")["output"] == "7" and calls["open_issue"] == 1
+
+
+def test_a_retry_safe_tool_saves_no_intent_and_runs_again_after_a_crash(tmp_path):
+    registry, item, state, calls = tool_definition(tmp_path, retry_safe=["find_issue"])
+    call = {"tool": "find_issue", "args": {"title": "Flaky test"}}
+    seen_during = []
+    original = item.agent.custom["find_issue"].func
+
+    def watching(title: str) -> int:
+        seen_during.append(registry.storage.effect("run/1/0"))
+        return original(title)
+
+    item.agent.custom["find_issue"] = item.agent.custom["find_issue"].__class__(
+        **{**item.agent.custom["find_issue"].__dict__, "func": watching}
+    )
+    assert perform(registry.storage, item, state, call, "run/1/0")["output"] == "7"
+    assert seen_during == [None]  # nothing recorded before it ran: a crash then just runs it again
+    assert perform(registry.storage, item, state, call, "run/1/0")["output"] == "7" and calls["find_issue"] == 1
+
+
+def test_retry_safe_tools_must_be_the_agents_own(tmp_path):
+    with pytest.raises(ValueError, match="names tools the agent doesn't have: delete_repo"):
+        tool_definition(tmp_path, retry_safe=["delete_repo"])
+
+
+def test_a_changed_tool_or_its_retry_marking_changes_the_fingerprint(tmp_path):
+    base = tool_definition(tmp_path)[1].fingerprint  # the same workdir each time: it's part of it too
+    assert tool_definition(tmp_path, retry_safe=["find_issue"])[1].fingerprint != base
+    assert tool_definition(tmp_path, description="Open an issue, labelled.")[1].fingerprint != base
+    assert tool_definition(tmp_path)[1].fingerprint == base
+
+
+def test_a_custom_tools_intent_is_recorded_before_it_runs(tmp_path):
+    registry, item, state, calls = tool_definition(tmp_path)
+    seen_during = []
+    original = item.agent.custom["open_issue"].func
+
+    def watching(title: str) -> int:
+        seen_during.append((registry.storage.effect("run/1/0") or (None,))[0])
+        return original(title)
+
+    item.agent.custom["open_issue"] = item.agent.custom["open_issue"].__class__(
+        **{**item.agent.custom["open_issue"].__dict__, "func": watching}
+    )
+    perform(registry.storage, item, state, {"tool": "open_issue", "args": {"title": "x"}}, "run/1/0")
+    assert seen_during == ["started"]  # if the worker stops now, the run waits for resolve()
+    assert registry.storage.effect("run/1/0")[0] == "done"

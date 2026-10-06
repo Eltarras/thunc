@@ -169,7 +169,7 @@ run.notes, run.followed, run.steps, run.seconds, run.session</code></pre></div>
 
 @agent.task(instructions=..., ensure=...)
 @thunc.agent(name, workdir=..., instructions=..., ensure=..., **options)</code></pre></div>
-<p><code>async def</code> tasks work. For runs that must survive a worker restart, see <a href="temporal.html">durable agents with Temporal</a> (no <code>tools=</code> there yet).</p>
+<p><code>async def</code> tasks work. For runs that must survive a worker restart, see <a href="temporal.html">durable agents with Temporal</a>.</p>
 
 <h2 id="eval">How the prompt was tested</h2>
 <p><code>python -m live_tests.eval_prompts --backend anthropic</code> runs three small tasks (fix a bug, review a diff, answer a question about a repo) with three versions of the system prompt: bare (no working method), the default, and the task's preset. Five runs of each, on the Claude API on 4 October 2026 and on Claude Code on 5 October 2026:</p>
