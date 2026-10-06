@@ -265,3 +265,11 @@ def test_failures_after_the_tools_started_do_not_fall_back(monkeypatch, cli, rep
     agent = thunc.Agent("guide", workdir=repo)
     with pytest.raises(thunc.AgentError, match="claude exited 3"):
         agent.run(timeout_task(agent))
+
+
+def test_effort_is_passed_to_claude_code(cli, repo):
+    cli(calls(("finish", {"value": 30})))
+    agent = thunc.Agent("guide", workdir=repo, effort="xhigh")
+    agent.run(timeout_task(agent))
+    args = cli.log["args"]
+    assert args[args.index("--effort") + 1] == "xhigh"

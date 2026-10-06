@@ -305,9 +305,11 @@ or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
   outside are refused, and the rules are checked on where a link really leads. Files the agent may
   not read are left out of `list` and `search`, and so is what git ignores, in a git repository
   (build output, caches, vendored code); a folder named explicitly is still listed and searched.
-- **No blind overwrites.** A file is only replaced or edited after the agent read it in the same
-  run, and only if it hasn't changed on disk since. There is no undo, so run agents that write in a
-  git repository with a clean tree, and review their changes with `git diff`.
+- **No blind overwrites.** A file is only replaced (`write`) after the agent read it with `read` in
+  the same run, and only if it hasn't changed on disk since. An `edit` needs no read, because it
+  only changes text the agent quotes exactly, but a file the agent did read must not have changed
+  since. There is no undo, so run agents that write in a git repository with a clean tree, and
+  review their changes with `git diff`.
 - **Commands** run in `workdir`, or in a folder inside it given as `cwd`. Without the `shell`
   permission there's no shell, so `&&`, pipes, `cd`, redirects and `$VARIABLES` don't work (the
   agent is told). They get a minimal environment: `PATH`, `HOME`, the locale and temp-folder
@@ -346,9 +348,15 @@ or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
   `system=thunc.prompts.CODING + "\n\nTarget Python 3.10."`.
 - **Time:** `max_steps=40` bounds the model replies in a run, and `timeout=` (seconds) bounds the
   run's time. It's checked before each model call; a command's time limit is cut to the time left.
+  In its last three replies before `max_steps`, the model is told how many are left, so it can
+  finish with what it has.
+- **`effort=`** sets how hard the model thinks: `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`
+  (`openai` and `codex` go up to `"xhigh"`). By default it's `"high"` on the `anthropic` backend for
+  Claude 4.6 and later (Claude Opus 5.5's own default is `"medium"`, low for agentic coding), and
+  each backend's own default elsewhere.
 - **Options:** `thunc.Agent(name, *, workdir, system=None, permissions=(), env=None,
   command_timeout=120, follow=False, protocol=None, tools=(), timeout=None, max_steps=40,
-  retries=2, backend=None, model=None)`, and `@agent.task(instructions=..., ensure=...)`.
+  retries=2, backend=None, model=None, effort=None)`, and `@agent.task(instructions=..., ensure=...)`.
   `@thunc.agent(name, workdir=..., instructions=..., ensure=..., **options)` takes the same options.
   `async def` tasks work.
 - **What happened in a run.** Calling a task returns its value. `agent.run(task, *args)` runs it
@@ -368,7 +376,9 @@ or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
   A step that fails for a reason asking again may fix (a timeout, a lost connection, a rate limit,
   a server error, a CLI call that ended in an error) is retried twice, after 2 and 4 seconds, and
   each retry is in the run's record. A text-protocol step on Claude Code or Codex may take 120
-  seconds before it's retried. With tracing on, each run is also one line with every model reply.
+  seconds before it's retried. On the Claude API, a reply cut off at `max_tokens` doesn't end the
+  run: its tool calls get an error result saying so (twice in a row does). With tracing on, each run
+  is also one line with every model reply.
 
 **How the prompt was tested.** `python -m live_tests.eval_prompts --backend anthropic` runs three
 small tasks (fix a bug, review a diff, answer a question about a repo) with three versions of the

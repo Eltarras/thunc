@@ -4,8 +4,10 @@ Every path is resolved (symlinks included) and must land inside the working dire
 absolute paths and links that point outside are refused. Then the agent's permissions are checked
 on the real path, so a link can't lead to a file the rules deny.
 
-A file is only replaced or edited after the agent read it in this run, and only if it hasn't
-changed on disk since: the agent never overwrites what it hasn't seen.
+A file is only replaced (write) after the agent read it in this run, with read, and only if it
+hasn't changed on disk since: the agent never overwrites what it hasn't seen. An edit needs no read,
+since it only changes text the agent quotes exactly, but a file it did read must not have changed
+since. Output of a command doesn't count as reading: a command can't show a file whole and exactly.
 
 Commands run in the working directory (or a folder inside it) without a shell, unless the "shell"
 permission allows one, with a minimal environment (your API keys aren't in it), a timeout that also
@@ -230,7 +232,7 @@ class Workdir:
         self._check(self.permissions.check_write, full)
         if not os.path.isfile(full):
             raise ToolError(f"{path!r} is not a file; use write to create it")
-        data = self._unchanged_since_read(path, full)
+        data = self._unchanged_since_read(path, full, need_read=False)
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
@@ -243,7 +245,10 @@ class Workdir:
             except ToolError as problem:
                 raise ToolError(which + str(problem) + ("; no edit was made" if edits is not None else "")) from None
             replaced += count
+        was_read = full in self.seen
         self._save(full, text)
+        if not was_read:  # it knows the parts it changed, not the rest: write still needs a read
+            del self.seen[full]
         done = f"edited {self.show(full)}"
         if edits is not None:
             more = f", {_count(replaced, 'replacement')}" if replaced > len(changes) else ""
@@ -369,12 +374,16 @@ class Workdir:
                 if shown not in self.changed:
                     self.changed.append(shown)
 
-    def _unchanged_since_read(self, path: str, full: str) -> bytes:
-        """The file's current content, if the agent read it in this run and it hasn't changed since."""
+    def _unchanged_since_read(self, path: str, full: str, *, need_read: bool = True) -> bytes:
+        """The file's current content, if it hasn't changed since the agent last read or wrote it in this
+        run. With need_read (write), the agent must have read it; an edit may change a file it hasn't."""
         with open(full, "rb") as f:
             data = f.read()
         if full not in self.seen:
-            raise ToolError(f"read {path!r} before changing it")
+            if not need_read:
+                return data
+            not_run = " (output of a command doesn't count)" if self.permissions.may("run") else ""
+            raise ToolError(f"read {path!r} with read before replacing it{not_run}; or change parts of it with edit")
         if self.seen[full] != _digest(data):
             raise ToolError(f"{path!r} changed on disk since you read it; read it again first")
         return data
@@ -518,7 +527,7 @@ TOOLS: dict[str, tuple[str, dict[str, tuple[type, bool]], str]] = {
             "edits": (list, False),
         },
         '{"path": "src/app.py", "old": "exact text", "new": "replacement"}  Replaces text that appears exactly '
-        'once in a file you read in this run; with "replace_all": true, every occurrence. To make several '
+        'once in a file, copied exactly; with "replace_all": true, every occurrence. To make several '
         'changes to one file in one call, give "edits": [{"old": ..., "new": ...}, ...] instead of old and new: '
         "they apply in order, and if one fails, none is made.",
     ),
@@ -531,7 +540,10 @@ TOOLS: dict[str, tuple[str, dict[str, tuple[type, bool]], str]] = {
     ),
 }
 RUN_NO_SHELL = " There is no shell: no pipes, &&, cd, redirects or $VARIABLES."
-RUN_SHELL = " It runs in a shell, so pipes, && and redirects work."
+RUN_SHELL = (
+    " It runs in a shell, so pipes, && and redirects work. Read files with read rather than cat: write only"
+    " replaces a file you read with read."
+)
 
 
 def description(name: str, shell: bool = False) -> str:

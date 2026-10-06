@@ -85,6 +85,9 @@ class Agent:
     timeout:   seconds a run may take, checked between steps; a command's time limit is cut to fit.
     max_steps: model replies per run before ThuncError.
     retries:   how many times an invalid finish value is sent back to be fixed.
+    effort:    how hard the model thinks: "low", "medium", "high", "xhigh" or "max" (the openai and codex
+               backends go up to "xhigh"). By default "high" on the anthropic backend for Claude 4.6 and
+               later (Claude Opus 5.5's own default is "medium"), and each backend's own default elsewhere.
     """
 
     def __init__(
@@ -104,6 +107,7 @@ class Agent:
         retries: int = 2,
         backend: str | None = None,
         model: str | None = None,
+        effort: str | None = None,
     ) -> None:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("An agent needs a name: thunc.Agent('my-agent', workdir=...)")
@@ -120,6 +124,8 @@ class Agent:
         self.timeout = timeout
         self.custom = _custom_tools(name, tools)
         self.follow, self._follow_explicit = _follow_paths(name, follow)
+        if effort is not None and effort not in native.EFFORTS:
+            raise ValueError(f"Agent {name!r}: effort= is one of {', '.join(native.EFFORTS)}, or None; not {effort!r}")
         if protocol not in (None, "native", "text"):
             raise ValueError(f"Agent {name!r}: protocol= is 'native', 'text' or None, not {protocol!r}")
         self.protocol = protocol
@@ -141,6 +147,7 @@ class Agent:
         self.retries = retries
         self.backend = backend
         self.model = model
+        self.effort = effort
 
     def __repr__(self) -> str:
         return f"Agent({self.name!r}, workdir={self.workdir!r})"
@@ -363,11 +370,11 @@ class Agent:
     ) -> native.Conversation:
         if not native_calls:
             names = [*tools.TOOLS, *self.custom, "remember", "finish"]  # a tool it isn't offered is denied, not unknown
-            return native.TextConversation(fixed + memory, request, names, self.backend, self.model)
+            return native.TextConversation(fixed + memory, request, names, self.backend, self.model, self.effort)
         specs = _tool_specs(self.tools(), returns, self.custom, self.permissions.may("shell"))
         if resolve_backend(self.backend) == "anthropic":
-            return native.AnthropicConversation(fixed, memory.lstrip("\n"), request, specs, self.model)
-        return native.OpenAIConversation(fixed + memory, request, specs, self.model)
+            return native.AnthropicConversation(fixed, memory.lstrip("\n"), request, specs, self.model, self.effort)
+        return native.OpenAIConversation(fixed + memory, request, specs, self.model, self.effort)
 
     def _settings(self) -> dict[str, Any]:
         """What agent.json records."""
@@ -386,6 +393,8 @@ class Agent:
             "retries": self.retries,
             "backend": self.backend,
             "model": self.model,
+            # Only when set, so agent.json and a durable task's fingerprint stay as they were without it.
+            **({"effort": self.effort} if self.effort else {}),
         }
 
     def _run(
@@ -453,7 +462,13 @@ class Agent:
                 elif mcp:
                     specs = _tool_specs(self.tools(), returns, self.custom, self.permissions.may("shell"))
                     conversation = claude_code.ClaudeCodeConversation(
-                        system, request, specs, self.model or setting("model"), self.workdir, setting("timeout")
+                        system,
+                        request,
+                        specs,
+                        self.model or setting("model"),
+                        self.workdir,
+                        setting("timeout"),
+                        self.effort,
                     )
                     if self.protocol is None:  # protocol="native" asked for native calls: no fallback
                         conversation = claude_code.WithFallback(conversation, text_protocol, switched)
@@ -551,7 +566,7 @@ class Agent:
                     session.write("step", n=step, tool=call.tool, args=args, result=shorten(output, 4000), **flag)
                     if outcome.error:
                         raise outcome.error
-                conversation.results(state.results)
+                conversation.results(state.results_to_send(self.max_steps))
         except ThuncError as exc:  # the run failed: say what it did up to here
             result["error"] = exc
             session.write("error", error=str(exc), files_changed=workdir.changed)

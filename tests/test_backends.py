@@ -384,6 +384,9 @@ def test_missing_cli(monkeypatch):
         thunc.call("ping")
 
 
+OMIT = object()  # the SDKs' `omit`: an argument left out of the request
+
+
 def stub_openai(monkeypatch, response, calls=None):
     """A fake `openai` module whose client returns `response` from responses.create."""
 
@@ -396,10 +399,11 @@ def stub_openai(monkeypatch, response, calls=None):
 
         def create(self, **kwargs):
             if calls is not None:
-                calls.append(kwargs)
+                calls.append({k: v for k, v in kwargs.items() if v is not OMIT})  # as the SDK leaves them out
             return response
 
     module = ModuleType("openai")
+    module.omit = OMIT
     module.OpenAI = Client
     module.APIConnectionError = type("APIConnectionError", (Exception,), {})
     module.APIStatusError = type("APIStatusError", (Exception,), {})
@@ -446,10 +450,16 @@ def test_openai_failed(monkeypatch):
         thunc.call("ping")
 
 
-def stub_anthropic(monkeypatch, stop_reason, text="pong"):
+def stub_anthropic(monkeypatch, stop_reason, text="pong", calls=None):
     """A fake `anthropic` module whose client returns one text block with `stop_reason`."""
     response = SimpleNamespace(stop_reason=stop_reason, content=[SimpleNamespace(type="text", text=text)])
-    messages = SimpleNamespace(create=lambda **kwargs: response)
+
+    def create(**kwargs):
+        if calls is not None:
+            calls.append({k: v for k, v in kwargs.items() if v is not OMIT})  # as the SDK leaves them out
+        return response
+
+    messages = SimpleNamespace(create=create)
 
     class Client:
         def __init__(self, **kwargs):
@@ -460,6 +470,7 @@ def stub_anthropic(monkeypatch, stop_reason, text="pong"):
             return self
 
     module = ModuleType("anthropic")
+    module.omit = OMIT
     module.Anthropic = Client
     module.APIConnectionError = type("APIConnectionError", (Exception,), {})
     module.APIStatusError = type("APIStatusError", (Exception,), {})
@@ -561,3 +572,45 @@ def test_anthropic_backend_reuses_its_client(monkeypatch):
     thunc.configure(backend="anthropic")
     assert [thunc.call("ping") for _ in range(3)] == ["pong"] * 3
     assert len(made) == 1
+
+
+def test_effort_on_the_cli_backends(monkeypatch, fake_codex):
+    from thunc.core import _send
+
+    fake_codex(codex_events("pong"))
+    assert _send("ping", "rules", "codex", None, effort="xhigh") == "pong"
+    args = fake_codex.calls()[0]["args"]
+    assert 'model_reasoning_effort="xhigh"' in [args[i + 1] for i, a in enumerate(args) if a == "--config"]
+    with pytest.raises(thunc.ThuncError, match="codex backend takes effort low, medium, high or xhigh"):
+        _send("ping", "rules", "codex", None, effort="max")
+
+    calls = []
+    stub_cli(monkeypatch, json.dumps({"result": "pong", "is_error": False}), calls=calls)
+    _send("ping", "rules", "claude-code", None, effort="max")
+    _send("ping", "rules", "claude-code", None)
+    (with_effort, _), (without, _) = calls
+    assert with_effort[with_effort.index("--effort") + 1] == "max" and "--effort" not in without
+
+
+def test_effort_on_the_openai_backend(monkeypatch):
+    from thunc.core import _send
+
+    calls = []
+    stub_openai(monkeypatch, openai_response("pong"), calls=calls)
+    assert _send("ping", "rules", "openai", None, effort="low") == "pong"
+    assert calls[0]["reasoning"] == {"effort": "low"}
+    _send("ping", "rules", "openai", None)
+    assert "reasoning" not in calls[1]
+    with pytest.raises(thunc.ThuncError, match="openai backend takes effort"):
+        _send("ping", "rules", "openai", None, effort="max")
+
+
+def test_effort_on_the_anthropic_backend(monkeypatch):
+    from thunc.core import _send
+
+    calls = []
+    stub_anthropic(monkeypatch, "end_turn", calls=calls)
+    _send("ping", "rules", "anthropic", "claude-haiku-4-5", effort="medium")  # the plain endpoint
+    _send("ping", "rules", "anthropic", None, effort="xhigh")  # Opus 5.5: the fallback's beta endpoint
+    _send("ping", "rules", "anthropic", None)
+    assert [c.get("output_config") for c in calls] == [{"effort": "medium"}, {"effort": "xhigh"}, None]

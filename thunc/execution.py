@@ -21,6 +21,7 @@ from .runs import Denial
 from .schema import describe, parse, shorten, validate
 
 KNOWN = frozenset({*tools.TOOLS, "remember", "finish"})
+STEPS_NOTICE = 3  # replies left before max_steps when the model starts being told how many
 
 
 @dataclass
@@ -105,6 +106,20 @@ class AgentState:
         self.results.append((call, output, output.startswith("error: ")))
         self.index += 1
         self.operations += 1
+
+    def results_to_send(self, limit: int) -> list[tuple[Call, str, bool]]:
+        """The reply's results as the model gets them. Once few replies are left before max_steps
+        (`limit`), the last result says how many, so the model can finish with what it has rather
+        than be cut off with nothing. Only the copy sent changes: the run record keeps the output."""
+        left = limit - self.turns
+        if not self.results or not 0 < left <= STEPS_NOTICE:
+            return list(self.results)
+        if left == 1:
+            note = "This is your last reply before the run's step limit: call finish now with what you have."
+        else:
+            note = f"You have {left} replies left before the run's step limit: call finish soon with what you have."
+        call, output, failed = self.results[-1]
+        return [*self.results[:-1], (call, f"{output}\n\n({note})", failed)]
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)

@@ -76,7 +76,9 @@ def sdk_client(factory: Callable[..., C], env_prefix: str, api_key: str | None, 
     return cast(C, client.with_options(timeout=timeout))
 
 
-def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
+def anthropic_api(
+    text: str, *, system: str, model: str | None, api_key: str | None, timeout: float, effort: str | None = None
+) -> str:
     try:
         import anthropic
     except ImportError as exc:
@@ -85,6 +87,7 @@ def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | N
     model = model or DEFAULT_ANTHROPIC_MODEL
     # api_key=None lets the SDK resolve ANTHROPIC_API_KEY or an `ant auth login` profile.
     client = sdk_client(anthropic.Anthropic, "ANTHROPIC_", api_key, timeout)
+    output_config: Any = {"effort": effort} if effort else anthropic.omit
     try:
         if model in _FALLBACK_MODELS:
             response = client.beta.messages.create(
@@ -94,6 +97,7 @@ def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | N
                 messages=[{"role": "user", "content": text}],
                 betas=["server-side-fallback-2026-07-01"],
                 fallbacks="default",
+                output_config=output_config,
             )
         else:
             response = client.messages.create(  # type: ignore[assignment]  # Message vs BetaMessage: same fields used below
@@ -101,6 +105,7 @@ def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | N
                 max_tokens=16000,
                 system=system,
                 messages=[{"role": "user", "content": text}],
+                output_config=output_config,
             )
     except anthropic.APIConnectionError as exc:
         raise TransientError(f"Could not reach the Claude API: {exc}") from exc
@@ -117,12 +122,17 @@ def anthropic_api(text: str, *, system: str, model: str | None, api_key: str | N
     return "".join(block.text for block in response.content if block.type == "text")
 
 
-def openai_api(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
+def openai_api(
+    text: str, *, system: str, model: str | None, api_key: str | None, timeout: float, effort: str | None = None
+) -> str:
     try:
         import openai
     except ImportError as exc:
         raise ThuncError("The openai backend needs the SDK: pip install 'thunc[openai]'") from exc
 
+    if effort == "max":
+        raise ThuncError("The openai backend takes effort low, medium, high or xhigh, not max.")
+    reasoning: Any = {"effort": effort} if effort else openai.omit
     # api_key=None lets the SDK resolve OPENAI_API_KEY (and OPENAI_BASE_URL for compatible servers).
     client = sdk_client(openai.OpenAI, "OPENAI_", api_key, timeout)
     try:
@@ -131,6 +141,7 @@ def openai_api(text: str, *, system: str, model: str | None, api_key: str | None
             instructions=system,
             input=text,
             store=False,
+            reasoning=reasoning,
         )
     except openai.APIConnectionError as exc:
         raise TransientError(f"Could not reach the OpenAI API: {exc}") from exc
@@ -271,7 +282,9 @@ def _cli_events(args: list[str], text: str, timeout: float, last: str) -> tuple[
         stderr.close()  # the CLI keeps its own handle until it exits
 
 
-def claude_code(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
+def claude_code(
+    text: str, *, system: str, model: str | None, api_key: str | None, timeout: float, effort: str | None = None
+) -> str:
     with _prompt_file(system) as system_path:
         args = [
             "claude",
@@ -289,6 +302,8 @@ def claude_code(text: str, *, system: str, model: str | None, api_key: str | Non
         ]
         if model:
             args += ["--model", model]
+        if effort:
+            args += ["--effort", effort]
         proc = _run_cli(args, text, timeout)
     if _not_utf8(proc.stdout):
         raise ThuncError(f"claude printed output that isn't UTF-8: {_printable(proc.stdout)[-500:]}")
@@ -350,7 +365,11 @@ _CODEX_LOCKDOWN = (
 )
 
 
-def codex(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
+def codex(
+    text: str, *, system: str, model: str | None, api_key: str | None, timeout: float, effort: str | None = None
+) -> str:
+    if effort == "max":
+        raise ThuncError("The codex backend takes effort low, medium, high or xhigh, not max.")
     # codex exec has no system-prompt flag; the model_instructions_file setting replaces Codex's
     # built-in instructions with the file's text. Codex reads it when it starts.
     with _prompt_file(system) as system_path:
@@ -371,6 +390,8 @@ def codex(text: str, *, system: str, model: str | None, api_key: str | None, tim
         ]
         if model:
             args += ["--model", model]
+        if effort:
+            args += ["--config", f"model_reasoning_effort={json.dumps(effort)}"]
         args.append("-")  # read the prompt from stdin
         events, code, stderr = _cli_events(args, text, timeout, "turn.completed")
     if code is not None:  # it ended without finishing the turn
