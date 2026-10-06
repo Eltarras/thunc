@@ -39,6 +39,7 @@ jobs:
   # thunc-watch, the terminal dashboard: a Rust crate in watch/, separate from the Python package.
   watch:
     strategy:
+      fail-fast: false  # each platform reports its own result
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}

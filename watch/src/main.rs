@@ -64,7 +64,7 @@ struct Args {
 }
 
 enum Parsed {
-    Run(Args),
+    Run(Box<Args>), // boxed: Args is much larger than the other variants
     Help,
     Version,
 }
@@ -162,7 +162,7 @@ fn parse(argv: &[String]) -> Result<Parsed> {
         0 => {
             bail!("nothing to watch: give a script to run, or --agents, --events or --replay (see thunc-watch --help)")
         }
-        1 => Ok(Parsed::Run(a)),
+        1 => Ok(Parsed::Run(Box::new(a))),
         _ => bail!("give one of: a program to run, --agents, --events or --replay"),
     }
 }
@@ -185,7 +185,7 @@ fn main() {
             println!("thunc-watch {}", env!("CARGO_PKG_VERSION"));
             0
         }
-        Ok(Parsed::Run(args)) => match run(args) {
+        Ok(Parsed::Run(args)) => match run(*args) {
             Ok(code) => code,
             Err(e) => {
                 eprintln!("thunc-watch: {e:#}");
@@ -380,7 +380,7 @@ mod tests {
     fn args(s: &str) -> Args {
         let v: Vec<String> = s.split_whitespace().map(String::from).collect();
         match parse(&v).unwrap() {
-            Parsed::Run(a) => a,
+            Parsed::Run(a) => *a,
             _ => panic!("not a run"),
         }
     }
