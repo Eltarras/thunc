@@ -11,6 +11,82 @@ are now fixed, and finding 3 is reduced.
 
 Reproduce with `python -m live_tests.bench_tooluse` (see its docstring).
 
+## 0.2.3 rerun, 5 October 2026
+
+The 0.2.3 changes (multi-edit, edits without a prior read, effort and the Claude API path, the
+text-protocol fix-up), run with `--harness thunc,thunc-shell,thunc-text,claude-code --runs 3` on
+Claude Sonnet 5.5, and with the new `thunc-api` harness (the Claude API's own tool calls, billed to
+`ANTHROPIC_API_KEY`) on Sonnet 5.5 and Opus 5.5.
+
+Claude Sonnet 5.5, 3 runs of each task (24 per harness), with 0.2.2's numbers in brackets:
+
+| Harness | Passed | Turns per task | Seconds per task | $ per task | Tool errors |
+|---|---|---|---|---|---|
+| thunc (native calls) | 24/24 (24/24) | 4.4 (4.3) | 8 (10) | 0.021 (0.022) | 0 (1) |
+| thunc, `shell` permission | 24/24 (24/24) | 4.5 (4.4) | 9 (11) | 0.019 (0.023) | **0 (7)** |
+| thunc, `protocol="text"` | **24/24 (20/24)** | 6.6 (7.2) | **27 (47)** | 0.082 (0.084) | 33 (44) |
+| claude-code | 24/24 (24/24) | 4.5 (3.9) | 10 (11) | 0.078 (0.069) | 3 (0) |
+
+The Claude API (`thunc-api`), 1 run of each task:
+
+| Model | Passed | Turns per task | Seconds per task | $ per task |
+|---|---|---|---|---|
+| Claude Sonnet 5.5 | 8/8 | 4.5 | 17 | 0.023 |
+| Claude Opus 5.5 | 8/8 | 4.9 | 15 | 0.049 |
+
+What changed, and what the run found:
+
+- **Edits after shell reads.** The `shell` column had no read-before-edit refusals, against 7 in
+  0.2.2: `edit` no longer needs a prior `read`.
+- **`rename`** took 3 turns on native calls, with `replace_all` and `edits` instead of a throwaway
+  script.
+- **The text protocol** passed 24/24 (20/24 in 0.2.2) in about half the time. The first run of this
+  rerun found two problems, fixed before the numbers above:
+  - Reading the first complete action out of a messy reply, with no word to the model, left a model
+    that slipped into `<invoke>` markup uncorrected. On `deep_fix` it then repeated empty markup
+    until the step timed out, failing 3 of 3. Now a reply read that way gets a note with its
+    results to reply with the JSON alone, and two blocks of markup end a streamed step.
+  - On `needle`, one run batched `[search, read, finish 0.0]`: a guess, written before the read it
+    asked for came back. `finish` in the same reply as other calls is now refused (they run).
+  - Most of the remaining 33 tool errors are the model's next step after a note (`search needs
+    'pattern'` from empty markup), which it then corrects.
+- **The Claude API path** (finding 7) ran live for the first time: 8/8 on both models, with
+  streaming, effort `high`, strict tools, tool-result clearing and the refusal fallback in the same
+  requests. The first Opus run hung on one reply for an hour: the stream sent nothing, while the
+  API's keep-alive pings kept the SDK's read timeout from firing. A reply that sends nothing for
+  `timeout` seconds is now stopped and asked again; the rerun had no stalls.
+
+Codex, with native calls (`thunc-codex`, through the same MCP relay as Claude Code), the text
+protocol (`thunc-codex-text`) and Codex itself (`codex`, its own tools in its workspace-write
+sandbox), on Codex's default model, `--harness thunc-codex,thunc-codex-text,codex --runs 3 --model
+default`. The third run of every column hit the Codex subscription's usage limit partway through
+and failed for that reason alone, so the table is the first two runs of each task (16 per harness):
+
+| Harness | Passed | Seconds per task | Tool errors |
+|---|---|---|---|
+| thunc on Codex, native calls | 16/16 | 30 | 0 |
+| thunc on Codex, `protocol="text"` | 16/16 | 45 | 0 |
+| codex | 16/16 | 27 | 15 |
+
+- **Native calls take a third less time than the text protocol on Codex**, and come within 3
+  seconds a task of Codex itself, with thunc's permissions and run record.
+- **Steps aren't comparable across these columns.** Codex's events don't say which calls came from
+  the same model reply, so on native calls each forwarded call counts as a step: 10.1 per task on
+  average, and 22 on `rename`, against `max_steps=40`. The text protocol counts replies (5.6 per
+  task, its batches included).
+- **Tokens aren't measured for native calls on Codex.** `codex exec --json` reports usage only at
+  the end of a turn, and a run on native calls ends inside one, when the model calls `finish`.
+
+Still open after 0.2.3's changes:
+
+- **`deep_fix` takes 8 turns on native calls** (Claude Code: 4.3). Multi-edit didn't change it: the
+  turns go to finding and reading the code around the bug in a 1,900-line file, not to editing. A
+  larger `read` limit is the next thing to measure.
+- **The text protocol is still 4 times the cost of native calls on Claude Code**, as each turn
+  resends the whole transcript. It remains the path for durable runs on Claude Code and Codex.
+- **Steps on native Codex runs count calls, not replies.** A long task can reach `max_steps`
+  sooner than on Claude Code.
+
 ## Rerun after the fixes
 
 Three changes, in the same branch as this report:

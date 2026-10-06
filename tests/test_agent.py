@@ -301,9 +301,12 @@ def test_empty_and_oversized_batches_are_sent_back(fake, repo, reply, problem):
     assert f"error: {problem}" in fake.prompts[1] and "src/app.py" not in fake.prompts[1]
 
 
-def test_finish_in_a_batch_ends_the_run_and_skips_what_follows(fake, repo):
+def test_finish_batched_with_calls_it_hasnt_seen_waits_for_a_reply_of_its_own(fake, repo):
+    # In the tool-use benchmark a model batched [search, read, finish 0.0]: a guess, written before
+    # the read it asked for came back. finish is refused; the other calls run.
     fake.replies = [
-        batch(act("read", path="config.py"), finish(30), act("write", path="late.txt", content="x")),
+        batch(act("read", path="config.py"), finish(0), act("write", path="late.txt", content="x")),
+        batch(act("remember", note="The timeout is in config.py."), finish(30)),  # a note may go with it
     ]
 
     @thunc.Agent("a", workdir=repo, permissions=["write"]).task
@@ -312,7 +315,8 @@ def test_finish_in_a_batch_ends_the_run_and_skips_what_follows(fake, repo):
         ...
 
     assert timeout() == 30
-    assert not (repo / "late.txt").exists()
+    assert "error: finish wasn't run: call it on its own" in fake.prompts[1]
+    assert "2  TIMEOUT = 30" in fake.prompts[1] and (repo / "late.txt").exists()
 
 
 def test_max_steps_counts_replies_not_actions(fake, repo):
@@ -1246,15 +1250,19 @@ def test_follow_true_reads_agents_md_and_claude_md(fake, repo):
     assert run.followed == ["AGENTS.md", "CLAUDE.md"]
 
 
-# A stand-in for `claude -p` on the text protocol: finishes with the length of the system prompt,
-# which it reads from the file thunc names.
+# A stand-in for `claude -p` on the text protocol (its reply streamed): finishes with the length of
+# the system prompt, which it reads from the file thunc names.
 FAKE_CLAUDE_FINISH = """
 import json, sys
 args = sys.argv[1:]
+assert args[args.index("--output-format") + 1] == "stream-json"
 with open(args[args.index("--system-prompt-file") + 1], encoding="utf-8") as f:
     system = f.read()
 sys.stdin.read()
-print(json.dumps({"result": json.dumps({"tool": "finish", "args": {"value": len(system)}}), "is_error": False}))
+action = json.dumps({"tool": "finish", "args": {"value": len(system)}})
+delta = {"type": "content_block_delta", "delta": {"type": "text_delta", "text": action}}
+print(json.dumps({"type": "stream_event", "event": delta}), flush=True)
+print(json.dumps({"type": "result", "is_error": False, "result": action}), flush=True)
 """
 
 
@@ -1265,11 +1273,15 @@ def test_large_followed_files_reach_claude_code_on_the_text_protocol(monkeypatch
 
     script = tmp_path / "fake_claude.py"
     script.write_text(FAKE_CLAUDE_FINISH)
-    real_run = subprocess.run
+    real_popen = subprocess.Popen
+
+    def popen(args, **kwargs):  # a text-protocol step on Claude Code streams its reply
+        assert args[0] == "claude"
+        return real_popen([sys.executable, str(script), *args[1:]], **kwargs)
+
     monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
-    monkeypatch.setattr(
-        backends.subprocess, "run", lambda args, **kw: real_run([sys.executable, str(script), *args[1:]], **kw)
-    )
+    monkeypatch.setattr(backends.subprocess, "Popen", popen)
+    monkeypatch.setattr(backends.subprocess, "run", lambda *a, **kw: pytest.fail("not streamed"))
     thunc.configure(backend="claude-code")
     names = ["a.md", "b.md", "c.md"]
     for name in names:
@@ -1694,7 +1706,7 @@ def test_a_cli_step_has_a_shorter_time_limit(monkeypatch, repo):
 
     monkeypatch.setitem(backends.BACKENDS, "codex", cli)
     thunc.configure(backend="codex", timeout=600)
-    make_task(thunc.Agent("x", workdir=repo))()
+    make_task(thunc.Agent("x", workdir=repo, protocol="text"))()  # codex makes native calls by default
     assert seen == [native.CLI_STEP_TIMEOUT]
 
 

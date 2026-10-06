@@ -236,15 +236,21 @@ def _send(
     model: str | None,
     timeout: float | None = None,
     effort: str | None = None,
+    until: Callable[[str], bool] | None = None,
 ) -> str:
     name = resolve_backend(backend)
+    agents_only: dict[str, Any] = {}  # options only agents use, sent only when set: a backend may lack them
+    if effort:
+        agents_only["effort"] = effort
+    if until is not None:
+        agents_only["until"] = until  # stop the reply once this is true of it (claude-code)
     answer = BACKENDS[name](
         text,
         system=system,
         model=model or setting("model"),
         api_key=setting("api_key"),
         timeout=setting("timeout") if timeout is None else timeout,
-        **({"effort": effort} if effort else {}),  # agents only; a backend without the option is never sent one
+        **agents_only,
     )
     if not isinstance(answer, str):
         raise ThuncError(f"The {name} backend returned {type(answer).__name__}, not text.")

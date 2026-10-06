@@ -15,14 +15,17 @@ import pytest
 
 import thunc
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the fake claude is a script with a shebang")
+pytestmark = [
+    pytest.mark.skipif(sys.platform == "win32", reason="the fake claude is a script with a shebang"),
+    pytest.mark.filterwarnings("error::ResourceWarning"),  # every pipe, socket and file the run opened is closed
+]
 
 
 @pytest.fixture(autouse=True)
 def native_calls_not_ruled_out(monkeypatch):
-    from thunc import claude_code
+    from thunc import relay
 
-    monkeypatch.setattr(claude_code, "unavailable", None)  # what one test learns doesn't leak into the next
+    monkeypatch.setattr(relay, "unavailable", {})  # what one test learns doesn't leak into the next
 
 
 @pytest.fixture

@@ -213,12 +213,15 @@ def _prompt_file(system: str) -> Iterator[str]:
 Events = list[tuple[dict[str, Any], str]]  # (event, the line it was printed as)
 
 
-def _cli_events(args: list[str], text: str, timeout: float, last: str) -> tuple[Events, int | None, str]:
+def _cli_events(
+    args: list[str], text: str, timeout: float, last: str, stop: Callable[[dict[str, Any]], bool] | None = None
+) -> tuple[Events, int | None, str]:
     """Run a CLI that prints one JSON event per line, with `text` on stdin, and return its events
     (each with the line it came from) up to the first of type `last`, as soon as that one arrives.
     What the CLI does after it (codex takes about 0.4 s to shut down) finishes in the background: a
     thread reads the rest of its output and collects the process. If the CLI ends without a `last`
-    event, returns all its events with its exit code and stderr; the exit code is None otherwise."""
+    event, returns all its events with its exit code and stderr; the exit code is None otherwise.
+    `stop(event)` true ends it sooner: the CLI is stopped, and the events so far are returned."""
     exe = args[0]
     if shutil.which(exe) is None:
         raise ThuncError(f"`{exe}` was not found on PATH.")
@@ -269,6 +272,9 @@ def _cli_events(args: list[str], text: str, timeout: float, last: str) -> tuple[
                 events.append((event, line))
                 if event.get("type") == last:
                     return events, None, ""
+                if stop is not None and stop(event):
+                    process.kill()  # what it would say next isn't wanted, nor paid for
+                    return events, None, ""
         code = process.wait()
         stderr.seek(0)
         return events, code, stderr.read().decode("utf-8", "surrogateescape")
@@ -283,8 +289,18 @@ def _cli_events(args: list[str], text: str, timeout: float, last: str) -> tuple[
 
 
 def claude_code(
-    text: str, *, system: str, model: str | None, api_key: str | None, timeout: float, effort: str | None = None
+    text: str,
+    *,
+    system: str,
+    model: str | None,
+    api_key: str | None,
+    timeout: float,
+    effort: str | None = None,
+    until: Callable[[str], bool] | None = None,
 ) -> str:
+    """`claude -p` with no tools. With `until` (an agent's text-protocol step), the reply is streamed
+    and the CLI is stopped as soon as `until(reply so far)` is true: a model that carries on past
+    its action, making up the tool's result, can't run on to the timeout."""
     with _prompt_file(system) as system_path:
         args = [
             "claude",
@@ -304,6 +320,8 @@ def claude_code(
             args += ["--model", model]
         if effort:
             args += ["--effort", effort]
+        if until is not None:  # the prompt file is read while the reply streams, so this is inside
+            return _claude_streamed(args, text, timeout, until)
         proc = _run_cli(args, text, timeout)
     if _not_utf8(proc.stdout):
         raise ThuncError(f"claude printed output that isn't UTF-8: {_printable(proc.stdout)[-500:]}")
@@ -318,6 +336,36 @@ def claude_code(
     if not isinstance(data.get("result"), str):
         raise ThuncError(f"claude returned no text: {proc.stdout.strip()[-500:]}")
     return str(data["result"])
+
+
+def _claude_streamed(args: list[str], text: str, timeout: float, until: Callable[[str], bool]) -> str:
+    at = args.index("--output-format")
+    args = [*args[: at + 1], "stream-json", "--verbose", "--include-partial-messages", *args[at + 2 :]]
+    reply: list[str] = []
+
+    def done(event: dict[str, Any]) -> bool:
+        inner = event.get("event") if event.get("type") == "stream_event" else None
+        delta = inner.get("delta") if isinstance(inner, dict) and inner.get("type") == "content_block_delta" else None
+        if not isinstance(delta, dict) or delta.get("type") != "text_delta" or not isinstance(delta.get("text"), str):
+            return False
+        reply.append(delta["text"])
+        # Only a closing brace, bracket or tag can complete an action, so the reply is checked then.
+        return any(c in delta["text"] for c in "}]>") and until("".join(reply))
+
+    events, code, stderr = _cli_events(args, text, timeout, "result", stop=done)
+    bad = next((line for _, line in events if _not_utf8(line)), None)
+    if bad is not None:
+        raise ThuncError(f"claude printed output that isn't UTF-8: {_printable(bad)[-500:]}")
+    result = next((event for event, _ in reversed(events) if event.get("type") == "result"), None)
+    if result is None:
+        if code is None:  # stopped once the action was complete
+            return "".join(reply)
+        raise ThuncError(f"claude exited {code}: {_printable(stderr).strip()[-500:]}")
+    if result.get("is_error"):  # e.g. a tool call it couldn't parse: asking again may work
+        raise TransientError(f"claude error: {result.get('result') or _printable(stderr).strip()[-500:]}")
+    if not isinstance(result.get("result"), str):
+        raise ThuncError(f"claude returned no text: {_printable(json.dumps(result))[-500:]}")
+    return str(result["result"])
 
 
 # Notes Codex adds to every request besides thunc's prompt. The permissions note says the sandbox is

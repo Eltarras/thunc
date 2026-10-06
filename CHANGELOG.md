@@ -7,6 +7,13 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Behavior changes
 
+- **Agents on `codex` make native tool calls**, as on Claude Code since 0.2.2 (see Added). When
+  Codex can't start them, a run falls back to the text protocol with a warning; `protocol="text"`
+  keeps the old way, and durable runs on Codex still use it.
+- **`finish` called in the same reply as other calls is refused** (except beside `remember`): its
+  value can't account for results the model hasn't seen yet. The other calls run, and the model is
+  told to call `finish` on its own. In the tool-use benchmark, a run on the text protocol batched
+  `[search, read, finish 0.0]` and returned the guess. Every protocol and durable runs get it.
 - **Agents on the Claude API think at effort `high` by default** on Claude 4.6 and later. Claude
   Opus 5.5's own default is `medium`, which is low for agentic coding. `effort=` changes it (below).
 - **`edit` no longer needs the file to have been read first.** It only changes text the agent
@@ -19,6 +26,13 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Added
 
+- **Native calls on `codex`**: the agent's tools are an MCP server (thunc's relay, given with
+  `-c mcp_servers.thunc.*`) that Codex calls; thunc carries out each call with its own tools,
+  permissions and run record. Each `codex exec` is a turn: one that ends without `finish` is
+  continued with `codex exec resume`, as is one that fails (twice at most). Codex's own tools and
+  your `~/.codex` config stay out and its sandbox stays read-only; only thunc's server is approved
+  to run without asking, with a tool timeout above `command_timeout`. Resuming needs the session
+  saved, so thunc deletes the run's Codex session (`codex delete --force`) when the run ends.
 - **`Agent(effort=...)`**: `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, on every backend
   (`output_config.effort` on the Claude API, `reasoning.effort` on OpenAI, `--effort` on Claude Code,
   `model_reasoning_effort` on Codex; the last two go up to `"xhigh"`). Recorded in `agent.json` only
@@ -36,6 +50,24 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Changed
 
+- **The text protocol reads replies that aren't only the action** (finding 1 of the tool-use
+  benchmark report). Models trained for native tool calls often wrap the action in prose, a code
+  fence or `<invoke>` markup, or carry on past it with results they make up: on Sonnet 5.5, 25% of
+  text-protocol replies were sent back as "not valid JSON" with a correct action inside. Now the
+  first complete action (or array of them) in the reply is used, with literal newlines in its
+  strings accepted, and a reply written only as `<invoke name="...">` markup is read as its calls,
+  each argument in its tool's type (or as one JSON `args` parameter). A reply with no action in it
+  is still sent back, as before. A reply read this way runs, but its results carry a note to reply
+  with the JSON action alone: without it, a model that slipped into markup was never corrected, and
+  on Sonnet 5.5 fell into repeating empty markup until the step timed out.
+  This is the text protocol on Codex, `protocol="text"`, durable runs on Claude Code, and Claude
+  Code's fallback from native calls.
+- **A text-protocol step on Claude Code stops once its action is complete.** The reply is streamed
+  (`--output-format stream-json --include-partial-messages`) and the CLI is stopped as soon as a
+  complete action has arrived, rather than left to make up the tool's result until the step times
+  out (7 of 8 replayed first steps on Sonnet ran past 120 seconds that way). A batch that has begun
+  is waited for, and two blocks of `<invoke>` markup end the step too (a model repeating itself).
+  Plain `@thunc.function` calls on Claude Code aren't streamed.
 - **The Claude API agent path keeps runs going** (finding 7 of the tool-use benchmark report):
   - Replies are streamed with `max_tokens=64000` (was 16,000 without streaming), so a large write
     fits.
@@ -48,6 +80,9 @@ All notable changes to thunc. The full notes for each release are on the
   - Tools are `strict` (arguments guaranteed to match their schema) on the models that support it,
     when the schema allows it: the built-in tools except `edit`, `remember`, and `finish` and custom
     tools whose schema is closed.
+  - A reply that sends nothing for `timeout` seconds (300 by default) is stopped and asked again. The
+    SDK's read timeout doesn't catch it, as the API's keep-alive pings count as reading: in the
+    tool-use benchmark, one reply on Claude Opus 5.5 sent nothing for an hour.
   - A lost connection, a rate limit or a server error on the Claude and OpenAI APIs is retried as a
     step, like the CLI backends' errors, instead of ending the run.
 

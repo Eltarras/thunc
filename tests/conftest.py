@@ -1,5 +1,8 @@
 """Shared fixtures. No test ever calls a real model: `fake` is a scripted backend."""
 
+import os
+import sys
+
 import pytest
 
 import thunc
@@ -33,6 +36,21 @@ def clean_settings(monkeypatch, tmp_path):
     ):
         monkeypatch.delenv(var, raising=False)
     thunc.configure(agents_dir=str(tmp_path / ".thunc_agents"))  # agents never write into the repo
+
+
+@pytest.fixture(autouse=True)
+def no_real_clis(monkeypatch, tmp_path):
+    """`claude`, `codex` and `jev` on PATH fail loudly, so a test that isn't faking one can't reach the
+    real CLI and your login. Tests with their own fake CLI put it in front of these."""
+    if sys.platform == "win32":  # a shebang script isn't a command there; CI has no real CLI anyway
+        return
+    blocked = tmp_path / "blocked-clis"
+    blocked.mkdir()
+    for name in ("claude", "codex", "jev"):
+        stub = blocked / name
+        stub.write_text(f"#!/bin/sh\necho 'the real {name} is blocked in tests' >&2\nexit 97\n")
+        stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{blocked}{os.pathsep}{os.environ['PATH']}")
 
 
 @pytest.fixture

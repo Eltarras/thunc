@@ -21,6 +21,10 @@ from .runs import Denial
 from .schema import describe, parse, shorten, validate
 
 KNOWN = frozenset({*tools.TOOLS, "remember", "finish"})
+FINISH_ALONE = (
+    "error: finish wasn't run: call it on its own, in a reply after you've seen the results of the other "
+    "calls in this one. Those were carried out."
+)
 STEPS_NOTICE = 3  # replies left before max_steps when the model starts being told how many
 
 
@@ -78,6 +82,10 @@ class AgentState:
             return Outcome(f"error: {call.problem or f'unknown tool {call.tool!r}'}")
         if call.tool != "finish":
             return Outcome()
+        if any(other.tool not in ("finish", "remember") for other in self.calls if other is not call):
+            # Its value can't account for results the model hasn't seen yet (a guess, written before the
+            # read it asked for came back). The other calls run; finish waits for a reply of its own.
+            return Outcome(FINISH_ALONE)
         try:
             return Outcome(finished=True, value=_finished(call.args, returns, ensure))
         except ValueError as problem:

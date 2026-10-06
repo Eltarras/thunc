@@ -3,6 +3,8 @@ replaced by scripted ones that record each request, so the requests and replies 
 
 import json
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -54,6 +56,7 @@ def claude(monkeypatch):
     class Stream:  # what messages.stream() returns: a context manager with the final message
         def __init__(self, reply):
             self.reply = reply
+            self.closed = threading.Event()
 
         def __enter__(self):
             if isinstance(self.reply, Exception):
@@ -62,6 +65,15 @@ def claude(monkeypatch):
 
         def __exit__(self, *exc):
             return False
+
+        def __iter__(self):
+            if self.reply == "stall":  # nothing arrives until the stream is closed
+                self.closed.wait(30)
+                raise anthropic.APIConnectionError(request=None)
+            return iter(())
+
+        def close(self):
+            self.closed.set()
 
         def get_final_message(self):
             return self.reply
@@ -532,3 +544,16 @@ def test_openai_effort(gpt, repo):
     assert gpt.requests[0]["reasoning"] == {"effort": "xhigh"} and "reasoning" not in gpt.requests[1]
     with pytest.raises(thunc.ThuncError, match="openai backend takes effort low, medium, high or xhigh"):
         _task(thunc.Agent("q", workdir=repo, effort="max"))()
+
+
+def test_claude_a_reply_that_stalls_is_stopped_and_asked_again(claude, repo, monkeypatch):
+    monkeypatch.setattr(sys.modules["thunc.agent"], "RETRY_DELAY", 0)
+    thunc.configure(timeout=1)
+    claude.replies = ["stall", message(use("finish", "t1", value="ok"))]
+    agent = thunc.Agent("x", workdir=repo)
+    started = time.monotonic()
+    run = agent.run(_task(agent))
+    assert run.value == "ok" and time.monotonic() - started < 10
+    with open(run.session, encoding="utf-8") as f:
+        (retry,) = [json.loads(line) for line in f if '"retry"' in line]
+    assert retry["error"] == "The Claude API's reply stalled: nothing arrived for 1s."

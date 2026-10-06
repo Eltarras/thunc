@@ -2,7 +2,10 @@
 
 - TextConversation works on text backends: the model replies with JSON actions as text (one, or
   an array of independent ones), and the whole transcript is sent again each turn (the CLI
-  backends keep no conversation), so every action saved by batching saves a resend.
+  backends keep no conversation), so every action saved by batching saves a resend. Models trained
+  for native tool calls often wrap the action in prose or tool-call markup, or carry on past it with
+  results they make up; the first complete action is read, and on Claude Code the step stops as
+  soon as it has arrived.
 - AnthropicConversation and OpenAIConversation use the APIs' own tool calls: tools are declared
   with JSON Schemas, the model can call several at once, and the conversation grows by appending.
 
@@ -13,11 +16,15 @@ back what its calls did, and nudge() when a reply had no usable call.
 from __future__ import annotations
 
 import json
+import re
+import threading
+import time
 import typing
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from . import tools as builtin_tools
 from .backends import _FALLBACK_MODELS, DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL, sdk_client
 from .config import resolve_backend, setting
 from .core import _send, _sendable
@@ -102,22 +109,28 @@ class TextConversation:
         self.system, self.request, self.names = system, request, list(names)
         self.backend, self.model, self.effort = backend, model, effort
         self.steps: list[str] = []
+        self.note: str | None = None  # for the model with the results of a reply read leniently
 
     def next(self) -> Reply:
         timeout = setting("timeout")
         if resolve_backend(self.backend) in CLI_BACKENDS:  # a step that hangs is retried sooner (see agent.py)
             timeout = min(timeout, CLI_STEP_TIMEOUT)
-        answer = _send(self._transcript(), self.system, self.backend, self.model, timeout, self.effort)
+        # On Claude Code the reply is streamed and the step ends once an action is complete.
+        until = _complete if resolve_backend(self.backend) == "claude-code" else None
+        answer = _send(self._transcript(), self.system, self.backend, self.model, timeout, self.effort, until)
         try:
-            calls = actions(answer, self.names)
+            calls, self.note = read_actions(answer, self.names)
         except ValueError as problem:
             return Reply([], answer, str(problem))
         return Reply(calls, answer)
 
     def results(self, results: Sequence[tuple[Call, str, bool]]) -> None:
-        for call, output, _ in results:
+        for n, (call, output, _) in enumerate(results, start=1):
             shown = json.dumps({"tool": call.tool, "args": call.args}, ensure_ascii=False)
+            if n == len(results) and self.note:  # the run goes on, but the model is told to keep to JSON
+                output = f"{output}\n\n(Note: {self.note})"
             self.steps.append(_step(len(self.steps) + 1, shown, output))
+        self.note = None
 
     def nudge(self, reply: Reply) -> None:
         self.steps.append(
@@ -134,11 +147,42 @@ class TextConversation:
 MAX_ACTIONS = 16  # in one text-protocol reply; Temporal's limit per reply is higher (64)
 
 
+# Told to the model with the results of a reply that wasn't only its action. Without it, a model
+# that slips into tool-call markup is never corrected, and can fall into repeating empty markup.
+EXTRA_TEXT = "Your reply had text besides the action, and only its first action was used. Reply with the action alone."
+MARKUP = (
+    "Your reply was tool-call markup, which this program reads only as well as it can. Write each action "
+    'as JSON instead, like {"tool": "read", "args": {"path": "README.md"}}, and nothing else.'
+)
+
+
 def actions(answer: str, names: Sequence[str]) -> list[Call]:
     """A text-protocol reply as its calls: one JSON action, or a JSON array of them, carried out in
     order. Raises ValueError, with a reason the model can act on, for a reply with no usable call. In
     an array, an action that isn't valid becomes a call with a problem: it fails, the others run."""
-    value = parse(answer, dict[str, Any] | list[Any])  # reads code fences and <think> blocks like any answer
+    return read_actions(answer, names)[0]
+
+
+def read_actions(answer: str, names: Sequence[str]) -> tuple[list[Call], str | None]:
+    """actions(), and a note for the model when the reply wasn't only the action but was read anyway:
+    the first complete action in it, whatever prose, code fence or made-up results surround it
+    (literal newlines in its strings accepted), or else tool calls written as <invoke> markup."""
+    note = None
+    try:
+        value = parse(answer, dict[str, Any] | list[Any])  # reads code fences and <think> blocks like any answer
+    except ValueError as problem:
+        found = first_action(answer)
+        invoked = _invoked(answer) if found is None else None
+        if found is not None:
+            value, note = found[0], EXTRA_TEXT
+        elif invoked:
+            value, note = (invoked[0] if len(invoked) == 1 else invoked), MARKUP
+        else:
+            raise problem from None
+    return _calls(value, names), note
+
+
+def _calls(value: Any, names: Sequence[str]) -> list[Call]:
     if isinstance(value, dict):
         return [Call(None, *_action(value, names))]
     if not value:
@@ -161,6 +205,59 @@ def actions(answer: str, names: Sequence[str]) -> list[Call]:
                 )
             )
     return calls
+
+
+_ACTION_START = re.compile(r'(\[\s*)?\{\s*"tool"\s*:')
+_INVOKE = re.compile(r'<invoke name="([^"<>]+)">(.*?)</invoke>', re.DOTALL)
+_PARAMETER = re.compile(r'<parameter name="([^"<>]+)">(.*?)</parameter>', re.DOTALL)
+
+
+def first_action(text: str, final: bool = True) -> tuple[Any, int] | None:
+    """The first complete action (an object with a "tool"), or array of them, in `text`, and where
+    it ends; None if there is none. Literal newlines in its strings are accepted, as models write
+    file contents. While the reply is still arriving (final=False), an array that has begun is
+    waited for rather than read as its first action."""
+    decoder = json.JSONDecoder(strict=False)
+    for match in _ACTION_START.finditer(text):
+        try:
+            value, end = decoder.raw_decode(text, match.start())
+        except (ValueError, RecursionError):
+            if match.group(1) and not final:
+                return None
+            continue
+        items = value if isinstance(value, list) else [value]
+        if items and all(isinstance(item, dict) and isinstance(item.get("tool"), str) for item in items):
+            return value, end
+    return None
+
+
+def _complete(reply: str) -> bool:
+    """Whether a reply still arriving holds a complete action, so the step can stop there: a JSON
+    action, or two blocks of tool-call markup (one may be followed by the JSON action; more are
+    usually the model repeating itself, which it would do until the step times out)."""
+    return first_action(reply, final=False) is not None or len(_INVOKE.findall(reply)) >= 2
+
+
+def _invoked(text: str) -> list[dict[str, Any]]:
+    """Tool calls written as markup, <invoke name="read"><parameter name="path">a.py</parameter>
+    </invoke>, as actions. A built-in tool's text arguments are taken as they are; its other
+    arguments, and a custom tool's, are read as JSON where they parse (5, true, a list)."""
+    found = []
+    for tool, body in _INVOKE.findall(text):
+        kinds = builtin_tools.TOOLS[tool][1] if tool in builtin_tools.TOOLS else {}
+        args: dict[str, Any] = {}
+        for name, raw in _PARAMETER.findall(body):
+            if tool == "finish" or kinds.get(name, (None,))[0] is str:
+                args[name] = raw  # finish reads a value written as text against the task's type itself
+                continue
+            try:
+                args[name] = json.loads(raw)
+            except ValueError:
+                args[name] = raw
+        if set(args) == {"args"} and isinstance(args["args"], dict) and "args" not in kinds:
+            args = args["args"]  # all its arguments as one JSON object, as in a text-protocol action
+        found.append({"tool": tool, "args": args})
+    return found
 
 
 def _action(obj: Any, names: Sequence[str]) -> tuple[str, dict[str, Any]]:
@@ -324,10 +421,8 @@ class AnthropicConversation:
             request["context_management"] = {"edits": [{"type": "clear_tool_uses_20250919"}]}
         try:
             if betas:
-                with self.client.beta.messages.stream(**request, betas=betas) as stream:
-                    return stream.get_final_message()
-            with self.client.messages.stream(**request) as stream:
-                return stream.get_final_message()
+                return _streamed(self.client.beta.messages.stream(**request, betas=betas), setting("timeout"))
+            return _streamed(self.client.messages.stream(**request), setting("timeout"))
         except anthropic.APIConnectionError as exc:
             raise TransientError(f"Could not reach the Claude API: {exc}") from exc
         except anthropic.APIStatusError as exc:
@@ -356,6 +451,35 @@ class AnthropicConversation:
         )
         self.messages.append({"role": "user", "content": content})
         self.cut_off = None
+
+
+def _streamed(manager: Any, quiet: float) -> Any:
+    """The final message of a streamed reply. A reply may stream for minutes (a large write), but one
+    that sends nothing for `quiet` seconds is stopped and raises TransientError, to be asked again.
+    The SDK's own read timeout doesn't catch it: the API's keep-alive pings count as reading. In the
+    tool-use benchmark, one reply on Claude Opus 5.5 sent nothing for an hour."""
+    with manager as stream:
+        last = [time.monotonic()]
+        box: dict[str, Any] = {}
+
+        def read() -> None:
+            try:
+                for _ in stream:  # pings aren't events: only the reply itself counts
+                    last[0] = time.monotonic()
+                box["message"] = stream.get_final_message()
+            except BaseException as exc:  # raised again below, in the run's thread
+                box["error"] = exc
+
+        reader = threading.Thread(target=read, name="thunc-claude-stream", daemon=True)
+        reader.start()
+        while reader.is_alive():
+            reader.join(min(1.0, quiet))
+            if reader.is_alive() and time.monotonic() - last[0] > quiet:
+                stream.close()  # ends the read; the thread's error goes nowhere
+                raise TransientError(f"The Claude API's reply stalled: nothing arrived for {quiet:g}s.")
+        if "error" in box:
+            raise box["error"]
+        return box["message"]
 
 
 # --- the OpenAI Responses API -------------------------------------------------------------------

@@ -17,6 +17,13 @@ Harnesses, on the same model:
                through an MCP server), permissions ["write", "run"] so nothing is held back by rules.
 - thunc-text:  the same with protocol="text" (one JSON action per reply as text).
 - thunc-shell: the default, with permissions ["write", "shell"]: commands run in a shell.
+- thunc-api:   the default on the anthropic backend (the Claude API's own tool calls). Needs
+               ANTHROPIC_API_KEY, and is billed to it.
+- thunc-codex: the default on the codex backend (native calls through an MCP server); with
+               -text, protocol="text". Run them with a Codex model (--model gpt-5.5, or --model
+               default for Codex's own); Codex reports tokens, not dollars.
+- codex:       Codex itself (`codex exec` with its own tools, workspace-write sandbox), as the
+               reference harness for the Codex variants.
 - thunc-fixed: the text protocol with two fixes patched in (lenient reading of the first action,
                stopping the CLI once an action has arrived). A prototype; it
                patches the text protocol for the whole process, so run it on its own.
@@ -51,6 +58,8 @@ from typing import Any
 import thunc
 from thunc import backends
 from thunc.claude_code import ClaudeCodeConversation
+from thunc.codex import CodexConversation
+from thunc.native import AnthropicConversation
 from thunc.schema import describe, parse
 
 PY = sys.executable
@@ -477,9 +486,7 @@ def _counting_run_cli(args: list[str], text: str, timeout: float) -> subprocess.
     if meter is not None:
         meter["calls"] += 1
         meter["call_seconds"].append(round(time.monotonic() - started, 2))
-        # The prompt file is still there: claude_code removes it when it returns.
-        with open(args[args.index("--system-prompt-file") + 1], encoding="utf-8") as f:
-            meter["prompt_chars"].append(len(text) + len(f.read()))
+        meter["prompt_chars"].append(len(text) + _system_chars(args))
         try:
             data = json.loads(proc.stdout)
             u = data.get("usage") or {}
@@ -491,18 +498,64 @@ def _counting_run_cli(args: list[str], text: str, timeout: float) -> subprocess.
     return proc
 
 
+_real_cli_events = backends._cli_events
+
+
+def _counting_cli_events(args: list[str], text: str, timeout: float, last: str, stop: Any = None) -> Any:
+    """backends._cli_events, also adding up the usage of a streamed `claude -p` step (the text
+    protocol stops it once an action is complete, so there may be no result event to read it from)."""
+    started = time.monotonic()
+    events, code, stderr = _real_cli_events(args, text, timeout, last, stop)
+    meter = getattr(_local, "meter", None)
+    if meter is not None and args[0] == "codex":  # a text-protocol step: tokens only (a subscription)
+        meter["calls"] += 1
+        meter["call_seconds"].append(round(time.monotonic() - started, 2))
+        for event, _ in events:
+            if event.get("type") == "turn.completed":
+                _add_codex_usage(meter, event.get("usage") or {})
+    if meter is not None and args[0] == "claude":
+        meter["calls"] += 1
+        meter["call_seconds"].append(round(time.monotonic() - started, 2))
+        meter["prompt_chars"].append(len(text) + _system_chars(args))
+        usage: collections.Counter[str] = collections.Counter()
+        for event, _ in events:
+            inner = event.get("event") or {}
+            if inner.get("type") == "message_start":
+                usage.update(
+                    {k: v for k, v in (inner.get("message", {}).get("usage") or {}).items() if isinstance(v, int)}
+                )
+            elif inner.get("type") == "message_delta":
+                usage["output_tokens"] += (inner.get("usage") or {}).get("output_tokens") or 0
+        result = next((e for e, _ in events if e.get("type") == "result"), None)
+        meter["early_stops"] += result is None and code is None
+        model = args[args.index("--model") + 1] if "--model" in args else ""
+        prices = _PRICES.get(model, _PRICES["claude-sonnet-5-5"])
+        for key in TOKEN_KEYS:
+            meter[key] += usage[key]
+        meter["cost"] += sum(usage[key] * price for key, price in zip(TOKEN_KEYS, prices, strict=True)) / 1e6
+    return events, code, stderr
+
+
+def _system_chars(args: list[str]) -> int:
+    """The length of the system prompt a `claude -p` call was given, on its command line or in a file."""
+    if "--system-prompt-file" in args:  # still there: claude_code removes it when it returns
+        with open(args[args.index("--system-prompt-file") + 1], encoding="utf-8") as f:
+            return len(f.read())
+    return len(args[args.index("--system-prompt") + 1]) if "--system-prompt" in args else 0
+
+
 def run_thunc(task: Task, root: str, model: str, max_steps: int, n: int, variant: str = "thunc") -> dict[str, Any]:
     meter = collections.Counter()  # type: ignore[var-annotated]
     meter["call_seconds"], meter["prompt_chars"] = [], []  # type: ignore[assignment]
     _local.meter = meter
-    protocol, permissions = THUNC_VARIANTS[variant]
+    protocol, permissions, backend = THUNC_VARIANTS[variant]
     agent = thunc.Agent(
         f"bench-{task.name}-{n}-{os.getpid()}-{threading.get_ident()}",
         workdir=root,
         permissions=permissions,
         protocol=protocol,
-        backend="claude-code",
-        model=model,
+        backend=backend,
+        model=None if model == "default" else model,
         max_steps=max_steps,
         timeout=1200,
     )
@@ -544,6 +597,41 @@ def _counting_close(self: Any) -> None:
 
 
 _real_close = ClaudeCodeConversation.close
+_real_codex_close = CodexConversation.close
+
+
+def _add_codex_usage(meter: Any, usage: dict[str, Any]) -> None:
+    meter["input_tokens"] += usage.get("input_tokens") or 0
+    meter["cache_read_input_tokens"] += usage.get("cached_input_tokens") or 0
+    meter["output_tokens"] += usage.get("output_tokens") or 0
+
+
+def _counting_codex_close(self: Any) -> None:
+    """CodexConversation.close, also adding up the tokens its turns reported."""
+    meter = getattr(_local, "meter", None)
+    if meter is not None:
+        meter["calls"] += self.turn
+        _add_codex_usage(meter, self.usage)
+    _real_codex_close(self)
+
+
+_real_create = AnthropicConversation._create
+# $/M tokens on the Claude API: input, output, cache read, cache write (5-minute entries: 1.25x input)
+_API_PRICES = {"claude-sonnet-5-5": (2.0, 10.0, 0.20, 2.5), "claude-opus-5-5": (4.0, 20.0, 0.20, 5.0)}
+
+
+def _counting_create(self: Any) -> Any:
+    """AnthropicConversation._create, also adding up the tokens and cost of each API reply."""
+    response = _real_create(self)
+    meter = getattr(_local, "meter", None)
+    if meter is not None:
+        prices = _API_PRICES.get(self.model, _API_PRICES["claude-sonnet-5-5"])
+        usage = {key: getattr(response.usage, key, 0) or 0 for key in TOKEN_KEYS}
+        meter["calls"] += 1
+        meter["cost"] += sum(usage[key] * price for key, price in zip(TOKEN_KEYS, prices, strict=True)) / 1e6
+        for key in TOKEN_KEYS:
+            meter[key] += usage[key]
+    return response
 
 
 def _retyped(agent: thunc.Agent, task: Task) -> Callable[..., Any]:
@@ -784,16 +872,81 @@ def _claude_stream(args: list[str], prompt: str, cwd: str) -> dict[str, Any]:
     }
 
 
-# thunc variants: (protocol, permissions)
+def run_codex(task: Task, root: str, model: str, max_steps: int, n: int) -> dict[str, Any]:
+    prompt = task.instructions
+    if task.returns is not str:
+        prompt += (
+            f"\n\nWhen you are done, end your reply with your answer as {describe(task.returns, True)}, "
+            "alone in a ```json code block."
+        )
+    args = ["codex", "exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check", "--ephemeral",
+            "--ignore-user-config", "--color", "never"]  # fmt: skip
+    if model != "default":
+        args += ["--model", model]
+    started = time.monotonic()
+    proc = subprocess.run([*args, "-"], input=prompt, cwd=root, capture_output=True, text=True, timeout=1500)
+    events = []
+    for line in proc.stdout.splitlines():
+        with contextlib.suppress(ValueError):
+            events.append(json.loads(line))
+    calls, text, usage, error = [], "", collections.Counter(), None  # type: ignore[var-annotated]
+    for e in events:
+        item = e.get("item") or {}
+        if e.get("type") == "item.completed" and item.get("type") == "agent_message":
+            text = item.get("text") or ""
+        elif e.get("type") == "item.completed" and item.get("type") in (
+            "command_execution",
+            "file_change",
+            "mcp_tool_call",
+        ):
+            result = item.get("aggregated_output") or item.get("changes") or ""
+            failed = item.get("status") == "failed" or (item.get("exit_code") not in (None, 0))
+            calls.append({"tool": item["type"], "args": item.get("command") or item.get("changes"),
+                          "result": ("error: " if failed else "") + str(result)[:4000]})  # fmt: skip
+        elif e.get("type") == "turn.completed":
+            usage.update({k: v for k, v in (e.get("usage") or {}).items() if isinstance(v, int)})
+        elif e.get("type") == "turn.failed":
+            error = str((e.get("error") or {}).get("message"))[:300]
+    out: dict[str, Any] = {
+        "value": None,
+        "error": error or (None if proc.returncode == 0 else f"codex exited {proc.returncode}: {proc.stderr[-300:]}"),
+        "turns": len(calls) + 1,  # Codex doesn't count model replies; its tool calls, and the answer
+        "seconds": round(time.monotonic() - started, 1),
+        "tool_calls": calls,
+        "nudges": [],
+        "usage": {
+            "calls": 1,
+            "cost": 0,
+            "input_tokens": usage["input_tokens"],
+            "cache_read_input_tokens": usage["cached_input_tokens"],
+            "output_tokens": usage["output_tokens"],
+        },  # fmt: skip
+    }
+    if task.returns is str:
+        out["value"] = text
+    elif not out["error"]:
+        fence = re.findall(r"```(?:json)?\s*(.*?)```", text, re.S)
+        try:
+            out["value"] = parse(fence[-1] if fence else text, task.returns)
+        except ValueError as exc:
+            out["error"] = f"unparseable answer: {exc}"
+    return out
+
+
+# thunc variants: (protocol, permissions, backend)
 THUNC_VARIANTS = {
-    "thunc": (None, ["write", "run"]),
-    "thunc-text": ("text", ["write", "run"]),
-    "thunc-shell": (None, ["write", "shell"]),
-    "thunc-fixed": ("text", ["write", "run"]),
+    "thunc": (None, ["write", "run"], "claude-code"),
+    "thunc-text": ("text", ["write", "run"], "claude-code"),
+    "thunc-shell": (None, ["write", "shell"], "claude-code"),
+    "thunc-fixed": ("text", ["write", "run"], "claude-code"),
+    "thunc-api": (None, ["write", "run"], "anthropic"),
+    "thunc-codex": (None, ["write", "run"], "codex"),
+    "thunc-codex-text": ("text", ["write", "run"], "codex"),
 }
 HARNESSES = {
     **{name: functools.partial(run_thunc, variant=name) for name in THUNC_VARIANTS},
     "claude-code": run_claude_code,
+    "codex": run_codex,
 }
 
 
@@ -882,7 +1035,10 @@ def main() -> None:
             report(json.load(f))
         return
     backends._run_cli = _counting_run_cli
+    backends._cli_events = _counting_cli_events
     ClaudeCodeConversation.close = _counting_close  # type: ignore[method-assign]
+    CodexConversation.close = _counting_codex_close  # type: ignore[method-assign]
+    AnthropicConversation._create = _counting_create  # type: ignore[method-assign]
     harnesses = args.harness.split(",")
     if "thunc-fixed" in harnesses:
         if len(harnesses) > 1:
