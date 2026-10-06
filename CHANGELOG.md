@@ -7,12 +7,13 @@ All notable changes to thunc. The full notes for each release are on the
 
 ### Added
 
-- **`thunc-watch`**, a live dashboard in the terminal for a program's thunc calls and agent runs:
+- **`thunc watch`**, a live dashboard in the terminal for a program's thunc calls and agent runs:
   calls in flight, retries and why each reply was rejected, per-function timings, each agent's
-  steps as they happen, and the `--profile` report when the program ends. `thunc-watch app.py`
-  runs a program and watches it; `thunc-watch --agents` follows agent runs from any process;
-  `--plain` prints one line per event for CI. A Rust binary in `watch/`, so the Python package
-  keeps no dependencies.
+  steps as they happen, and the `--profile` report when the program ends. Click around with the
+  mouse or use the keys. `thunc watch app.py` runs a program and watches it; `thunc watch --agents`
+  follows agent runs from any process; `--plain` prints one line per event for CI. It's a compiled
+  binary in its own package, thunc-watch, installed with `pip install "thunc[watch]"`, so thunc
+  itself stays pure Python with no dependencies.
 - **`THUNC_EVENTS=FILE`** writes one JSON line per call, attempt and agent step to FILE, which
   thunc-watch reads. Inputs, replies and values are cut to short previews unless
   `THUNC_EVENTS_CAPTURE=1`. Nothing is written when it isn't set.

@@ -53,6 +53,13 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+      - name: The PyPI wheel builds and runs
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          pipx run maturin build --release --locked --out dist
+          python -m venv /tmp/wheel-check
+          /tmp/wheel-check/bin/pip install --quiet dist/*.whl ..
+          /tmp/wheel-check/bin/thunc watch --version
 
   temporal-integration:
     runs-on: ubuntu-latest

@@ -339,7 +339,7 @@ impl AgentsDir {
             if w.reader.ended || !w.reader.started {
                 continue;
             }
-            let alive = newest.get(&w.agent_dir) == Some(path) && lock_holder_alive(&w.agent_dir, path);
+            let alive = newest.get(&w.agent_dir) == Some(path) && lock_holder_alive(&w.agent_dir);
             w.dead_checks = if alive { 0 } else { w.dead_checks + 1 };
             if w.dead_checks >= 2 {
                 out.push(w.reader.interrupted(now));
@@ -357,12 +357,22 @@ fn agent_name(dir: &Path) -> String {
         .unwrap_or(folder)
 }
 
-#[cfg(unix)]
-fn lock_holder_alive(agent_dir: &Path, _session: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(agent_dir.join(".lock")) else {
+/// Whether the process named in an agent's `.lock` is alive. thunc writes the holder's PID at the
+/// start of the file. On Windows it also locks a byte far past it, which other processes can't
+/// read, so only the first bytes are read.
+fn lock_holder_alive(agent_dir: &Path) -> bool {
+    let Ok(mut f) = File::open(agent_dir.join(".lock")) else {
         return false;
     };
-    let Ok(pid) = text.trim_matches(char::from(0)).trim().parse::<libc::pid_t>() else {
+    let mut head = [0u8; 32];
+    let n = f.read(&mut head).unwrap_or(0);
+    let digits: String = head[..n].iter().map(|&b| b as char).take_while(char::is_ascii_digit).collect();
+    digits.parse::<u32>().is_ok_and(process_alive)
+}
+
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
     // SAFETY: signal 0 only checks that the process exists.
@@ -370,14 +380,27 @@ fn lock_holder_alive(agent_dir: &Path, _session: &Path) -> bool {
     r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-#[cfg(not(unix))]
-fn lock_holder_alive(_agent_dir: &Path, session: &Path) -> bool {
-    // No process check here yet: a record that changed in the last ten minutes counts as running.
-    std::fs::metadata(session)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|m| m.elapsed().ok())
-        .is_some_and(|age| age.as_secs() < 600)
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    // SAFETY: the handle is checked before use and closed after; the exit code is written into a
+    // local we own.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false; // gone, or not ours to ask about
+        }
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(handle, &mut code) != 0;
+        CloseHandle(handle);
+        ok && code == STILL_ACTIVE as u32
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn process_alive(_pid: u32) -> bool {
+    true // no way to ask: a run without an end counts as running
 }
 
 /// A file played back: an events file, or one agent's session record.
@@ -497,6 +520,23 @@ mod tests {
         let second = dir.poll();
         assert!(matches!(&second[..], [Ev::AgentEnd { ok: false, error: Some(e), .. }] if e.contains("process ended")));
         assert!(dir.poll().is_empty());
+    }
+
+    #[test]
+    fn a_run_whose_lock_holder_is_alive_stays_running() {
+        let root = temp("alive");
+        let sessions = root.join("a").join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        std::fs::write(
+            sessions.join("2026-10-05T11-00-00.000000Z-b.jsonl"),
+            "{\"time\": \"2026-10-05T11:00:00+0000\", \"event\": \"start\", \"task\": \"b\"}\n",
+        )
+        .unwrap();
+        // This test's own PID, then padding, as thunc writes it.
+        std::fs::write(root.join("a").join(".lock"), format!("{}\0\0\0", std::process::id())).unwrap();
+        let mut dir = AgentsDir::new(root);
+        let seen: Vec<Ev> = (0..3).flat_map(|_| dir.poll()).collect();
+        assert!(matches!(&seen[..], [Ev::AgentStart { .. }]), "{seen:?}");
     }
 
     #[test]

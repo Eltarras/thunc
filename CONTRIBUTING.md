@@ -44,6 +44,18 @@ real local Temporal service too (they download it once and make no model calls):
 THUNC_TEMPORAL_TESTS=1 .venv/bin/pytest -c pytest-temporal.ini tests/temporal
 ```
 
+If you touch `watch/`, the dashboard, CI also builds and tests it on Linux, macOS and Windows. It
+needs a Rust toolchain; from `watch/`, run:
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+A change to the events in `thunc/events.py` is a change to what the dashboard reads: update
+`watch/src/event.rs` in the same PR, and raise the format number if old dashboards would misread it.
+
 ## Ground rules
 
 - **Standard library only in the core.** A provider SDK is an optional extra in `pyproject.toml`,

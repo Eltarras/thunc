@@ -1,7 +1,8 @@
-"""The `thunc` command (also `python -m thunc`): run a program, and look at and clear the answer cache.
+"""The `thunc` command (also `python -m thunc`): run or watch a program, and look at and clear the answer cache.
 
 thunc run [--profile] SCRIPT [ARG]...
 thunc run [--profile] -m MODULE [ARG]...
+thunc watch [OPTION]... SCRIPT [ARG]...    (the dashboard: pip install "thunc[watch]")
 thunc cache list
 thunc cache clear [--function NAME]... [--older-than AGE] [--dry-run] [--cache-dir DIR]
 """
@@ -12,7 +13,10 @@ import argparse
 import os
 import re
 import runpy
+import shutil
+import subprocess
 import sys
+import sysconfig
 import traceback
 from collections.abc import Sequence
 from contextlib import nullcontext
@@ -24,7 +28,13 @@ from .config import cache_dir
 _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
+WATCH_INSTALL = 'thunc watch needs the thunc-watch package. Install it with: pip install "thunc[watch]"'
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["watch"]:  # everything after it is for thunc-watch, options included
+        return _watch(argv[1:])
     args = _parser().parse_args(argv)
     if args.command == "run":
         return _run(args.target, args.args, module=args.module, profile=args.profile)
@@ -48,6 +58,11 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("-m", dest="module", action="store_true", help="TARGET is a module name, as in python -m")
     run.add_argument("target", metavar="TARGET", help="the script to run (or the module, with -m)")
     run.add_argument("args", nargs=argparse.REMAINDER, metavar="ARG", help="arguments passed to the program")
+    commands.add_parser(
+        "watch",
+        help="run a program with a live dashboard of its calls and agent runs (needs thunc[watch])",
+        add_help=False,  # `thunc watch --help` is thunc-watch's own help
+    )
     cache = commands.add_parser("cache", help="look at or clear the answers saved by cache=True")
     actions = cache.add_subparsers(dest="action", required=True, metavar="ACTION")
 
@@ -99,6 +114,38 @@ def _run(target: str, args: list[str], *, module: bool, profile: bool) -> int:
         sys.stdout.flush()
         print(f"\n{profiler.report(f'thunc profile: {target}')}", file=sys.stderr)
     return code
+
+
+def _watch(args: list[str]) -> int:
+    """`thunc watch`: run the thunc-watch dashboard. Scripts it runs get this Python, where thunc is."""
+    binary = _watch_binary()
+    if binary is None:
+        print(WATCH_INSTALL, file=sys.stderr)
+        return 2
+    # Its own --python, given later, wins over this one.
+    argv = [binary, "--python", sys.executable, *args]
+    if sys.platform != "win32":
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.execv(binary, argv)  # the dashboard takes over this process: signals and exit code are its own
+    process = subprocess.Popen(argv)
+    while True:
+        try:
+            return process.wait()
+        except KeyboardInterrupt:  # the dashboard handles Ctrl+C itself
+            continue
+
+
+def _watch_binary() -> str | None:
+    """thunc-watch from THUNC_WATCH_BIN, next to this Python (where pip puts it), or on PATH."""
+    if path := os.environ.get("THUNC_WATCH_BIN"):
+        return path
+    name = "thunc-watch.exe" if sys.platform == "win32" else "thunc-watch"
+    for folder in (sysconfig.get_path("scripts"), os.path.dirname(sys.executable)):
+        candidate = os.path.join(folder, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return shutil.which("thunc-watch")
 
 
 def _exit_message(message: object) -> int:
