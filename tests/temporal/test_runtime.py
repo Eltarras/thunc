@@ -552,3 +552,51 @@ async def test_custom_tools_run_in_a_durable_run_and_an_uncertain_one_waits(serv
         status = await second.status()
         await second.resolve(status["operation_id"], "complete", "Checked the tracker: issue 99 exists", output="99")
         assert (await asyncio.wait_for(second.result(), 20)).value == 99 and opened == ["Flaky test"]
+
+
+@pytest.mark.asyncio
+async def test_a_claude_code_run_resumes_its_session_after_a_crash(service, tmp_path, monkeypatch):
+    import sys
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    code = (Path(__file__).parent.parent / "fake_claude.py").read_text()
+    (bin_dir / "claude").write_text(f"#!{sys.executable}\n{code}")
+    (bin_dir / "claude").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "claude-log.json"))
+    call = {"calls": [["open_issue", {"title": "Flaky test"}]]}
+    monkeypatch.setenv("FAKE_CLAUDE_SCRIPT", json.dumps([call, {"exit": 1}]))  # dies after the call's result
+    monkeypatch.setenv("FAKE_CLAUDE_RESUME_SCRIPT", json.dumps([call, {"calls": [["finish", {"value": 41}]]}]))
+    root = tmp_path / "workspace"
+    root.mkdir()
+    opened = []
+
+    def open_issue(title: str) -> int:
+        """Open an issue in the tracker. Returns its number."""
+        opened.append(title)
+        return 40 + len(opened)
+
+    agent = thunc.Agent("native", workdir=root, tools=[open_issue], backend="claude-code")
+
+    @agent.task
+    def report() -> int:
+        """Open an issue for the flaky test and finish with its number."""
+        ...
+
+    registry = Registry(state_dir=tmp_path / "state")
+    registry.agent_task("report", report, version="1", workspace_id="native")
+    runtime = Runtime(service.client, task_queue="native")
+    async with Worker(service.client, task_queue="native", registry=registry):
+        handle = await runtime.start(
+            "report", version="1", workspace_id="native", inputs={}, returns=int, request_id="one"
+        )
+        run = await asyncio.wait_for(handle.result(), timeout=60)
+    assert run.value == 41 and opened == ["Flaky test"]  # the call was replayed from the journal, not repeated
+    assert run.retries == 1  # the attempt the crash ended
+    log = json.loads((tmp_path / "claude-log.json").read_text())
+    assert "--resume" in log["args"] and log["resumed_lines"] >= 2
+    assert not list((tmp_path / "claude-home" / "projects").glob("*/*.jsonl"))  # the session was removed
+    history = await service.client.get_workflow_handle(handle.id).fetch_history()
+    await Replayer(workflows=[AgentWorkflow]).replay_workflow(history)

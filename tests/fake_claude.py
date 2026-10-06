@@ -12,6 +12,10 @@ does, then plays a script instead of asking a model. FAKE_CLAUDE_SCRIPT is a JSO
 A turn after a text or error turn waits for the next user message, as the real CLI does. What it
 saw (arguments, system prompt, tools, user messages, tool results) goes to FAKE_CLAUDE_LOG as JSON.
 
+With --session-id or --resume (a durable run), it keeps a session file as Claude Code does, one
+line per message, under CLAUDE_CONFIG_DIR/projects/<the working directory>/<id>.jsonl; --resume
+needs that file and logs how many lines it had, and plays FAKE_CLAUDE_RESUME_SCRIPT if that's set.
+
 FAKE_CLAUDE_MODE plays a CLI that can't run thunc's tools: "old" rejects an option and exits, as a
 CLI too old for the options would; "no-mcp" starts without loading any MCP server, as when a policy
 turns them off, and ends its turn with text.
@@ -19,6 +23,7 @@ turns them off, and ends its turn with text.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -41,10 +46,25 @@ def main():
         time.sleep(60)
     log = {"args": args, "cwd": os.getcwd(), "messages": [], "results": []}
     path = os.environ["FAKE_CLAUDE_LOG"]
+    session_file = None
+    for flag in ("--session-id", "--resume"):
+        if flag in args:
+            home = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+            folder = os.path.join(home, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.getcwd())))
+            os.makedirs(folder, exist_ok=True)
+            session_file = os.path.join(folder, args[args.index(flag) + 1] + ".jsonl")
+            if flag == "--resume":
+                with open(session_file, encoding="utf-8") as f:  # restored by the run before resuming
+                    log["resumed_lines"] = len(f.read().splitlines())
 
     def save():
         with open(path, "w", encoding="utf-8") as f:
             json.dump(log, f)
+
+    def remember(kind, content):  # a line of the saved session
+        if session_file:
+            with open(session_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"type": kind, "content": content}) + "\n")
 
     with open(args[args.index("--system-prompt-file") + 1], encoding="utf-8") as f:
         log["system"] = f.read()
@@ -92,9 +112,13 @@ def main():
 
     emit({"type": "system", "subtype": "init", "mcp_servers": [{"name": "thunc", "status": "connected"}]})
     log["messages"].append(json.loads(sys.stdin.readline())["message"]["content"])
+    remember("user", log["messages"][-1])
     save()
     ident = 10
-    for n, turn in enumerate(json.loads(os.environ["FAKE_CLAUDE_SCRIPT"])):
+    script = os.environ["FAKE_CLAUDE_SCRIPT"]
+    if "--resume" in args and os.environ.get("FAKE_CLAUDE_RESUME_SCRIPT"):  # a continued session plays its own
+        script = os.environ["FAKE_CLAUDE_RESUME_SCRIPT"]
+    for n, turn in enumerate(json.loads(script)):
         if "exit" in turn:
             save()
             os._exit(turn["exit"])
@@ -102,6 +126,7 @@ def main():
             blocks = [{"type": "tool_use", "id": f"t{n}-{i}", "name": "mcp__thunc__" + name, "input": arguments}
                       for i, (name, arguments) in enumerate(turn["calls"])]  # fmt: skip
             emit({"type": "assistant", "message": {"id": f"m{n}", "content": blocks}})
+            remember("assistant", blocks)
             idents = []
             for name, arguments in turn["calls"]:
                 ident += 1
@@ -114,10 +139,12 @@ def main():
                 for one in wait_for:
                     result = wait(one)["result"]
                     log["results"].append({"text": result["content"][0]["text"], "error": result["isError"]})
+                    remember("tool_result", result["content"][0]["text"])
                     save()
             for one in idents:
                 result = wait(one)["result"]
                 log["results"].append({"text": result["content"][0]["text"], "error": result["isError"]})
+                remember("tool_result", result["content"][0]["text"])
                 save()
             continue
         if "text" in turn:

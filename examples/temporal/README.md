@@ -116,6 +116,12 @@ are rejected. Values are JSON, never pickled Python objects.
   are part of the task's fingerprint.
 - Read hashes, native provider reasoning/signatures, pending calls and all repair
   counters survive restarts. Native multi-tool replies are executed in order.
+- On Claude Code, a run makes native tool calls in segments: one activity keeps one
+  `claude -p` process for many model replies and checkpoints the run and Claude
+  Code's saved session before each reply's calls. A retried activity restores the
+  session and continues it with `--resume`; the call that was in flight, asked for
+  again, gets its old journal entry, so it's replayed, waits for `resolve()`, or
+  runs. The session is removed when the run ends.
 - Commands support cooperative cancellation and process-group cleanup. A hard
   worker kill can leave subprocesses running. Inspect/stop those processes before
   resolving an uncertain command. Agent permissions are not an OS sandbox.
