@@ -93,7 +93,7 @@ Anything from users, files or the web goes in the inputs:
 
 | | |
 |---|---|
-| `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `system=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`. The body must be empty (`...`); real code raises `TypeError`. `async def` works |
+| `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `system=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`, `write=` (see [thunc write](#thunc-write)). The body must be empty (`...`); real code raises `TypeError`. `async def` works |
 | `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None, system=None, cache=False, name=None)` | One prompt. Inputs are sent separately from the instructions. `name=` groups its cached answers |
 | `thunc.map(func, items, *, workers=8)` | Runs calls in parallel, keeping the input order. Each call takes 4–8s, so this is the main speed lever |
 | `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=, system=, agents_dir=)` | Process-wide settings. `trace="calls.jsonl"` logs every call |
@@ -240,6 +240,46 @@ the keys and `--plain` output for CI.
 
 **Type checking:** signatures and return types are visible to mypy and Pyright. mypy reports
 empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
+
+## thunc write
+
+> **New in 0.3.** thunc write edits your source files, while you develop, as a diff to review. The API may change as feedback comes in.
+
+Functions that write themselves. With `write=True`, a function writes its own body on its first call:
+
+```python
+@thunc.function(write=True)
+def minutes(duration: str) -> int:
+    """Convert a duration like '1h 30m', '90 min' or '2 hours' to whole minutes."""
+    ...
+
+
+minutes("1h 30m")  # -> 90, and minutes() is now Python in your file
+```
+
+```
+thunc: writing minutes() in durations.py (first call)
+thunc: checked against 6 model answers: all agree
+thunc: wrote durations.py lines 5-27 in 14s (answer 4s, draft 11s, test calls 9s; side by side). Removed @thunc.function. Review: git diff durations.py
+```
+
+On the first call, three requests start side by side: this call's answer, a draft of the body
+(from the docstring and signature, with the whole file in view), and five test calls, each
+answered by the model on its own. The draft is linted, run on this call and the test calls, and
+has to match every answer; one that doesn't goes back with the failing calls, up to three drafts.
+A passing draft replaces the `...` in your file, the decorator is removed (`import thunc` stays),
+the checked calls become doctest examples, and the call runs the new code. From then on it's
+plain Python, with no model calls.
+
+If the model says the task needs judgment (rating urgency, summarising), or no draft passes, the
+call returns the model's answer, the file stays as it was, and the reason is saved in
+`.thunc_write/` until the docstring or signature changes. Writing is refused, with a warning, in
+CI or with `THUNC_WRITE=0` (set it in production), outside your project, and for read-only files,
+installed code and functions inside functions. Write one ahead of its first call, or see the diff
+first, with `thunc write durations.py::minutes [--dry-run]`.
+
+The checks are only as good as the model's answers, so review the rule it wrote. The
+[thunc write guide](https://eltarras.github.io/thunc/docs/write.html) has the details.
 
 ## Agents
 
@@ -475,6 +515,7 @@ history replay and upgrades.
 | [jev_hello.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_hello.py) | The smallest Jev calls: a yes/no, a label and a rating |
 | [jev_inbox.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_inbox.py) | A support inbox triaged on Jev: spam, team and urgency for 8 tickets in about a second |
 | [jev_with_claude.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_with_claude.py) | Jev decides which messages need a reply; Claude writes only those replies |
+| [thunc_write.py](https://github.com/Eltarras/thunc/blob/main/examples/thunc_write.py) | thunc write: a function that writes itself into a scratch file on its first call, then runs as plain Python |
 
 ## Code
 
@@ -482,6 +523,8 @@ history replay and upgrades.
 thunc/
   __init__.py    public API
   decorator.py   @thunc.function
+  writing.py     write=True: drafting, checking and writing a function's body
+  source.py      editing one function in its source file, and compiling it from there
   agent.py       thunc.Agent, @agent.task, @thunc.agent
   tools.py       the agent's tools: list, read, search, write, edit, run
   permissions.py the agent's permission rules
@@ -494,7 +537,7 @@ thunc/
   relay.py       the run's end of the MCP server: the connection the calls come through
   store.py       the agent's folder: memory, settings, run records, the lock
   prompts.py     the agent's system prompt
-  __main__.py    the thunc command: thunc run [--profile], thunc watch, thunc cache list / clear
+  __main__.py    the thunc command: thunc run [--profile], thunc watch, thunc write, thunc cache list / clear
   profiling.py   thunc run --profile: timing records and the report
   events.py      THUNC_EVENTS: the live events thunc watch reads
   core.py        thunc.call, thunc.map, tracing
@@ -507,7 +550,7 @@ thunc/
 watch/           thunc watch, the dashboard: a Rust binary, published as thunc-watch
 tests/           offline: a fake backend, never a real model
 live_tests/      against a real model: hello, a yes/no decision, labels and ratings, messy text to a
-                 dict, agents; also the agent prompt eval (eval_prompts.py) and the tool-use
+                 dict, agents, thunc write; also the agent prompt eval (eval_prompts.py) and the tool-use
                  benchmark (bench_tooluse.py)
 examples/
 ```

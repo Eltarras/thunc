@@ -78,3 +78,17 @@ You are investigating a codebase or a set of documents to answer a question accu
 - Change nothing. Treat this as a read-only task even if you have permission to write."""
 
 PRESETS = {"CODING": CODING, "CODE_REVIEW": CODE_REVIEW, "ANALYSIS": ANALYSIS}
+
+# The requests behind a @thunc.function(write=True) (see writing.py). Not presets: they're tasks.
+WRITER = """\
+Write the body of the Python function in <function>, so that it does what its docstring says as plain Python, with no model behind it. The function is in the file <file>, whose full text is in <module>; <types> has any classes from elsewhere in the project that its signature uses. thunc runs your code on test calls, compares the results with a model's answers, and then puts it into the file in place of the empty body.
+- Write the general rule the docstring describes. Code that only handles particular inputs, such as the example call, is rejected.
+- body: the statements of the body only, without the def line or the docstring, not indented. Make it clear, plain code that a reviewer can check by reading it.
+- imports: one import statement per item (like "import re"), for modules the body needs. Use only the standard library and modules the file already imports. Don't import inside the body. Don't run commands, use the network, call eval or exec, or write files.
+- For inputs the docstring doesn't cover, or that rules can't handle reliably, raise ValueError with a short message. Never guess.
+- Your code must give the same answer as the model for the call in <example_call>, and for other inputs the docstring covers.
+- If doing what the docstring asks needs judgment, world knowledge or an understanding of language that rules can't capture reliably (rating urgency, summarising, translating, detecting sentiment), set can_write to false, say why in reason, and leave imports and body empty. That's a good result, not a failure.
+- If <problems> is present, your previous attempt (in <previous_body>) failed those checks. Fix the cause in the rule rather than special-casing the failing inputs."""
+
+CASES = """\
+Suggest five test calls for the Python function in <function>: varied, realistic inputs that its docstring clearly says how to answer, including the edge cases it implies. Write each as a Python call expression with literal arguments, like minutes('2 hours'), using the function's name even for a method. Don't repeat the call in <example_call>."""
