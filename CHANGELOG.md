@@ -3,7 +3,15 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
-## Unreleased (0.3)
+## 0.3.0 (beta)
+
+**Watch a program's calls and agent runs live.** `thunc watch app.py` runs a program with a
+dashboard in the terminal: the calls waiting on a model, retries and why each reply was rejected,
+timings for each function, each agent's steps as they happen, and the `--profile` report when the
+program ends. `--agents` follows agent runs from any process, `--plain` prints one line per event
+for CI, and a saved run can be replayed. The dashboard is a compiled binary in its own package,
+thunc-watch 0.1, installed with `pip install "thunc[watch]"`, so thunc itself stays pure Python with
+no dependencies. Nothing else changes: a program that doesn't set `THUNC_EVENTS` behaves as in 0.2.3.
 
 ### Added
 
