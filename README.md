@@ -95,8 +95,8 @@ Anything from users, files or the web goes in the inputs:
 |---|---|
 | `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `system=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`. The body must be empty (`...`); real code raises `TypeError`. `async def` works |
 | `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None, system=None, cache=False, name=None)` | One prompt. Inputs are sent separately from the instructions. `name=` groups its cached answers |
-| `thunc.map(func, items, workers=8)` | Runs calls in parallel, keeping the input order. Each call takes 4–8s, so this is the main speed lever |
-| `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=, system=)` | Process-wide settings. `trace="calls.jsonl"` logs every call |
+| `thunc.map(func, items, *, workers=8)` | Runs calls in parallel, keeping the input order. Each call takes 4–8s, so this is the main speed lever |
+| `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=, system=, agents_dir=)` | Process-wide settings. `trace="calls.jsonl"` logs every call |
 | `thunc.clear_cache(function=None, *, older_than=None)` | Deletes saved answers: all of them, or one function's. Returns how many |
 | `thunc.cache_info()` | What's in the cache, one group per function |
 | `thunc.ThuncError` | Raised when no valid answer arrives after the retries |
@@ -486,9 +486,11 @@ thunc/
   tools.py       the agent's tools: list, read, search, write, edit, run
   permissions.py the agent's permission rules
   runs.py        thunc.Run and AgentError: what a run did
+  execution.py   the agent loop's decisions, shared by local and durable runs
   native.py      how a run talks to its backend: native tool calls or the text protocol
   claude_code.py native tool calls on Claude Code, through an MCP server (mcp_relay.py)
   codex.py       native tool calls on Codex, the same way
+  mcp_relay.py   the MCP server the CLI starts: it forwards each tool call to the run
   relay.py       the run's end of the MCP server: the connection the calls come through
   store.py       the agent's folder: memory, settings, run records, the lock
   prompts.py     the agent's system prompt
@@ -501,9 +503,12 @@ thunc/
   config.py      settings and backend selection
   backends.py    anthropic, openai, claude-code, codex, jev
   errors.py      ThuncError, and TransientError for failures worth asking again
+  temporal/      durable agents on Temporal: registry, worker, client, workflows, effect journal
 watch/           thunc watch, the dashboard: a Rust binary, published as thunc-watch
 tests/           offline: a fake backend, never a real model
-live_tests/      against a real model: hello, a yes/no decision, labels and ratings, messy text to a dict
+live_tests/      against a real model: hello, a yes/no decision, labels and ratings, messy text to a
+                 dict, agents; also the agent prompt eval (eval_prompts.py) and the tool-use
+                 benchmark (bench_tooluse.py)
 examples/
 ```
 
