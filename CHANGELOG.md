@@ -59,8 +59,8 @@ once, and no longer needs a prior `read`. In the tool-use benchmark (`live_tests
   saved, so thunc deletes the run's Codex session (`codex delete --force`) when the run ends.
 - **`Agent(effort=...)`**: `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, on every backend
   (`output_config.effort` on the Claude API, `reasoning.effort` on OpenAI, `--effort` on Claude Code,
-  `model_reasoning_effort` on Codex; the last two go up to `"xhigh"`). Recorded in `agent.json` only
-  when set, so durable tasks registered without it keep their fingerprint.
+  `model_reasoning_effort` on Codex; OpenAI and Codex go up to `"xhigh"`). Recorded in `agent.json`
+  only when set, so durable tasks registered without it keep their fingerprint.
 - **The model is told when few steps are left.** In its last three replies before `max_steps`, the
   last tool result says how many replies remain, so the model can finish with what it has instead
   of being cut off. Every protocol and durable runs get it; the run record keeps each tool's output.
