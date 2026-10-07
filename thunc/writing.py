@@ -96,6 +96,15 @@ class Rejected(Exception):
     """A draft failed its checks; args[0] lists the problems, as the next draft request shows them."""
 
 
+class NotWritten(Exception):
+    """The function wasn't written; the message says why."""
+
+
+# The call being answered while the function is written: its arguments and the model's answer.
+# None when it's written ahead of any call (thunc write).
+Answered = tuple[tuple[Any, ...], dict[str, Any], Any]
+
+
 class _Timer:
     """How long each part of a write took, for the message at the end."""
 
@@ -155,42 +164,24 @@ class Writer:
         if reason:
             self._stop(f"{self.short}() won't be written: {reason}. It answers through the model.")
             return self._ask(args, kwargs)
-        assert self.path is not None
-        root = _project_root(self.path)
-        assert root is not None
-        key = self._key(root)
+        root, key = self._root_and_key()
         with _file_lock(root, key):
-            if _digest(self.path) != self.digest:
-                self._stop(
-                    f"{self.short}() won't be written: {_relative(self.path)} changed since it was imported "
-                    "(written by another process?). Restart the program to use the file as it is now."
-                )
+            opened = self._open(root, key, use_memo=True)
+            if isinstance(opened, str):
+                self._stop(opened)
                 return self._ask(args, kwargs)
-            saved = _read_memo(root, key)
-            if saved is not None:
-                self._stop(
-                    f"{self.short}() stays a model call: {saved}. Change its docstring or signature to try again, "
-                    f"or delete {FOLDER}/{key}.json."
-                )
-                return self._ask(args, kwargs)
-            try:
-                text, encoding = source.read(self.path)
-                node = source.find(ast.parse(text), self.func.__qualname__, self.func.__code__.co_firstlineno)
-            except (source.SourceError, OSError, SyntaxError, UnicodeDecodeError) as exc:
-                self._stop(f"{self.short}() won't be written: {exc}. It answers through the model.")
-                return self._ask(args, kwargs)
-
-            _say(f"writing {self.short}() in {_relative(self.path)} (first call)")
+            text, encoding, node = opened
+            _say(f"writing {self.short}() in {_relative(self.path or '')} (first call)")
             timer = _Timer()
-            inputs = self._draft_inputs(text, node, root, args, kwargs)
             pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="thunc-write")
             try:
                 answering = pool.submit(timer.timed("answer", self._ask), args, kwargs)
-                drafting = pool.submit(timer.timed("draft", self._draft), inputs, text)
-                casing = pool.submit(timer.timed("test calls", self._cases), node, text, args, kwargs)
+                work = self._start(pool, timer, text, node, root, (args, kwargs))
                 answer = answering.result()  # its error is the call's error, as without write=True
                 try:
-                    self._write(root, key, text, encoding, node, inputs, drafting, casing, args, kwargs, answer, timer)
+                    self._write(root, key, text, encoding, node, work, timer, (args, kwargs, answer))
+                except NotWritten as exc:
+                    self._stop(f"{self.short}() stays a model call: {exc}")
                 except (ThuncError, source.SourceError, OSError) as exc:
                     self._stop(f"{self.short}() wasn't written: {exc}. It answers through the model for now.")
                 except Exception as exc:  # a bug in writing mustn't fail a call that already has its answer
@@ -199,6 +190,76 @@ class Writer:
                 return answer
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)  # after a failure, nothing waits for the rest
+
+    def write_now(self, dry_run: bool = False) -> str:
+        """Write the function ahead of any call, for `thunc write`, and return the file's new text.
+        With dry_run the file is left as it is and nothing is saved. Raises NotWritten saying why when
+        it isn't written. A reason saved by an earlier attempt is ignored: this was asked for."""
+        if self.impl is not None:
+            raise NotWritten("it was written already")
+        reason = self._refusal()
+        if reason:
+            raise NotWritten(reason)
+        if self.spec.skip:
+            raise NotWritten("it's a method, and thunc write has no instance to test it with; call it once instead")
+        root, key = self._root_and_key()
+        with self._lock, _file_lock(root, key):
+            opened = self._open(root, key, use_memo=False)
+            if isinstance(opened, str):
+                raise NotWritten(opened)
+            text, encoding, node = opened
+            _say(f"writing {self.short}() in {_relative(self.path or '')}" + (" (dry run)" if dry_run else ""))
+            timer = _Timer()
+            pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="thunc-write")
+            try:
+                work = self._start(pool, timer, text, node, root, None)
+                return self._write(root, key, text, encoding, node, work, timer, None, dry_run)
+            except (ThuncError, source.SourceError, OSError) as exc:
+                raise NotWritten(str(exc)) from exc
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+
+    def _root_and_key(self) -> tuple[str, str]:
+        assert self.path is not None
+        root = _project_root(self.path)
+        assert root is not None
+        return root, self._key(root)
+
+    def _open(self, root: str, key: str, use_memo: bool) -> tuple[str, str, source.Function] | str:
+        """The file's text, its encoding and the function's def, or a message saying why it can't be written."""
+        assert self.path is not None
+        if _digest(self.path) != self.digest:
+            return (
+                f"{self.short}() won't be written: {_relative(self.path)} changed since it was imported "
+                "(written by another process?). Restart the program to use the file as it is now."
+            )
+        saved = _read_memo(root, key) if use_memo else None
+        if saved is not None:
+            return (
+                f"{self.short}() stays a model call: {saved}. Change its docstring or signature to try again, "
+                f"run `thunc write`, or delete {FOLDER}/{key}.json."
+            )
+        try:
+            text, encoding = source.read(self.path)
+            node = source.find(ast.parse(text), self.func.__qualname__, self.func.__code__.co_firstlineno)
+        except (source.SourceError, OSError, SyntaxError, UnicodeDecodeError) as exc:
+            return f"{self.short}() won't be written: {exc}"
+        return text, encoding, node
+
+    def _start(
+        self,
+        pool: ThreadPoolExecutor,
+        timer: _Timer,
+        text: str,
+        node: source.Function,
+        root: str,
+        call: tuple[tuple[Any, ...], dict[str, Any]] | None,
+    ) -> tuple[dict[str, Any], Future[Draft], Future[list[Case]]]:
+        """Start the draft and the test calls side by side."""
+        inputs = self._draft_inputs(text, node, root, call)
+        drafting = pool.submit(timer.timed("draft", self._draft), inputs, text)
+        casing = pool.submit(timer.timed("test calls", self._cases), node, text, call)
+        return inputs, drafting, casing
 
     def _stop(self, message: str) -> None:
         self.off = message
@@ -213,15 +274,15 @@ class Writer:
         text: str,
         encoding: str,
         node: source.Function,
-        inputs: dict[str, Any],
-        drafting: Future[Draft],
-        casing: Future[list[Case]],
-        args: tuple[Any, ...],
-        kwargs: dict[str, Any],
-        answer: Any,
+        work: tuple[dict[str, Any], Future[Draft], Future[list[Case]]],
         timer: _Timer,
-    ) -> None:
+        answered: Answered | None,
+        dry_run: bool = False,
+    ) -> str:
+        """Check drafts until one passes, then write it and load it; returns the file's new text.
+        Raises NotWritten when it can't be written or no draft passes, saving the reason in .thunc_write/."""
         assert self.path is not None
+        inputs, drafting, casing = work
         line = source.first_line(node)
         draft = drafting.result()
         problems: list[str] = []
@@ -231,11 +292,11 @@ class Writer:
                 draft = timer.timed("draft", self._draft)(inputs, text)
             if not draft.can_write:
                 reason = " ".join(draft.reason.split()) or "the model said it can't be written as rules"
-                _write_memo(root, key, f"the model said it can't be written as code ({shorten(reason, 300)})")
-                self._stop(f"{self.short}() stays a model call: {shorten(reason, 300)}")
-                return
+                if not dry_run:
+                    _write_memo(root, key, f"the model said it can't be written as code ({shorten(reason, 300)})")
+                raise NotWritten(shorten(reason, 300))
             try:
-                examples, checked = self._verify(text, line, draft, casing.result(), args, kwargs, answer)
+                examples, checked = self._verify(text, line, draft, casing.result(), answered)
                 break
             except Rejected as rejected:
                 problems = list(rejected.args[0])
@@ -245,12 +306,14 @@ class Writer:
                 )
         else:
             summary = "; ".join(problems[:3])
-            _write_memo(root, key, f"no draft passed its checks in {ROUNDS} tries (last: {shorten(summary, 300)})")
-            self._stop(f"{self.short}() stays a model call: no draft passed its checks ({shorten(summary, 300)})")
-            return
+            if not dry_run:
+                _write_memo(root, key, f"no draft passed its checks in {ROUNDS} tries (last: {shorten(summary, 300)})")
+            raise NotWritten(f"no draft passed its checks ({shorten(summary, 300)})")
         _say(f"checked against {checked} model answers: all agree")
         note = f"Written by thunc from the docstring on {dt.date.today().isoformat()}. Review it."
         final, start = source.splice(text, self.func.__qualname__, line, draft.body, draft.imports, examples, note)
+        if dry_run:
+            return final
         source.write(self.path, final, encoding)
         namespace = self.func.__globals__
         source.run_imports(draft.imports, namespace)
@@ -260,9 +323,10 @@ class Writer:
             f"wrote {_relative(self.path)} lines {start}-{end} in {timer.report()}. "
             f"Removed @thunc.function. Review: git diff {_relative(self.path)}"
         )
+        return final
 
     def _draft_inputs(
-        self, text: str, node: source.Function, root: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+        self, text: str, node: source.Function, root: str, call: tuple[tuple[Any, ...], dict[str, Any]] | None
     ) -> dict[str, Any]:
         """What the draft request gets: the function, its file, and the project types it uses."""
         assert self.path is not None
@@ -271,7 +335,7 @@ class Writer:
             "file": _relative(self.path, root),
             "module": text,
             "return_type": describe(self.spec.returns),
-            "example_call": self._call_text(args, kwargs) or "(arguments that can't be written as literals)",
+            "example_call": self._example(call),
         }
         types = _project_types(self.func, root, self.path)
         if types:
@@ -295,14 +359,16 @@ class Writer:
         )
         return draft
 
-    def _cases(self, node: source.Function, text: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> list[Case]:
+    def _cases(
+        self, node: source.Function, text: str, call: tuple[tuple[Any, ...], dict[str, Any]] | None
+    ) -> list[Case]:
         """Test calls from the model, each then answered by the model on its own, side by side. A call
         the model can't answer is dropped; fewer than MIN_CASES left is a ThuncError."""
         calls: list[str] = _call(
             CASES,
             {
                 "function": source.function_source(text, node),
-                "example_call": self._call_text(args, kwargs) or "(not shown)",
+                "example_call": self._example(call),
             },
             list[str],
             3,
@@ -314,17 +380,17 @@ class Writer:
             self.func.__module__,
             CODER,
         )
-        bound_self = args[:1] if self.spec.skip else ()
+        bound_self = call[0][:1] if call and self.spec.skip else ()
         parsed = []
-        for call in calls:
-            case_args, case_kwargs = _case_arguments(call, self.short, self._classes())
-            parsed.append((call, (*bound_self, *case_args), case_kwargs))
+        for text_call in calls:
+            case_args, case_kwargs = _case_arguments(text_call, self.short, self._classes())
+            parsed.append((text_call, (*bound_self, *case_args), case_kwargs))
         cases: list[Case] = []
         with ThreadPoolExecutor(max_workers=8, thread_name_prefix="thunc-check") as pool:
             futures = [pool.submit(self._ask, a, k) for _, a, k in parsed]
-            for (call, a, k), future in zip(parsed, futures, strict=True):
+            for (text_call, a, k), future in zip(parsed, futures, strict=True):
                 try:
-                    cases.append(Case(call, a, k, future.result()))
+                    cases.append(Case(text_call, a, k, future.result()))
                 except (ThuncError, TypeError, ValueError):
                     continue  # the model couldn't answer it, or it doesn't fit the signature
         if len(cases) < MIN_CASES:
@@ -364,9 +430,7 @@ class Writer:
         line: int,
         draft: Draft,
         cases: list[Case],
-        args: tuple[Any, ...],
-        kwargs: dict[str, Any],
-        answer: Any,
+        answered: Answered | None,
     ) -> tuple[list[tuple[str, str]], int]:
         """Check a draft; raises Rejected with the problems. Returns the doctest examples and how many
         model answers the draft was checked against."""
@@ -385,8 +449,11 @@ class Writer:
         except Exception as exc:  # an import that fails, a name error at definition time
             raise Rejected([f"the code doesn't load: {type(exc).__name__}: {shorten(str(exc), 300)}"]) from None
 
-        this_call = self._call_text(args, kwargs)  # None when its arguments aren't literals
-        checks = [(this_call or f"{self.short}(<this call>)", this_call, args, kwargs, answer)]
+        checks: list[tuple[str, str | None, tuple[Any, ...], dict[str, Any], Any]] = []
+        if answered is not None:
+            args, kwargs, answer = answered
+            this_call = self._call_text(args, kwargs)  # None when its arguments aren't literals
+            checks.append((this_call or f"{self.short}(<this call>)", this_call, args, kwargs, answer))
         checks += [(case.text, case.text, case.args, case.kwargs, case.expected) for case in cases]
         examples: list[tuple[str, str]] = []
         for label, example, a, k, expected in checks:
@@ -461,6 +528,12 @@ class Writer:
         for i, cls in enumerate(classes):
             owner = self.func.__globals__.get(cls) if i == 0 else getattr(owner, cls, None)
         return owner if isinstance(owner, type) else None
+
+    def _example(self, call: tuple[tuple[Any, ...], dict[str, Any]] | None) -> str:
+        """The call being answered, for the draft and test-call requests."""
+        if call is None:
+            return "(none: the function is written before its first call)"
+        return self._call_text(*call) or "(arguments that can't be written as literals)"
 
     def _call_text(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
         """This call as source text, like minutes('1h 30m'), if its arguments can be written as literals."""

@@ -371,3 +371,73 @@ def test_the_float_kind_matters_for_int_functions(model, project):
     model.drafts = [draft(GOOD.replace("return round(", "return float(round(").rstrip() + ")\n"), draft()]
     assert app.minutes("1h 30m") == 90
     assert "returned 120.0, which fails: it's a float, not an int\n" in model.draft_prompts[1]
+
+
+# --- thunc write ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def cli(project, monkeypatch):
+    """Run `thunc write` in the project, with sys.path and sys.modules as they were afterwards."""
+    from thunc.__main__ import main
+
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "modules", dict(sys.modules))
+    sys.modules.pop("app", None)
+    return lambda *args: main(["write", *args])
+
+
+def test_thunc_write_writes_a_function_before_any_call(model, project, cli, capsys):
+    (project / "app.py").write_text(MODULE + '\n\nif __name__ == "__main__":\n    raise SystemExit("ran main")\n')
+    model.drafts = [draft()]
+    assert cli("app.py::minutes") == 0
+    written = (project / "app.py").read_text()
+    assert "def minutes(duration: str) -> int:" in written and "@thunc.function" not in written
+    assert ">>> minutes('2 hours')\n    120\n" in written  # the test calls, as there's no call
+    assert "<example_call>\n(none: the function is written before its first call)" in model.draft_prompts[0]
+    assert model.answers == 5  # the test calls only
+    err = capsys.readouterr().err
+    assert "thunc: writing minutes() in app.py\n" in err and "checked against 5 model answers" in err
+
+
+def test_thunc_write_dry_run_shows_a_diff_and_leaves_the_file(model, project, cli, capsys):
+    (project / "app.py").write_text(MODULE)
+    model.drafts = [draft()]
+    assert cli("--dry-run", "app.py::minutes") == 0
+    assert (project / "app.py").read_text() == MODULE
+    out, err = capsys.readouterr()
+    assert out.startswith("--- a/app.py\n+++ b/app.py\n")
+    assert "-@thunc.function(write=True)\n" in out and "+import re\n" in out and "-    ...\n" in out
+    assert "(dry run: app.py is unchanged)" in err
+
+
+def test_thunc_write_says_why_it_didnt_write(model, project, cli, capsys):
+    (project / "app.py").write_text(MODULE + "\n\n@thunc.function\ndef plain(x: str) -> str:\n    '''Plain.'''\n")
+    assert cli("app.py") == 1
+    assert cli("app.py::nothing") == 1
+    assert cli("app.py::plain") == 1
+    model.drafts = [draft(can_write=False, reason="Needs judgment.", body="", imports=[])]
+    assert cli("--dry-run", "app.py::minutes") == 1
+    err = capsys.readouterr().err
+    assert "thunc write: 'app.py' isn't FILE::FUNCTION" in err
+    assert "thunc write: nothing isn't in the file" in err
+    assert "thunc write: plain isn't a @thunc.function(write=True)" in err
+    assert "thunc write: minutes() wasn't written: Needs judgment." in err
+    assert not (project / ".thunc_write").exists() or not list((project / ".thunc_write").glob("*.json"))
+
+
+def test_thunc_write_ignores_a_saved_reason_and_refuses_methods(model, project, cli, capsys):
+    app = module(project / "app.py")
+    model.drafts = [draft(can_write=False, reason="Needs judgment.", body="", imports=[])]
+    with pytest.warns(RuntimeWarning):
+        app.minutes("1h")  # saves the reason
+    model.drafts = [draft()]
+    assert cli("app.py::minutes") == 0  # asked for on purpose
+    assert "@thunc" not in (project / "app.py").read_text()
+
+    (project / "clock.py").write_text(
+        "import thunc\n\n\nclass Clock:\n    @thunc.function(write=True)\n    def minutes(self, d: str) -> int:\n"
+        '        """Minutes."""\n'
+    )
+    assert cli("clock.py::Clock.minutes") == 1
+    assert "it's a method, and thunc write has no instance to test it with" in capsys.readouterr().err

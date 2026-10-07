@@ -3,6 +3,25 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
+## Unreleased
+
+### Added
+
+- **Self-writing functions: `@thunc.function(write=True)`.** On its first call the function writes
+  its own body. Three requests start side by side: the call's answer, a draft of the body from the
+  docstring and signature (with the whole file and any project types in the signature), and five
+  test calls, each answered by the model on its own. The draft is linted and run on the call and
+  the test calls within a time limit, and must match every answer; one that doesn't goes back with
+  the failing calls, up to three drafts. A passing draft goes into the file in place of `...`, the
+  decorator is removed (`import thunc` stays), the checked calls become doctest examples, and the
+  call runs the new code: from then on it's plain Python. If the model says the task needs
+  judgment, or no draft passes, the call returns the model's answer, the file is left as it was,
+  and the reason is kept in `.thunc_write/` until the docstring or signature changes. Writing is
+  refused, with a warning, in CI or with `THUNC_WRITE=0`, outside the project, and for read-only,
+  installed or changed files and nested functions.
+- **`thunc write FILE::FUNCTION [--dry-run]`** writes a self-writing function ahead of its first
+  call, or shows the change as a diff.
+
 ## 0.2.3 (beta)
 
 **Native tool calls everywhere agents run, durable runs that keep them, and the last of 0.2.**
