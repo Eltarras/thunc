@@ -52,7 +52,7 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html" class="active" aria-current="page">Changelog</a>
   </nav>
-  <div class="version">thunc 0.2.3 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.3.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -63,6 +63,7 @@
 <div class="tablewrap"><table>
 <thead><tr><th>Version</th><th>Released</th><th>Headline</th></tr></thead>
 <tbody>
+<tr><td><a href="#v0-3-0"><code>0.3.0</code></a></td><td class="nowrap">7 Oct 2026</td><td class="wrap"><code>thunc watch</code>: a live dashboard in the terminal for calls and agent runs; thunc write, functions that write themselves (experimental)</td></tr>
 <tr><td><a href="#v0-2-3"><code>0.2.3</code></a></td><td class="nowrap">6 Oct 2026</td><td class="wrap">Native tool calls on Codex and in durable runs on Claude Code; durable <code>tools=</code>; a sturdier Claude API path; multi-edit</td></tr>
 <tr><td><a href="#v0-2-2"><code>0.2.2</code></a></td><td class="nowrap">5 Oct 2026</td><td class="wrap">Agents use their tools reliably; native tool calls on Claude Code; faster calls; <code>thunc run --profile</code></td></tr>
 <tr><td><a href="#v0-2-1"><code>0.2.1</code></a></td><td class="nowrap">4 Oct 2026</td><td class="wrap">Durable agents with Temporal</td></tr>
@@ -72,6 +73,18 @@
 <tr><td><a href="#v0-1-1"><code>0.1.1</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">The OpenAI backend and local models</td></tr>
 <tr><td><a href="#v0-1-0"><code>0.1.0</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">First release</td></tr>
 </tbody></table></div>
+<div class="release">
+<h2 id="v0-3-0">0.3.0 <span class="pill">beta</span></h2>
+<p class="release-meta">7 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.3.0">Release notes</a> · <a href="https://pypi.org/project/thunc/0.3.0/">PyPI</a></p>
+<p><strong>Watch a program's calls and agent runs live.</strong> <code>thunc watch app.py</code> runs a program with a dashboard in the terminal: the calls waiting on a model, retries and why each reply was rejected, timings for each function, each agent's steps as they happen, and the <code>--profile</code> report when the program ends. <code>--agents</code> follows agent runs from any process, <code>--plain</code> prints one line per event for CI, and a saved run can be replayed. The dashboard is a compiled binary in its own package, thunc-watch 0.1, installed with <code>pip install "thunc[watch]"</code>, so thunc itself stays pure Python with no dependencies. And, as an experiment, <strong>thunc write</strong>: a function declared with <code>@thunc.function(write=True)</code> writes its own body into your file on its first call, checked against the model's answers, and runs as plain Python from then on. A program that uses neither behaves as in 0.2.3. See <a href="watch.html">Watching a program</a> and <a href="write.html">thunc write</a>.</p>
+<h3>Added</h3>
+<ul>
+<li><strong><code>thunc watch</code></strong>, a live dashboard in the terminal for a program's thunc calls and agent runs: calls in flight, retries and why each reply was rejected, per-function timings, each agent's steps as they happen, and the <code>--profile</code> report when the program ends. Click around with the mouse or use the keys. <code>thunc watch app.py</code> runs a program and watches it; <code>thunc watch --agents</code> follows agent runs from any process; <code>--plain</code> prints one line per event for CI. It's a compiled binary in its own package, thunc-watch, installed with <code>pip install "thunc[watch]"</code>, so thunc itself stays pure Python with no dependencies.</li>
+<li><strong><code>THUNC_EVENTS=FILE</code></strong> writes one JSON line per call, attempt and agent step to FILE, which thunc-watch reads. Inputs, replies and values are cut to short previews unless <code>THUNC_EVENTS_CAPTURE=1</code>. Nothing is written when it isn't set.</li>
+<li><strong>thunc write (experimental): functions that write themselves, with <code>@thunc.function(write=True)</code>.</strong> Its behavior, options and the code it writes may change, or it may be removed, in a later release without a deprecation period. On its first call the function writes its own body. Three requests start side by side: the call's answer, a draft of the body from the docstring and signature (with the whole file and any project types in the signature), and five test calls, each answered by the model on its own. The draft is linted and run on the call and the test calls within a time limit, and must match every answer; one that doesn't goes back with the failing calls, up to three drafts. A passing draft goes into the file in place of <code>...</code>, the decorator is removed (<code>import thunc</code> stays), the checked calls become doctest examples, and the call runs the new code: from then on it's plain Python. If the model says the task needs judgment, or no draft passes, the call returns the model's answer, the file is left as it was, and the reason is kept in <code>.thunc_write/</code> until the docstring or signature changes. Writing is refused, with a warning, in CI or with <code>THUNC_WRITE=0</code>, outside the project, and for read-only, installed or changed files and nested functions.</li>
+<li><strong>The <code>thunc write FILE::FUNCTION [--dry-run]</code> command</strong> (experimental) writes a <code>write=True</code> function ahead of its first call, or shows the change as a diff.</li>
+</ul>
+</div>
 <div class="release">
 <h2 id="v0-2-3">0.2.3 <span class="pill">beta</span></h2>
 <p class="release-meta">6 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.2.3">Release notes</a> · <a href="https://pypi.org/project/thunc/0.2.3/">PyPI</a></p>

@@ -899,7 +899,7 @@ wheels = [
 
 [[package]]
 name = "thunc"
-version = "0.2.3"
+version = "0.3.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -922,6 +922,9 @@ temporal-test = [
     { name = "pytest-asyncio" },
     { name = "temporalio" },
 ]
+watch = [
+    { name = "thunc-watch" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -934,8 +937,24 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.34,<2" },
     { name = "temporalio", marker = "extra == 'temporal-test'", specifier = "==1.34.0" },
+    { name = "thunc-watch", marker = "extra == 'watch'", specifier = ">=0.1,<0.2" },
 ]
-provides-extras = ["anthropic", "openai", "temporal", "temporal-test", "dev"]
+provides-extras = ["anthropic", "openai", "temporal", "temporal-test", "watch", "dev"]
+
+[[package]]
+name = "thunc-watch"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/99/5e/6ca7a50d98626829e576c01780e68571d7674300daac96d6c207bf354d93/thunc_watch-0.1.0.tar.gz", hash = "sha256:83f042d08fa34ce948178eb99372f58e857277c8dba45257d5090d290516e5c3", size = 60836, upload-time = "2026-10-07T13:49:47.718Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/79/acd535aaf68561f0b70d00466ce3d36a8b17e586cf8e55ea104cb8d7a426/thunc_watch-0.1.0-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:59c7c9580d487eff317cdea5e5c0e8b6cd2a0dab095c004a45d49848af0ee8f6", size = 615559, upload-time = "2026-10-07T13:49:36.178Z" },
+    { url = "https://files.pythonhosted.org/packages/21/29/ea48d285c53867d95ce12610ff7472966365f5861044ceb0c0bc2100c08f/thunc_watch-0.1.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:ededbf25707b1a4c2fc96ff5c337206d85d4e982707ef05d9adc6d7c139b13fa", size = 568755, upload-time = "2026-10-07T13:49:37.9Z" },
+    { url = "https://files.pythonhosted.org/packages/06/52/1415fdd60bd65773b9f1bc48f5618df88f71eb29ede24c24736b2f4f07da/thunc_watch-0.1.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e84d9fcecfb766981d861df25d4d82659ffc501b9ab560e69bd0d2b6c24f88de", size = 590059, upload-time = "2026-10-07T13:49:39.608Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/e5/3de70be79f25988b8bdddeb91ffb05df56c8597b477775aef2ad251c9d15/thunc_watch-0.1.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e387f4c3b2adb0b09f3e214064296ee8125a052ff35f4c7ceedb5d30c4c6a788", size = 635772, upload-time = "2026-10-07T13:49:41.406Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/b4/7f9e5a5abb825899dcd260ad8492777b92e09db255036f7793871a4bfb05/thunc_watch-0.1.0-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:5a63c610d14fa3b300a61d161fd60b5bde8fffaacc7891377e9af254a30d2419", size = 644354, upload-time = "2026-10-07T13:49:43.049Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/6f/fb6e5b9b724bc9c3fa1233765cb616557c0ec6a145c3f5d14e9aab8ddcdf/thunc_watch-0.1.0-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:9b30e24925011c42be7dcb6dea47f417132d18bbe931ad1fd526366253e6297c", size = 695152, upload-time = "2026-10-07T13:49:44.826Z" },
+    { url = "https://files.pythonhosted.org/packages/05/ff/951a8273844a9b170116eee9fed32c07a5f673c4c8c0d4ac401c2b1b3a42/thunc_watch-0.1.0-py3-none-win_amd64.whl", hash = "sha256:bc6f75e8f9f880284a5e8cf769c6f916a1bcd6c40f83c03890a3fe5fea22f83b", size = 575469, upload-time = "2026-10-07T13:49:46.245Z" },
+]
 
 [[package]]
 name = "tomli"

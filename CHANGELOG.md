@@ -3,7 +3,18 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
-## Unreleased (0.3)
+## 0.3.0 (beta)
+
+**Watch a program's calls and agent runs live.** `thunc watch app.py` runs a program with a
+dashboard in the terminal: the calls waiting on a model, retries and why each reply was rejected,
+timings for each function, each agent's steps as they happen, and the `--profile` report when the
+program ends. `--agents` follows agent runs from any process, `--plain` prints one line per event
+for CI, and a saved run can be replayed. The dashboard is a compiled binary in its own package,
+thunc-watch 0.1, installed with `pip install "thunc[watch]"`, so thunc itself stays pure Python with
+no dependencies. And, as an experiment, **thunc write**: a function declared with
+`@thunc.function(write=True)` writes its own body into your file on its first call, checked against
+the model's answers, and runs as plain Python from then on. A program that uses neither behaves as
+in 0.2.3.
 
 ### Added
 
@@ -17,8 +28,9 @@ All notable changes to thunc. The full notes for each release are on the
 - **`THUNC_EVENTS=FILE`** writes one JSON line per call, attempt and agent step to FILE, which
   thunc-watch reads. Inputs, replies and values are cut to short previews unless
   `THUNC_EVENTS_CAPTURE=1`. Nothing is written when it isn't set.
-- **thunc write: functions that write themselves, with `@thunc.function(write=True)`.** On its first
-  call the function writes its own body. Three requests start side by side: the call's answer, a
+- **thunc write (experimental): functions that write themselves, with `@thunc.function(write=True)`.**
+  Its behavior, options and the code it writes may change, or it may be removed, in a later release
+  without a deprecation period. On its first call the function writes its own body. Three requests start side by side: the call's answer, a
   draft of the body from the docstring and signature (with the whole file and any project types in
   the signature), and five test calls, each answered by the model on its own. The draft is linted
   and run on the call and the test calls within a time limit, and must match every answer; one that
@@ -29,7 +41,7 @@ All notable changes to thunc. The full notes for each release are on the
   left as it was, and the reason is kept in `.thunc_write/` until the docstring or signature
   changes. Writing is refused, with a warning, in CI or with `THUNC_WRITE=0`, outside the project,
   and for read-only, installed or changed files and nested functions.
-- **The `thunc write FILE::FUNCTION [--dry-run]` command** writes a `write=True` function ahead of
+- **The `thunc write FILE::FUNCTION [--dry-run]` command** (experimental) writes a `write=True` function ahead of
   its first call, or shows the change as a diff.
 
 ## 0.2.3 (beta)

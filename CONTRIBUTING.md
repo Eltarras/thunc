@@ -189,6 +189,23 @@ no reliable way to tell them from a real one. Only an empty reply is retried.
 - Durable runs aren't tested on Windows (the code is only type-checked for it), and there are no
   live provider tests for durable runs yet.
 
+**Open: `thunc watch`.**
+
+- The dashboard only watches. Stopping a single agent run, holding new calls, re-running a call and
+  approving `ask:` actions live all need changes in thunc first.
+- `--agents` follows one folder; agent runs from every project on the machine (`--all`) would need
+  a registry of running runs.
+- On Windows, Ctrl+C and quitting end the program at once, without the `KeyboardInterrupt` it gets
+  on macOS and Linux.
+
+**Open: thunc write (experimental).** It may change or be removed in a later release.
+
+- The draft is checked against the model's own answers, so a rule the model gets wrong every time
+  passes. The checked calls go into the docstring as doctests for review.
+- `thunc write FILE::FUNCTION` refuses methods: there's no instance to make the test calls with.
+  A method is written on its first call instead.
+- It doesn't run on `jev`, which can't write code.
+
 ## Reporting bugs
 
 Open an [issue](https://github.com/Eltarras/thunc/issues) with:

@@ -59,9 +59,10 @@ def function(
       that should give one answer per input (classify, extract, score), not for ones meant to vary.
       `thunc.clear_cache(func)` deletes this function's saved answers.
     - The body must stay empty; `async def` gives an awaitable.
-    - `write=True` makes the function write itself: on its first call the model writes a body from
-      the docstring, thunc checks it against model answers and puts it into your source file in place
-      of `...`, removing this decorator. From then on it's plain Python. See thunc/writing.py.
+    - `write=True` (experimental: may change or be removed) makes the function write itself: on its
+      first call the model writes a body from the docstring, thunc checks it against model answers and
+      puts it into your source file in place of `...`, removing this decorator. From then on it's plain
+      Python. See thunc/writing.py.
     """
 
     def decorate(f: Callable[..., Any]) -> Callable[..., Any]:

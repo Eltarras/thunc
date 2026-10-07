@@ -74,11 +74,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     write = commands.add_parser(
         "write",
-        help="write a @thunc.function(write=True) now, before its first call",
-        description="Write a @thunc.function(write=True) into its file now, without calling it: the model drafts "
-        "the body, thunc checks it against the model's answers for test calls, and puts it in place of `...`. The "
-        "file is imported to find the function, which runs its top-level code as any import does, but not its "
-        "`if __name__ == '__main__':` block. A reason saved by an earlier attempt that didn't write it is ignored.",
+        help="write a @thunc.function(write=True) now, before its first call (experimental)",
+        description="Experimental. Write a @thunc.function(write=True) into its file now, without calling it: the "
+        "model drafts the body, thunc checks it against the model's answers for test calls, and puts it in place of "
+        "`...`. The file is imported to find the function, which runs its top-level code as any import does, but not "
+        "its `if __name__ == '__main__':` block. A reason saved by an earlier attempt that didn't write it is ignored.",
     )
     write.add_argument("target", metavar="FILE::FUNCTION", help="the function, like app.py::minutes")
     write.add_argument("--dry-run", action="store_true", help="show the change as a diff and leave the file as it is")
