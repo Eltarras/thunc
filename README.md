@@ -224,6 +224,20 @@ Concurrency:   calls overlapped 2.2x on average (thunc.map or threads)
 Slowest:       urgency took 309ms
 ```
 
+**Watching:** `thunc watch` runs your program with a live dashboard in the terminal: the calls in
+flight, retries and why each reply was rejected, each agent's steps as they happen, and the same
+report when it ends. Click around with the mouse, or use the keys (`?` lists them). It's a separate
+compiled binary, so it's an extra:
+
+```bash
+pip install "thunc[watch]"
+thunc watch support_inbox.py --limit 20   # a script and its arguments, as with thunc run
+thunc watch --agents                      # agent runs in ./.thunc_agents, from any process
+```
+
+See [watch/README.md](https://github.com/Eltarras/thunc/blob/main/watch/README.md) for the screens,
+the keys and `--plain` output for CI.
+
 **Type checking:** signatures and return types are visible to mypy and Pyright. mypy reports
 empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
@@ -478,14 +492,16 @@ thunc/
   relay.py       the run's end of the MCP server: the connection the calls come through
   store.py       the agent's folder: memory, settings, run records, the lock
   prompts.py     the agent's system prompt
-  __main__.py    the thunc command: thunc run [--profile], thunc cache list / clear
+  __main__.py    the thunc command: thunc run [--profile], thunc watch, thunc cache list / clear
   profiling.py   thunc run --profile: timing records and the report
+  events.py      THUNC_EVENTS: the live events thunc watch reads
   core.py        thunc.call, thunc.map, tracing
   cache.py       the answer cache: saving, listing, clearing
   schema.py      return types: describe, parse, validate
   config.py      settings and backend selection
   backends.py    anthropic, openai, claude-code, codex, jev
   errors.py      ThuncError, and TransientError for failures worth asking again
+watch/           thunc watch, the dashboard: a Rust binary, published as thunc-watch
 tests/           offline: a fake backend, never a real model
 live_tests/      against a real model: hello, a yes/no decision, labels and ratings, messy text to a dict
 examples/

@@ -38,7 +38,7 @@ import warnings
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from typing import Any, ParamSpec, TypeVar, overload
 
-from . import claude_code, codex, native, profiling, relay, tools
+from . import claude_code, codex, events, native, profiling, relay, tools
 from .backends import TYPED_BACKENDS
 from .config import _check_backend, resolve_backend, setting
 from .core import _plain, _render, _trace
@@ -524,6 +524,17 @@ class Agent:
         step = 0
         waits: list[float] = []  # seconds spent on each model reply
         tool_times: dict[str, list[float]] = {}
+        run_id = events.next_id() if events.enabled() else 0
+        if run_id:
+            events.emit(
+                "agent.start",
+                id=run_id,
+                agent=self.name,
+                task=task,
+                returns=getattr(returns, "__name__", None) or repr(returns),
+                session=os.path.abspath(session.path),
+                inputs={key: events.preview(value) for key, value in inputs.items()},
+            )
 
         def record(value: Any, error: str | None = None) -> Run[Any]:
             return Run(
@@ -551,18 +562,47 @@ class Agent:
                     answers[-1] = f"{answers[-1]}\n{reply.raw}"
                 else:
                     answers.append(reply.raw)
+                if run_id:
+                    events.emit("agent.reply", id=run_id, n=len(answers), seconds=round(waits[-1], 3))
                 if not state.receive(reply):  # nothing to carry out: say what's wrong and ask again
                     step += 1
                     session.write("step", n=step, reply=reply.raw, result=f"error: {reply.problem}")
+                    if run_id:
+                        events.emit(
+                            "agent.step",
+                            id=run_id,
+                            n=step,
+                            tool="reply",
+                            target="",
+                            result=shorten(f"error: {reply.problem}", events.PREVIEW),
+                            seconds=0.0,
+                            denied=False,
+                        )
                     conversation.nudge(reply)
                     continue
                 while (call := state.pending()) is not None:
                     step += 1
+                    acted = time.monotonic()
                     outcome = state.check(call, returns, ensure, self.retries, name, known)
                     if outcome.finished:
                         result["value"] = outcome.value
                         session.write("finish", n=step, value=outcome.value, files_changed=workdir.changed)
+                        if run_id:
+                            events.emit(
+                                "agent.end",
+                                id=run_id,
+                                ok=True,
+                                steps=len(answers),
+                                seconds=round(time.monotonic() - started, 3),
+                                files_changed=list(workdir.changed),
+                                value=events.preview(outcome.value),
+                                error=None,
+                            )
                         return record(outcome.value)
+                    if run_id and outcome.output is None:  # about to run: say what, for long commands
+                        events.emit(
+                            "agent.tool", id=run_id, n=step, tool=call.tool, target=events.target(call.tool, call.args)
+                        )
                     if outcome.output is not None:
                         output, was_denied = outcome.output, False
                     elif call.tool in self.custom and call.tool in offered:
@@ -577,16 +617,29 @@ class Agent:
                     flag = {"denied": True} if was_denied else {}
                     args = call.args if call.tool == "finish" else _shortened(call.args)
                     session.write("step", n=step, tool=call.tool, args=args, result=shorten(output, 4000), **flag)
+                    if run_id:
+                        events.emit(
+                            "agent.step",
+                            id=run_id,
+                            n=step,
+                            tool=call.tool,
+                            target=events.target(call.tool, call.args),
+                            result=events.preview(output),
+                            seconds=round(time.monotonic() - acted, 3),
+                            denied=was_denied,
+                        )
                     if outcome.error:
                         raise outcome.error
                 conversation.results(state.results_to_send(self.max_steps))
         except ThuncError as exc:  # the run failed: say what it did up to here
             result["error"] = exc
             session.write("error", error=str(exc), files_changed=workdir.changed)
+            _emit_failed(run_id, answers, started, workdir, str(exc))
             raise AgentError(str(exc), record(None, str(exc))) from exc
         except BaseException as exc:  # Ctrl-C too, so the trace doesn't record it as a success
             result["error"] = exc
             session.write("error", error=str(exc) or type(exc).__name__, files_changed=workdir.changed)
+            _emit_failed(run_id, answers, started, workdir, str(exc) or type(exc).__name__)
             raise
         finally:
             _trace(instructions, inputs, returns, answers, result, started, system, self.backend, self.model, name)
@@ -604,6 +657,20 @@ class Agent:
                         ok=result["error"] is None,
                     )
                 )
+
+
+def _emit_failed(run_id: int, answers: list[str], started: float, workdir: tools.Workdir, error: str) -> None:
+    if run_id:
+        events.emit(
+            "agent.end",
+            id=run_id,
+            ok=False,
+            steps=len(answers),
+            seconds=round(time.monotonic() - started, 3),
+            files_changed=list(workdir.changed),
+            value=None,
+            error=error,
+        )
 
 
 FOLLOW_LIMIT = 50_000  # characters of one followed file put in the prompt

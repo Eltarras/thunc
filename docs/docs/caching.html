@@ -43,6 +43,7 @@
     <a href="backends.html">Backends</a>
     <a href="caching.html" class="active" aria-current="page">Caching, tracing and profiling</a>
     <a href="agents.html">Agents</a>
+    <a href="watch.html">Watching a program</a>
     <div class="eyebrow">Going further</div>
     <a href="temporal.html">Durable agents</a>
     <a href="jev.html">Jev backend</a>
@@ -109,6 +110,7 @@ Model time:    1.69s, 99% of the time in calls (anthropic/default model 1.69s)
 Concurrency:   calls overlapped 2.2x on average (thunc.map or threads)
 Slowest:       urgency took 309ms</code></pre></div>
 <p>Without <code>--profile</code>, <code>thunc run</code> just runs the program and records nothing. The program's exit code is passed through.</p>
+<p>To watch the same numbers while the program runs, with each call and agent step as it happens, use <a href="watch.html"><code>thunc watch</code></a>.</p>
 
 <h2 id="testing">Testing code that calls a model</h2>
 <p>There's no record/replay switch for tests yet: <code>cache=True</code> is per function, and nothing serves every call from disk and fails on a miss. thunc's own offline tests use a fake backend instead of a real model.</p>
