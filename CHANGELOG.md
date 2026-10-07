@@ -3,6 +3,23 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
+## 0.3.1 (beta)
+
+**The 0.3.0 changes that missed its package.** The v0.3.0 tag was made on an earlier commit than
+intended, so two changes merged before the release didn't reach PyPI. Nothing else is new.
+
+### Fixed
+
+- **thunc write's timing message lists its parts in a fixed order**: answer, draft, test calls. The
+  three run side by side and were listed in the order they finished, so the message changed from
+  run to run ([#65](https://github.com/Eltarras/thunc/pull/65)).
+
+### Docs
+
+- The README on PyPI says beta v0.3 and its intro mentions `thunc watch` and thunc write. The
+  website's landing page has a section for each, the Functions guide covers `write=True`, and Get
+  started links both guides ([#66](https://github.com/Eltarras/thunc/pull/66)).
+
 ## 0.3.0 (beta)
 
 **Watch a program's calls and agent runs live.** `thunc watch app.py` runs a program with a
