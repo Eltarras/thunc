@@ -1,0 +1,32 @@
+# The thunc-watch package on PyPI: wheels holding the compiled binary, built with maturin.
+# `pip install "thunc[watch]"` installs it, and `thunc watch` runs it.
+
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "thunc-watch"
+dynamic = ["version"] # from Cargo.toml
+description = "A live terminal dashboard for thunc calls and agent runs."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Hussein Eltarras" }]
+requires-python = ">=3.10"
+keywords = ["thunc", "llm", "agents", "tui", "dashboard", "profiling"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Debuggers",
+]
+
+[project.urls]
+Homepage = "https://eltarras.github.io/thunc/"
+Repository = "https://github.com/Eltarras/thunc"
+Issues = "https://github.com/Eltarras/thunc/issues"
+
+[tool.maturin]
+bindings = "bin"

@@ -3,10 +3,20 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
-## Unreleased
+## Unreleased (0.3)
 
 ### Added
 
+- **`thunc watch`**, a live dashboard in the terminal for a program's thunc calls and agent runs:
+  calls in flight, retries and why each reply was rejected, per-function timings, each agent's
+  steps as they happen, and the `--profile` report when the program ends. Click around with the
+  mouse or use the keys. `thunc watch app.py` runs a program and watches it; `thunc watch --agents`
+  follows agent runs from any process; `--plain` prints one line per event for CI. It's a compiled
+  binary in its own package, thunc-watch, installed with `pip install "thunc[watch]"`, so thunc
+  itself stays pure Python with no dependencies.
+- **`THUNC_EVENTS=FILE`** writes one JSON line per call, attempt and agent step to FILE, which
+  thunc-watch reads. Inputs, replies and values are cut to short previews unless
+  `THUNC_EVENTS_CAPTURE=1`. Nothing is written when it isn't set.
 - **thunc write: functions that write themselves, with `@thunc.function(write=True)`.** On its first
   call the function writes its own body. Three requests start side by side: the call's answer, a
   draft of the body from the docstring and signature (with the whole file and any project types in
@@ -78,8 +88,8 @@ once, and no longer needs a prior `read`. In the tool-use benchmark (`live_tests
   saved, so thunc deletes the run's Codex session (`codex delete --force`) when the run ends.
 - **`Agent(effort=...)`**: `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"`, on every backend
   (`output_config.effort` on the Claude API, `reasoning.effort` on OpenAI, `--effort` on Claude Code,
-  `model_reasoning_effort` on Codex; the last two go up to `"xhigh"`). Recorded in `agent.json` only
-  when set, so durable tasks registered without it keep their fingerprint.
+  `model_reasoning_effort` on Codex; OpenAI and Codex go up to `"xhigh"`). Recorded in `agent.json`
+  only when set, so durable tasks registered without it keep their fingerprint.
 - **The model is told when few steps are left.** In its last three replies before `max_steps`, the
   last tool result says how many replies remain, so the model can finish with what it has instead
   of being cut off. Every protocol and durable runs get it; the run record keeps each tool's output.

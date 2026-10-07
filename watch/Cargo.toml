@@ -1,0 +1,26 @@
+[package]
+name = "thunc-watch"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88" # let chains
+description = "A live terminal dashboard for thunc calls and agent runs"
+license = "MIT"
+repository = "https://github.com/Eltarras/thunc"
+publish = false # shipped on PyPI as thunc-watch (see pyproject.toml), not on crates.io
+
+[dependencies]
+anyhow = "1.0.104"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "underline-color"] }
+serde_json = "1.0.151"
+unicode-width = "0.2"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.190"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

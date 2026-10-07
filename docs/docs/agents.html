@@ -43,6 +43,7 @@
     <a href="backends.html">Backends</a>
     <a href="caching.html">Caching, tracing and profiling</a>
     <a href="agents.html" class="active" aria-current="page">Agents</a>
+    <a href="watch.html">Watching a program</a>
     <div class="eyebrow">Going further</div>
     <a href="write.html">thunc write</a>
     <a href="temporal.html">Durable agents</a>
@@ -59,7 +60,7 @@
   <h1>Agents</h1>
   <p class="lede">An agent is a typed function that can look around before it answers. It lists, searches, reads and, when you allow it, edits files and runs commands, then hands back a checked value of the return type.</p>
 </header>
-<img class="gif" src="https://raw.githubusercontent.com/Eltarras/thunc/main/.github/demo-agent.gif" width="1200" height="675" alt="An agent allowed to write src/** and run pytest is asked to run the tests and fix any problems. pytest shows 1 failure; it reads src/pricing.py, fixes one line, reruns pytest (3 passed) and returns True." loading="lazy" style="margin:28px 0 8px">
+<img class="gif" src="../demo-agent.gif" width="1200" height="675" alt="An agent allowed to write src/** and run pytest is asked to run the tests and fix any problems. pytest shows 1 failure; it reads src/pricing.py, fixes one line, reruns pytest (3 passed) and returns True." style="margin:28px 0 8px">
 
 <div class="callout"><p><strong>New in 0.2.</strong> Agents are new; their API may change in a later release as feedback comes in.</p></div>
 
@@ -182,7 +183,7 @@ run.notes, run.followed, run.steps, run.seconds, run.session</code></pre></div>
 <tr><td>Cost</td><td>$0.76 for all 45 runs (cache reads were 257,553 of 312,294 input tokens)</td><td class="muted">not recorded</td></tr>
 </tbody></table></div>
 <p>Every version passed every time, so these tasks are too easy to tell the versions apart: the result says the prompt does no harm, not that it helps. On the API, the review preset read more of the code before answering. On the text protocol these tasks took more steps (fix 5.2 / 6.0 / 6.0 on Claude Code before native calls). For harder tasks that do tell harnesses apart, see the tool-use benchmark in <code>live_tests/bench_tooluse.py</code>.</p>
-<nav class="pager" aria-label="Pages"><a class="prev" href="caching.html"><span>Previous</span>Caching, tracing and profiling</a><a class="next" href="write.html"><span>Next</span>thunc write</a></nav>
+<nav class="pager" aria-label="Pages"><a class="prev" href="caching.html"><span>Previous</span>Caching, tracing and profiling</a><a class="next" href="watch.html"><span>Next</span>Watching a program</a></nav>
 <p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/agents.html">Edit this page on GitHub</a></p>
 </main>
 </div>

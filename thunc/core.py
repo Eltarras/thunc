@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar, overload
 
+from . import events
 from .backends import BACKENDS, DEFAULT_MODELS, TYPED_BACKENDS
 from .cache import get as cache_get
 from .cache import put as cache_put
@@ -135,11 +136,21 @@ def _call(
     typed = False
     backend_name: str | None = None
     waits: list[float] = []  # seconds spent on each request to the model
+    call_id = events.next_id() if events.enabled() else 0
     try:
         backend_name = resolve_backend(backend)
         typed = backend_name in TYPED_BACKENDS
         if typed:  # a typed backend's model is fixed; a configured model is meant for the other backends
             model = DEFAULT_MODELS[backend_name]
+        if call_id:
+            events.emit(
+                "call.start",
+                id=call_id,
+                function=name,
+                backend=backend_name,
+                model=model or setting("model") or DEFAULT_MODELS.get(backend_name),
+                inputs={key: events.preview(value) for key, value in inputs.items()},
+            )
         where = _cache_identity(request, system, backend, model, name, module) if cache else None
         if where is not None:
             saved = cache_get(where["key"])
@@ -160,9 +171,20 @@ def _call(
                 else timed(waits, _send, text, system, backend, model)
             )
             answers.append(answer)
+            waited = round(waits[-1], 3)
             try:
                 value = _check(answer, returns, ensure)
             except ValueError as problem:
+                if call_id:
+                    events.emit(
+                        "call.attempt",
+                        id=call_id,
+                        n=len(answers),
+                        seconds=waited,
+                        ok=False,
+                        problem=shorten(str(problem), 300),
+                        reply=events.preview(answer),
+                    )
                 result["error"] = problem
                 text = (
                     f"{request}\n\nYour previous reply was:\n{_sendable(answer.strip()[:1000])}\n"
@@ -170,6 +192,10 @@ def _call(
                     f"Reply again with only {describe(returns)}."
                 )
                 continue
+            if call_id:
+                events.emit(
+                    "call.attempt", id=call_id, n=len(answers), seconds=waited, ok=True, reply=events.preview(answer)
+                )
             if where is not None:
                 cache_put(where, answer)
             result.update(value=value, error=None)
@@ -181,6 +207,18 @@ def _call(
         result["error"] = exc
         raise
     finally:
+        if call_id:
+            failed = result["error"]
+            events.emit(
+                "call.end",
+                id=call_id,
+                ok=failed is None,
+                cached=result["cached"],
+                attempts=len(answers),
+                seconds=round(time.monotonic() - started, 3),
+                value=events.preview(result["value"]) if failed is None else None,
+                error=None if failed is None else str(failed) or type(failed).__name__,
+            )
         sent = custom if typed else system  # a typed backend gets only the program's own system prompt
         _trace(instructions, inputs, returns, answers, result, started, sent, backend, model, name)
         if (profiler := active()) is not None:

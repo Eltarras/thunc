@@ -43,6 +43,7 @@
     <a href="backends.html">Backends</a>
     <a href="caching.html">Caching, tracing and profiling</a>
     <a href="agents.html">Agents</a>
+    <a href="watch.html">Watching a program</a>
     <div class="eyebrow">Going further</div>
     <a href="write.html" class="active" aria-current="page">thunc write</a>
     <a href="temporal.html">Durable agents</a>
@@ -140,7 +141,7 @@ thunc write app.py::minutes --backend codex      # with another backend or --mod
 <li><strong>The lint catches mistakes, not attacks.</strong> Written code may use only the standard library and modules the file already imports. It may not run commands, use the network, call <code>eval</code> or <code>exec</code>, or write files. It runs in your program once it passes, so the diff is the boundary. Writing happens only in development, in your own files.</li>
 <li><strong>Free-text functions rarely pass.</strong> A function that returns prose needs its exact words to match the model's, so it usually stays a model call. That's the right outcome for it.</li>
 </ul>
-<nav class="pager" aria-label="Pages"><a class="prev" href="agents.html"><span>Previous</span>Agents</a><a class="next" href="temporal.html"><span>Next</span>Durable agents</a></nav>
+<nav class="pager" aria-label="Pages"><a class="prev" href="watch.html"><span>Previous</span>Watching a program</a><a class="next" href="temporal.html"><span>Next</span>Durable agents</a></nav>
 <p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/write.html">Edit this page on GitHub</a></p>
 </main>
 </div>

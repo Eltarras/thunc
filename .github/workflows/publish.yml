@@ -2,6 +2,7 @@ name: Publish to PyPI
 
 # Runs when you publish a GitHub release (e.g. tag v0.1.0). Uses PyPI Trusted Publishing:
 # no API token is stored anywhere; PyPI trusts this workflow in this repo.
+# Releases tagged watch-vX.Y.Z are the dashboard's, published by publish-watch.yml instead.
 
 on:
   release:
@@ -9,6 +10,7 @@ on:
 
 jobs:
   build:
+    if: ${{ !startsWith(github.event.release.tag_name, 'watch-v') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

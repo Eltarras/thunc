@@ -1,0 +1,81 @@
+name: Publish thunc-watch to PyPI
+
+# Runs when you publish a GitHub release tagged watch-vX.Y.Z (thunc's own vX.Y.Z releases are
+# publish.yml's). Builds the dashboard's wheels for each platform and publishes them as the
+# thunc-watch package, with PyPI Trusted Publishing: no API token is stored anywhere.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  version:
+    if: startsWith(github.event.release.tag_name, 'watch-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches watch/Cargo.toml
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(grep -m1 '^version' watch/Cargo.toml | cut -d'"' -f2)
+          if [ "${TAG#watch-v}" != "$version" ]; then
+            echo "The tag is $TAG but watch/Cargo.toml says $version" >&2
+            exit 1
+          fi
+
+  wheels:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64, manylinux: auto }
+          - { os: ubuntu-latest, target: aarch64, manylinux: auto }
+          - { os: ubuntu-latest, target: x86_64, manylinux: musllinux_1_2 }
+          - { os: ubuntu-latest, target: aarch64, manylinux: musllinux_1_2 }
+          - { os: macos-latest, target: aarch64, manylinux: "" }
+          - { os: macos-latest, target: x86_64, manylinux: "" }
+          - { os: windows-latest, target: x64, manylinux: "" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: watch
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          args: --release --locked --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux }}
+          path: watch/dist
+
+  sdist:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: watch
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-sdist
+          path: watch/dist
+
+  publish:
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # lets PyPI verify this workflow; required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

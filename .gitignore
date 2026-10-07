@@ -13,3 +13,5 @@ dist/
 .temporal-dev/
 examples/temporal/temporal-state/
 examples/temporal/temporal-workspace/
+watch/target/
+watch/dist/

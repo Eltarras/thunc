@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Watching a program · thunc docs</title>
+<meta name="description" content="thunc watch: a live dashboard in the terminal for a program's calls and agent runs, with the mouse or the keys, plus plain output for CI.">
+<link rel="canonical" href="https://eltarras.github.io/thunc/docs/watch.html">
+<meta property="og:title" content="Watching a program · thunc docs">
+<meta property="og:description" content="thunc watch: a live dashboard in the terminal for a program's calls and agent runs, with the mouse or the keys, plus plain output for CI.">
+<meta property="og:image" content="https://eltarras.github.io/thunc/og.png">
+<meta property="og:url" content="https://eltarras.github.io/thunc/docs/watch.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="thunc">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/thunc/favicon.ico" sizes="48x48">
+<link rel="icon" href="/thunc/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/thunc/favicon-96.png" type="image/png" sizes="96x96">
+<link rel="apple-touch-icon" href="/thunc/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href=".././">thunc<span>()</span></a>
+  <nav aria-label="Site">
+    <a href="../docs/" class="active">Docs</a>
+    <a href="../docs/agents.html" class="hide-sm">Agents</a>
+    <a href="https://pypi.org/project/thunc/" class="hide-sm">PyPI</a>
+    <a href="https://github.com/Eltarras/thunc" class="gh">GitHub</a>
+  </nav>
+</div></header>
+<div class="docs">
+<aside>
+  <nav aria-label="Docs">
+    <div class="eyebrow">Guide</div>
+    <a href="./">Get started</a>
+    <a href="functions.html">Functions</a>
+    <a href="backends.html">Backends</a>
+    <a href="caching.html">Caching, tracing and profiling</a>
+    <a href="agents.html">Agents</a>
+    <a href="watch.html" class="active" aria-current="page">Watching a program</a>
+    <div class="eyebrow">Going further</div>
+    <a href="write.html">thunc write</a>
+    <a href="temporal.html">Durable agents</a>
+    <a href="jev.html">Jev backend</a>
+    <div class="eyebrow">Reference</div>
+    <a href="api.html">API reference</a>
+    <a href="changelog.html">Changelog</a>
+  </nav>
+  <div class="version">thunc 0.2.3 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+</aside>
+<main>
+<header>
+  <div class="eyebrow">Guide · new in 0.3</div>
+  <h1>Watching a program</h1>
+  <p class="lede"><code>thunc watch</code> runs your program with a live dashboard in the terminal: the calls waiting on a model, retries and why each reply was rejected, each agent's steps as they happen, and a report when it ends. Use it with the mouse or the keys.</p>
+</header>
+<div class="callout"><p><strong>New in thunc 0.3.</strong> The dashboard is new; its screens and options may change in a later release as feedback comes in. A program needs nothing added to be watched.</p></div>
+
+<h2 id="install">Install</h2>
+<p>The dashboard is a compiled program in its own package, <code>thunc-watch</code>, so thunc itself stays pure Python with no dependencies. Install it as an extra:</p>
+<div class="codeblock"><pre><code class="sh">pip install "thunc[watch]"</code></pre></div>
+<p>There are prebuilt wheels for macOS, Linux and Windows. Without the package, <code>thunc watch</code> says how to install it.</p>
+
+<h2 id="run">Watch a program</h2>
+<p>Run your program through <code>thunc watch</code> the way you'd run it with <code>thunc run</code>:</p>
+<div class="codeblock"><pre><code class="sh">thunc watch support_inbox.py --limit 20   # a script and its arguments
+thunc watch -m myapp.triage               # a module, as with python -m
+thunc watch -- uv run app.py              # any command</code></pre></div>
+<p>Scripts and modules run on the Python thunc is installed in; pass <code>--python PATH</code> for another. The dashboard takes over the terminal while the program runs. When the program ends, it opens the report. When you quit, it prints what the program printed, then the report, and exits with the program's exit code.</p>
+<div class="window term">
+  <div class="bar"><i></i><i></i><i></i><span>thunc watch support_inbox.py</span></div>
+  <pre><code> thunc watch  support_inbox.py                     claude-code/sonnet   00:18.0   ● running
+  1 Overview   2 Agents   3 Calls   4 Summary
+────────────────────────────────────────────────────────────────────────────────────────────
+ IN FLIGHT  4 running
+   ⠙ draft_reply       ticket="Password reset email never… attempt 1    4.2s  ████████████
+   ⠙ urgency           ticket="Refund still not showing a… attempt 2    4.1s  ██████████░░
+   ⠙ draft_reply       ticket="Where is order A-1043? It … attempt 1    3.1s  █████████░░░
+   ⠙ draft_reply       ticket="Any plans for a public API… attempt 1    2.4s  ███████░░░░░
+
+   FUNCTION          CALLS  CACHED  RETRIES  FAILED      MEAN       P95     MODEL   RECENT
+   category              8       0        0       0      1.5s      2.5s     11.7s   ▃▄▅█▆▇▃▄
+   urgency               7       0        1       0      2.4s      4.7s     16.9s   ▂▄▄▆▃█▅
+   find_order            7       0        0       0      2.1s      3.4s     15.0s   ▅▃█▇▇▅▄
+   draft_reply           4       0        0       0      3.6s      4.4s     14.5s   ▆▆█▇
+
+ AGENTS  0 running
+   ✓ repo-guide      tests_for(feature="caching")            finished · 6 steps       12.4s
+
+ ACTIVITY  results per second, last 30s  ▁▁▁▁▁▁▁▁▁▁▁▁▆▆▃█▃▃▆▃▆▃▆▃▆█▃▃▁▁   overlap 4.7x
+
+ EVENTS
+   17:38:11  ✓ urgency         → 4                                                     4.7s
+   17:38:12  ✓ find_order      → None                                                  2.7s
+   17:38:12  ✓ category        → bug                                                   1.1s
+   17:38:12  ✓ urgency         → 3                                                     2.4s
+   17:38:13  ✓ find_order      → Order(id='A-1043')                                    1.8s
+   17:38:14  ✓ find_order      → None                                                  1.6s
+   17:38:15  ↻ urgency         attempt 1: not valid JSON: 'high'                       2.8s
+────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ or click to select · ⏎ or click again to open   p Pause   f Failures   ? Help   q Quit</code></pre>
+</div>
+<p class="muted">The overview, 18 seconds into a run: four calls waiting on the model, one of them on its second attempt after a reply that wasn't valid JSON.</p>
+
+<h2 id="screens">The screens</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Screen</th><th>What's on it</th><th>Opening a row shows</th></tr></thead>
+<tbody>
+<tr><td><strong>Overview</strong></td><td>Calls in flight, a table per function (calls, cache hits, retries, failures, mean and p95 time), running agents, results per second, recent events</td><td>A function's calls, one call, or an agent run</td></tr>
+<tr><td><strong>Agents</strong></td><td>Every run, and the selected run's steps: each tool, its target, its result and how long it took, the command running now, the files it changed and anything its permissions refused</td><td></td></tr>
+<tr><td><strong>Calls</strong></td><td>Recent calls, and each attempt of the selected one: the reply, and why it was rejected (a parse error, or a failing <code>ensure=</code>)</td><td></td></tr>
+<tr><td><strong>Summary</strong></td><td>The same tables as <a href="caching.html#profiling"><code>thunc run --profile</code></a></td><td>A function's calls, or an agent run</td></tr>
+<tr><td><strong>Output</strong></td><td>What the program printed, with stderr in blue</td><td></td></tr>
+</tbody></table></div>
+
+<h2 id="controls">Mouse and keys</h2>
+<p>Everything works both ways. Click a row, or move to it with <code>↑</code> <code>↓</code>, to select it; click it again, or press <code>⏎</code>, to open it. <code>esc</code> goes back to where you opened it from. The buttons along the bottom pause the display, show only failures, open the help and quit.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Key</th><th>Does</th></tr></thead>
+<tbody>
+<tr><td><code>1</code>–<code>5</code>, <code>←</code> <code>→</code>, <code>tab</code></td><td>Switch screens</td></tr>
+<tr><td><code>↑</code> <code>↓</code>, <code>j</code> <code>k</code></td><td>Move the selection (also <code>PgUp</code> <code>PgDn</code>, <code>Home</code> <code>End</code>, or the mouse wheel)</td></tr>
+<tr><td><code>⏎</code></td><td>Open the selected row</td></tr>
+<tr><td><code>esc</code></td><td>Go back, or clear the filters</td></tr>
+<tr><td><code>f</code></td><td>Show only retries, failures and denied actions</td></tr>
+<tr><td><code>p</code>, <code>space</code></td><td>Pause the display; the program keeps running and its events wait</td></tr>
+<tr><td><code>o</code></td><td>What the program printed</td></tr>
+<tr><td><code>?</code></td><td>Every key and mouse action</td></tr>
+<tr><td><code>q</code></td><td>Quit. If the program is still running, it asks first, because quitting stops it</td></tr>
+<tr><td><code>Ctrl+C</code></td><td>Stop the program, as it would in its own terminal</td></tr>
+</tbody></table></div>
+<p>While the dashboard has the mouse, select text by holding Shift (Option on macOS) as you drag, or start it with <code>--no-mouse</code>.</p>
+
+<h2 id="agents">Following agent runs from anywhere</h2>
+<p><code>--agents</code> follows the runs recorded in an agents folder, from any process: another terminal, a web app, a worker on this machine.</p>
+<div class="codeblock"><pre><code class="sh">thunc watch --agents                   # ./.thunc_agents, or THUNC_AGENTS_DIR
+thunc watch --agents path/to/agents    # another folder</code></pre></div>
+<p>It finds the folder the same way thunc does, so a <code>configure(agents_dir=...)</code> in your code isn't visible to it: pass the same folder. A run counts as running while its record has no end and the process holding the agent's lock is alive. A run whose process died partway through shows as <strong>interrupted</strong>. Run records are written to the second and don't time the model, so in this mode a step's time is the gap between its line and the one before, and model and tool time aren't split.</p>
+
+<h2 id="ci">In CI and pipes: --plain</h2>
+<p><code>--plain</code> prints one line per result, retry and agent step, then the report. It's also what you get when the output isn't a terminal.</p>
+<div class="codeblock"><pre><code class="sh">thunc watch --plain support_inbox.py</code></pre></div>
+<div class="codeblock"><div class="label">stderr</div><pre><code>thunc  10:25:31  retry  urgency  attempt 1 rejected after 1.9s: not valid JSON: 'seven'
+thunc  10:25:33  call   urgency  → 4  (4.1s, 2 attempts)
+thunc  10:25:34  call   urgency  → 2  (1.2s)</code></pre></div>
+<p>These lines go to stderr and the program's own output to stdout, so the two don't mix in a pipe.</p>
+
+<h2 id="replay">Saving and replaying a run</h2>
+<div class="codeblock"><pre><code class="sh">thunc watch --save-events run.jsonl app.py   # keep the events after the run
+thunc watch --replay run.jsonl               # play it back; --speed 4 for faster
+thunc watch --replay .thunc_agents/repo-guide/sessions/&lt;run&gt;.jsonl   # one agent run's record</code></pre></div>
+<p>A saved events file is a good thing to attach to a bug report. To watch a program you start some other way, set <code>THUNC_EVENTS</code> yourself and follow the file:</p>
+<div class="codeblock"><pre><code class="sh">THUNC_EVENTS=events.jsonl python app.py      # in one terminal
+thunc watch --events events.jsonl            # in another</code></pre></div>
+
+<h2 id="events">What it reads, and what's in it</h2>
+<p>When <code>THUNC_EVENTS</code> names a file, thunc appends one JSON line to it for each call start, model reply, call end, agent tool call and agent end. <code>thunc watch</code> sets it to a temporary file for the program it runs. When it isn't set, nothing is written.</p>
+<p>Inputs, replies and values are cut to 120-character previews. <code>--capture</code> (or <code>THUNC_EVENTS_CAPTURE=1</code>) sends them whole, and the Calls screen then shows them in full. Like a <a href="caching.html#tracing">trace</a>, they can contain personal data from your inputs, so treat a saved events file like the data you send.</p>
+
+<h2 id="options">Options</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Option</th><th>Does</th></tr></thead>
+<tbody>
+<tr><td><code>--agents [DIR]</code></td><td>Follow agent runs in <code>DIR</code> instead of running a program</td></tr>
+<tr><td><code>--events FILE</code></td><td>Follow a file another process writes with <code>THUNC_EVENTS=FILE</code></td></tr>
+<tr><td><code>--replay FILE</code></td><td>Play back an events file or an agent run's record; <code>--speed N</code> sets the pace (0 plays it at once)</td></tr>
+<tr><td><code>--plain</code></td><td>One line per event instead of the dashboard</td></tr>
+<tr><td><code>--capture</code></td><td>Whole inputs and replies, not previews</td></tr>
+<tr><td><code>--save-events FILE</code></td><td>Keep the program's events in <code>FILE</code></td></tr>
+<tr><td><code>--python PATH</code></td><td>The Python for scripts and <code>-m</code> (default: the one thunc is installed in)</td></tr>
+<tr><td><code>--no-mouse</code></td><td>Leave the mouse to the terminal, for selecting text</td></tr>
+</tbody></table></div>
+<p><code>thunc watch --help</code> lists them too. The dashboard is also on your <code>PATH</code> as <code>thunc-watch</code>, with the same options.</p>
+<nav class="pager" aria-label="Pages"><a class="prev" href="agents.html"><span>Previous</span>Agents</a><a class="next" href="write.html"><span>Next</span>thunc write</a></nav>
+<p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/watch.html">Edit this page on GitHub</a></p>
+</main>
+</div>
+<footer class="sitefoot"><div class="wrap">
+  <span>thunc() · beta · MIT</span>
+  <span><a href="../docs/">Docs</a> · <a href="../docs/changelog.html">Changelog</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+</div></footer>
+<script src="../site.js"></script>
+</body>
+</html>
