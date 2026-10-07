@@ -1,8 +1,10 @@
-"""The `thunc` command (also `python -m thunc`): run or watch a program, and look at and clear the answer cache.
+"""The `thunc` command (also `python -m thunc`): run or watch a program, write a write=True function ahead
+of its first call, and look at and clear the answer cache.
 
 thunc run [--profile] SCRIPT [ARG]...
 thunc run [--profile] -m MODULE [ARG]...
 thunc watch [OPTION]... SCRIPT [ARG]...    (the dashboard: pip install "thunc[watch]")
+thunc write [--dry-run] [--backend NAME] [--model NAME] FILE::FUNCTION
 thunc cache list
 thunc cache clear [--function NAME]... [--older-than AGE] [--dry-run] [--cache-dir DIR]
 """
@@ -10,6 +12,9 @@ thunc cache clear [--function NAME]... [--older-than AGE] [--dry-run] [--cache-d
 from __future__ import annotations
 
 import argparse
+import difflib
+import importlib
+import importlib.util
 import os
 import re
 import runpy
@@ -20,6 +25,8 @@ import sysconfig
 import traceback
 from collections.abc import Sequence
 from contextlib import nullcontext
+from types import ModuleType
+from typing import Any
 
 from . import __version__, profiling
 from .cache import CacheGroup, _clear, _info
@@ -38,6 +45,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "run":
         return _run(args.target, args.args, module=args.module, profile=args.profile)
+    if args.command == "write":
+        return _write(args.target, dry_run=args.dry_run, backend=args.backend, model=args.model)
     folder = args.cache_dir or cache_dir()
     if args.action == "list":
         return _list(folder)
@@ -63,6 +72,20 @@ def _parser() -> argparse.ArgumentParser:
         help="run a program with a live dashboard of its calls and agent runs (needs thunc[watch])",
         add_help=False,  # `thunc watch --help` is thunc-watch's own help
     )
+    write = commands.add_parser(
+        "write",
+        help="write a @thunc.function(write=True) now, before its first call",
+        description="Write a @thunc.function(write=True) into its file now, without calling it: the model drafts "
+        "the body, thunc checks it against the model's answers for test calls, and puts it in place of `...`. The "
+        "file is imported to find the function, which runs its top-level code as any import does, but not its "
+        "`if __name__ == '__main__':` block. A reason saved by an earlier attempt that didn't write it is ignored.",
+    )
+    write.add_argument("target", metavar="FILE::FUNCTION", help="the function, like app.py::minutes")
+    write.add_argument("--dry-run", action="store_true", help="show the change as a diff and leave the file as it is")
+    write.add_argument(
+        "--backend", metavar="NAME", help="the backend to use (default: as configured, or THUNC_BACKEND)"
+    )
+    write.add_argument("--model", metavar="NAME", help="the model to use")
     cache = commands.add_parser("cache", help="look at or clear the answers saved by cache=True")
     actions = cache.add_subparsers(dest="action", required=True, metavar="ACTION")
 
@@ -146,6 +169,87 @@ def _watch_binary() -> str | None:
         if os.path.isfile(candidate):
             return candidate
     return shutil.which("thunc-watch")
+
+
+def _write(target: str, *, dry_run: bool, backend: str | None, model: str | None) -> int:
+    """thunc write FILE::FUNCTION: write a write=True function ahead of its first call."""
+    from . import configure
+    from .errors import ThuncError
+    from .writing import NotWritten
+
+    path, sep, qualname = target.rpartition("::")
+    if not sep or not path or not qualname:
+        return _fail(f"{target!r} isn't FILE::FUNCTION, like app.py::minutes")
+    if not os.path.isfile(path):
+        return _fail(f"no file {path!r}")
+    try:
+        if backend is not None or model is not None:
+            configure(backend=backend, model=model)
+        module = _import_file(path)
+    except ThuncError as exc:
+        return _fail(str(exc))
+    except Exception:
+        traceback.print_exc()
+        return _fail(f"importing {path} failed (above)")
+    target_object: Any = module
+    for part in qualname.split("."):
+        target_object = getattr(target_object, part, None)
+    writer = getattr(target_object, "__thunc_writer__", None)
+    if writer is None:
+        what = "isn't in the file" if target_object is None else "isn't a @thunc.function(write=True)"
+        return _fail(f"{qualname} {what}")
+    before = _read_text(path)
+    try:
+        after = writer.write_now(dry_run=dry_run)
+    except NotWritten as exc:
+        return _fail(f"{qualname}() wasn't written: {exc}")
+    if dry_run:
+        relative = os.path.relpath(path)
+        diff = difflib.unified_diff(
+            before.splitlines(keepends=True), after.splitlines(keepends=True), f"a/{relative}", f"b/{relative}"
+        )
+        sys.stdout.writelines(diff)
+        print(f"\n(dry run: {relative} is unchanged)", file=sys.stderr)
+    return 0
+
+
+def _import_file(path: str) -> ModuleType:
+    """Import the file as a module, as `import` would (so `if __name__ == "__main__":` doesn't run): by its
+    dotted name from the current directory when it has one, else on its own with its folder on sys.path."""
+    full = os.path.abspath(path)
+    cwd = os.getcwd()
+    if full.startswith(cwd + os.sep):
+        name = os.path.splitext(os.path.relpath(full, cwd))[0].replace(os.sep, ".")
+        if all(part.isidentifier() for part in name.split(".")):
+            sys.path.insert(0, cwd)
+            try:
+                module = importlib.import_module(name)
+            except ModuleNotFoundError as exc:
+                if exc.name is None or not name.startswith(exc.name):
+                    raise
+            else:
+                if os.path.abspath(getattr(module, "__file__", "") or "") == full:
+                    return module
+    sys.path.insert(0, os.path.dirname(full))
+    name = os.path.splitext(os.path.basename(full))[0]
+    spec = importlib.util.spec_from_file_location(name, full)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"can't import {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _read_text(path: str) -> str:
+    from .source import read
+
+    return read(path)[0]
+
+
+def _fail(message: str) -> int:
+    print(f"thunc write: {message}", file=sys.stderr)
+    return 1
 
 
 def _exit_message(message: object) -> int:
