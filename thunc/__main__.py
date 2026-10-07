@@ -1,4 +1,4 @@
-"""The `thunc` command (also `python -m thunc`): run a program, write a self-writing function ahead of
+"""The `thunc` command (also `python -m thunc`): run a program, write a write=True function ahead of
 its first call, and look at and clear the answer cache.
 
 thunc run [--profile] SCRIPT [ARG]...
@@ -125,7 +125,7 @@ def _run(target: str, args: list[str], *, module: bool, profile: bool) -> int:
 
 
 def _write(target: str, *, dry_run: bool, backend: str | None, model: str | None) -> int:
-    """thunc write FILE::FUNCTION: write a self-writing function ahead of its first call."""
+    """thunc write FILE::FUNCTION: write a write=True function ahead of its first call."""
     from . import configure
     from .errors import ThuncError
     from .writing import NotWritten

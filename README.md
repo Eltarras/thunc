@@ -93,7 +93,7 @@ Anything from users, files or the web goes in the inputs:
 
 | | |
 |---|---|
-| `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `system=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`, `write=` (see [Self-writing functions](#self-writing-functions)). The body must be empty (`...`); real code raises `TypeError`. `async def` works |
+| `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `system=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`, `write=` (see [thunc write](#thunc-write)). The body must be empty (`...`); real code raises `TypeError`. `async def` works |
 | `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None, system=None, cache=False, name=None)` | One prompt. Inputs are sent separately from the instructions. `name=` groups its cached answers |
 | `thunc.map(func, items, workers=8)` | Runs calls in parallel, keeping the input order. Each call takes 4–8s, so this is the main speed lever |
 | `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=, system=)` | Process-wide settings. `trace="calls.jsonl"` logs every call |
@@ -227,12 +227,11 @@ Slowest:       urgency took 309ms
 **Type checking:** signatures and return types are visible to mypy and Pyright. mypy reports
 empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
-## Self-writing functions
+## thunc write
 
-> **New in 0.3.** Self-writing functions edit your source files, while you develop, as a diff to
-> review. The API may change as feedback comes in.
+> **New in 0.3.** thunc write edits your source files, while you develop, as a diff to review. The API may change as feedback comes in.
 
-With `write=True`, a function writes its own body on its first call:
+Functions that write themselves. With `write=True`, a function writes its own body on its first call:
 
 ```python
 @thunc.function(write=True)
@@ -266,7 +265,7 @@ installed code and functions inside functions. Write one ahead of its first call
 first, with `thunc write durations.py::minutes [--dry-run]`.
 
 The checks are only as good as the model's answers, so review the rule it wrote. The
-[self-writing functions guide](https://eltarras.github.io/thunc/docs/writing.html) has the details.
+[thunc write guide](https://eltarras.github.io/thunc/docs/write.html) has the details.
 
 ## Agents
 
@@ -502,7 +501,7 @@ history replay and upgrades.
 | [jev_hello.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_hello.py) | The smallest Jev calls: a yes/no, a label and a rating |
 | [jev_inbox.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_inbox.py) | A support inbox triaged on Jev: spam, team and urgency for 8 tickets in about a second |
 | [jev_with_claude.py](https://github.com/Eltarras/thunc/blob/main/examples/jev_with_claude.py) | Jev decides which messages need a reply; Claude writes only those replies |
-| [self_writing.py](https://github.com/Eltarras/thunc/blob/main/examples/self_writing.py) | A function that writes itself into a scratch file on its first call, then runs as plain Python |
+| [thunc_write.py](https://github.com/Eltarras/thunc/blob/main/examples/thunc_write.py) | thunc write: a function that writes itself into a scratch file on its first call, then runs as plain Python |
 
 ## Code
 
@@ -531,7 +530,7 @@ thunc/
   backends.py    anthropic, openai, claude-code, codex, jev
   errors.py      ThuncError, and TransientError for failures worth asking again
 tests/           offline: a fake backend, never a real model
-live_tests/      against a real model: hello, a yes/no decision, labels and ratings, messy text to a dict, a self-writing function
+live_tests/      against a real model: hello, a yes/no decision, labels and ratings, messy text to a dict, thunc write
 examples/
 ```
 

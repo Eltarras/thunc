@@ -1,4 +1,4 @@
-"""Editing one function in its source file, for self-writing functions (see writing.py).
+"""Editing one function in its source file, for thunc write (see writing.py).
 
 splice() returns the file's text with a written body in place of the empty one: the
 @thunc.function(write=True) decorator removed, the imports the body needs added, the checked cases

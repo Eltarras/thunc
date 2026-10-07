@@ -1,4 +1,5 @@
-"""Self-writing functions: @thunc.function(write=True) writes its own body on its first call.
+"""thunc write, functions that write themselves: @thunc.function(write=True) writes its own body on its
+first call.
 
     @thunc.function(write=True)
     def minutes(duration: str) -> int:
@@ -845,7 +846,7 @@ def _folder(root: str) -> str:
     ignore = os.path.join(folder, ".gitignore")
     if not os.path.exists(ignore):
         with open(ignore, "w", encoding="utf-8") as f:
-            f.write("# thunc's notes about self-writing functions; not for git\n*\n")
+            f.write("# thunc write's notes about functions it didn't write; not for git\n*\n")
     return folder
 
 

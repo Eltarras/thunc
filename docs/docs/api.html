@@ -44,7 +44,7 @@
     <a href="caching.html">Caching, tracing and profiling</a>
     <a href="agents.html">Agents</a>
     <div class="eyebrow">Going further</div>
-    <a href="writing.html">Self-writing functions</a>
+    <a href="write.html">thunc write</a>
     <a href="temporal.html">Durable agents</a>
     <a href="jev.html">Jev backend</a>
     <div class="eyebrow">Reference</div>
@@ -63,7 +63,7 @@
 <div class="tablewrap"><table>
 <thead><tr><th>Name</th><th>What it does</th></tr></thead>
 <tbody>
-<tr><td><a href="functions.html#function"><code>@thunc.function</code></a></td><td>Turns a signature and docstring into an AI-backed function. Options: <code>instructions=</code>, <code>system=</code>, <code>ensure=</code>, <code>retries=2</code>, <code>backend=</code>, <code>model=</code>, <code>cache=False</code>, <code>write=False</code> (<a href="writing.html">writes its own body</a>). The body must be empty (<code>...</code>); real code raises <code>TypeError</code>. <code>async def</code> works.</td></tr>
+<tr><td><a href="functions.html#function"><code>@thunc.function</code></a></td><td>Turns a signature and docstring into an AI-backed function. Options: <code>instructions=</code>, <code>system=</code>, <code>ensure=</code>, <code>retries=2</code>, <code>backend=</code>, <code>model=</code>, <code>cache=False</code>, <code>write=False</code> (<a href="write.html">thunc write</a>: the function writes its own body). The body must be empty (<code>...</code>); real code raises <code>TypeError</code>. <code>async def</code> works.</td></tr>
 <tr><td><a href="functions.html#call"><code>thunc.call</code></a></td><td>One prompt. Inputs are sent separately from the instructions. <code>name=</code> groups its cached answers.</td></tr>
 <tr><td><a href="functions.html#map"><code>thunc.map</code></a></td><td>Runs calls in parallel, keeping the input order.</td></tr>
 <tr><td><a href="#configure"><code>thunc.configure</code></a></td><td>Process-wide settings.</td></tr>
@@ -117,7 +117,7 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 <tr><td><code>THUNC_TRACE</code></td><td>Trace file, like <code>configure(trace=...)</code></td></tr>
 <tr><td><code>THUNC_CACHE_DIR</code></td><td>Cache folder, like <code>configure(cache_dir=...)</code>; also read by the <code>thunc</code> command</td></tr>
 <tr><td><code>THUNC_AGENTS_DIR</code></td><td>Agents folder, like <code>configure(agents_dir=...)</code></td></tr>
-<tr><td><code>THUNC_WRITE</code></td><td><code>0</code> stops <a href="writing.html">self-writing functions</a> from writing, as in production; so does <code>CI</code></td></tr>
+<tr><td><code>THUNC_WRITE</code></td><td><code>0</code> stops <a href="write.html">thunc write</a> from writing, as in production; so does <code>CI</code></td></tr>
 </tbody></table></div>
 
 <h2 id="errors">Errors</h2>
@@ -136,7 +136,7 @@ thunc cache list                                   # saved answers per function
 thunc cache clear                                  # everything
 thunc cache clear --function urgency               # one function (repeat for several)
 thunc cache clear --older-than 30d --dry-run       # what would go, without deleting</code></pre></div>
-<p>Also <code>python -m thunc</code>, and <code>thunc --version</code>. <code>thunc run</code> runs the program as <code>python</code> would and passes its exit code through; <code>--profile</code> adds the <a href="caching.html#profiling">performance report</a>. <code>thunc write</code> writes a <a href="writing.html#thunc-write">self-writing function</a> ahead of its first call. The <code>cache</code> commands take <code>--cache-dir</code>, or read <code>THUNC_CACHE_DIR</code>.</p>
+<p>Also <code>python -m thunc</code>, and <code>thunc --version</code>. <code>thunc run</code> runs the program as <code>python</code> would and passes its exit code through; <code>--profile</code> adds the <a href="caching.html#profiling">performance report</a>. <code>thunc write</code> writes a <code>write=True</code> function <a href="write.html#ahead">ahead of its first call</a>. The <code>cache</code> commands take <code>--cache-dir</code>, or read <code>THUNC_CACHE_DIR</code>.</p>
 
 <h2 id="limitations">Limitations</h2>
 <ul>

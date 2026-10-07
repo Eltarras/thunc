@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Self-writing functions · thunc docs</title>
-<meta name="description" content="A function declared with write=True writes its own body on its first call: the model writes Python, thunc checks it against the model's answers and puts it into your file.">
-<link rel="canonical" href="https://eltarras.github.io/thunc/docs/writing.html">
-<meta property="og:title" content="Self-writing functions · thunc docs">
-<meta property="og:description" content="A function declared with write=True writes its own body on its first call: the model writes Python, thunc checks it against the model's answers and puts it into your file.">
+<title>thunc write · thunc docs</title>
+<meta name="description" content="thunc write: functions that write themselves. A function declared with write=True writes its own body on its first call: the model writes Python, thunc checks it against the model's answers and puts it into your file.">
+<link rel="canonical" href="https://eltarras.github.io/thunc/docs/write.html">
+<meta property="og:title" content="thunc write · thunc docs">
+<meta property="og:description" content="thunc write: functions that write themselves. A function declared with write=True writes its own body on its first call: the model writes Python, thunc checks it against the model's answers and puts it into your file.">
 <meta property="og:image" content="https://eltarras.github.io/thunc/og.png">
-<meta property="og:url" content="https://eltarras.github.io/thunc/docs/writing.html">
+<meta property="og:url" content="https://eltarras.github.io/thunc/docs/write.html">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="thunc">
 <meta name="twitter:card" content="summary_large_image">
@@ -44,7 +44,7 @@
     <a href="caching.html">Caching, tracing and profiling</a>
     <a href="agents.html">Agents</a>
     <div class="eyebrow">Going further</div>
-    <a href="writing.html" class="active" aria-current="page">Self-writing functions</a>
+    <a href="write.html" class="active" aria-current="page">thunc write</a>
     <a href="temporal.html">Durable agents</a>
     <a href="jev.html">Jev backend</a>
     <div class="eyebrow">Reference</div>
@@ -56,10 +56,10 @@
 <main>
 <header>
   <div class="eyebrow">Going further · new in 0.3</div>
-  <h1>Self-writing functions</h1>
-  <p class="lede">A function declared with <code>write=True</code> writes its own body on its first call. The model writes Python from the docstring, thunc checks it against the model's own answers and puts it into your file in place of <code>...</code>, and the call runs it. From then on it's plain Python, with no model calls.</p>
+  <h1>thunc write</h1>
+  <p class="lede">Functions that write themselves. A function declared with <code>write=True</code> writes its own body on its first call. The model writes Python from the docstring, thunc checks it against the model's own answers and puts it into your file in place of <code>...</code>, and the call runs it. From then on it's plain Python, with no model calls.</p>
 </header>
-<div class="callout"><p><strong>New in 0.3.</strong> Self-writing functions edit your source files. They only do it while you develop, and every change is a diff for you to review before you commit it. The API may change as feedback comes in.</p></div>
+<div class="callout"><p><strong>New in 0.3.</strong> thunc write edits your source files. It only does it while you develop, and every change is a diff for you to review before you commit it. The API may change as feedback comes in.</p></div>
 
 <h2 id="example">Before and after the first call</h2>
 <div class="codeblock"><div class="label">durations.py, before</div><pre><code class="py">import thunc
@@ -91,7 +91,7 @@ def minutes(duration: str) -&gt; int:
     if not parts or any(unit not in units for _, unit in parts):
         raise ValueError(f"not a duration: {duration!r}")
     return round(sum(float(n) * units[unit] for n, unit in parts))</code></pre></div>
-<p>The decorator is gone, and the docstring stays as the function's documentation, with the calls it was checked on added as doctest examples (<code>python -m doctest durations.py</code> runs them). <code>import thunc</code> stays, because other code in the file, or code that imports it, may use it. The program that made the first call goes on using the written code without being restarted. <a href="https://github.com/Eltarras/thunc/blob/main/examples/self_writing.py">self_writing.py</a> shows it end to end.</p>
+<p>The decorator is gone, and the docstring stays as the function's documentation, with the calls it was checked on added as doctest examples (<code>python -m doctest durations.py</code> runs them). <code>import thunc</code> stays, because other code in the file, or code that imports it, may use it. The program that made the first call goes on using the written code without being restarted. <a href="https://github.com/Eltarras/thunc/blob/main/examples/thunc_write.py">thunc_write.py</a> shows it end to end.</p>
 
 <h2 id="how">What happens on the first call</h2>
 <ol>
@@ -126,8 +126,8 @@ def minutes(duration: str) -&gt; int:
 </tbody></table></div>
 <p>Two more are errors when the function is declared: <code>write=True</code> needs the prompt in the docstring, not <code>instructions=</code>, and it must be the decorator nearest the <code>def</code> line.</p>
 
-<h2 id="thunc-write">Writing ahead: thunc write</h2>
-<p>Write a function without calling it, for example before you deploy, or to see the change first:</p>
+<h2 id="ahead">Writing ahead of the first call</h2>
+<p>The <code>thunc write</code> command writes a function without calling it, for example before you deploy, or to see the change first:</p>
 <div class="codeblock"><pre><code class="sh">thunc write durations.py::minutes --dry-run      # the change as a diff; the file stays as it is
 thunc write durations.py::minutes                # write it
 thunc write app.py::minutes --backend codex      # with another backend or --model</code></pre></div>
@@ -141,7 +141,7 @@ thunc write app.py::minutes --backend codex      # with another backend or --mod
 <li><strong>Free-text functions rarely pass.</strong> A function that returns prose needs its exact words to match the model's, so it usually stays a model call. That's the right outcome for it.</li>
 </ul>
 <nav class="pager" aria-label="Pages"><a class="prev" href="agents.html"><span>Previous</span>Agents</a><a class="next" href="temporal.html"><span>Next</span>Durable agents</a></nav>
-<p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/writing.html">Edit this page on GitHub</a></p>
+<p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/write.html">Edit this page on GitHub</a></p>
 </main>
 </div>
 <footer class="sitefoot"><div class="wrap">

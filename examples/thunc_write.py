@@ -1,4 +1,4 @@
-"""A function that writes itself.  Run from the repo root:  python3 -m examples.self_writing
+"""thunc write: a function that writes itself.  Run from the repo root:  python3 -m examples.thunc_write
 
 The function in DURATIONS is saved as examples/scratch/durations.py (a folder git ignores) and
 called there. On its first call, the model writes its body into that file, thunc checks it against
@@ -16,7 +16,7 @@ import thunc
 thunc.configure(backend=os.environ.get("THUNC_BACKEND", "claude-code"))
 
 DURATIONS = '''\
-"""Written by examples/self_writing.py, and then by thunc."""
+"""Written by examples/thunc_write.py, and then by thunc."""
 
 import thunc
 
