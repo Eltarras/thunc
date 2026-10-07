@@ -28,6 +28,7 @@ def function(
     model: str | None = None,
     system: str | None = None,
     cache: bool = False,
+    write: bool = False,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 def function(
     func: Callable[..., Any] | None = None,
@@ -40,6 +41,7 @@ def function(
     model: str | None = None,
     system: str | None = None,
     cache: bool = False,
+    write: bool = False,
 ) -> Any:
     """Turn a function signature into an AI-backed function.
 
@@ -57,14 +59,21 @@ def function(
       that should give one answer per input (classify, extract, score), not for ones meant to vary.
       `thunc.clear_cache(func)` deletes this function's saved answers.
     - The body must stay empty; `async def` gives an awaitable.
+    - `write=True` makes the function write itself: on its first call the model writes a body from
+      the docstring, thunc checks it against model answers and puts it into your source file in place
+      of `...`, removing this decorator. From then on it's plain Python. See thunc/writing.py.
     """
 
     def decorate(f: Callable[..., Any]) -> Callable[..., Any]:
-        return _build(
-            f,
-            instructions,
-            dict(retries=retries, ensure=ensure, backend=backend, model=model, system=system, cache=cache),
-        )
+        options = dict(retries=retries, ensure=ensure, backend=backend, model=model, system=system, cache=cache)
+        if write:
+            if instructions is not None:
+                raise TypeError(
+                    f"@thunc.function {f.__qualname__}: write=True takes the prompt from the docstring, "
+                    "which stays as the written function's documentation; instructions= can't be used with it."
+                )
+            return _build_writing(f, options)
+        return _build(f, instructions, options)
 
     return decorate(func) if func is not None else decorate
 
@@ -133,6 +142,37 @@ def _build(func: Callable[..., Any], instructions: str | None, options: dict[str
     wrapper.__dict__["__thunc_function__"] = name  # for thunc.clear_cache(func); also the cache key's name
     wrapper.__dict__["__thunc_spec__"] = spec
     wrapper.__dict__["__thunc_options__"] = options
+    return wrapper
+
+
+def _build_writing(func: Callable[..., Any], options: dict[str, Any]) -> Callable[..., Any]:
+    """A function that answers through the model until it has written itself, then runs its own code."""
+    from .writing import Writer
+
+    name = func.__qualname__
+    spec = _read_signature(func, None, "@thunc.function")
+    writer = Writer(func, spec, options, name)
+
+    def run(*args: Any, **kwargs: Any) -> Any:
+        if writer.impl is None:
+            answer = writer.answer(args, kwargs)
+            if writer.impl is None:
+                return answer
+        return writer.impl(*args, **kwargs)
+
+    async def run_async(*args: Any, **kwargs: Any) -> Any:
+        if writer.impl is None:
+            answer = await asyncio.to_thread(writer.answer, args, kwargs)
+            if writer.impl is None:
+                return answer
+        return await writer.impl(*args, **kwargs)
+
+    wrapper = functools.wraps(func)(run_async if spec.is_async else run)
+    wrapper.__dict__["__thunc_instructions__"] = spec.instructions
+    wrapper.__dict__["__thunc_function__"] = name
+    wrapper.__dict__["__thunc_spec__"] = spec
+    wrapper.__dict__["__thunc_options__"] = options
+    wrapper.__dict__["__thunc_writer__"] = writer
     return wrapper
 
 
