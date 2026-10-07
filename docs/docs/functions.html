@@ -159,6 +159,15 @@ def urgency(ticket: str) -&gt; int:
 scores = thunc.map(urgency, tickets, workers=8)  # same order as tickets</code></pre></div>
 <p>Like the built-in <code>map</code>, but up to <code>workers</code> calls run at once, and the results keep the input order. Each call takes 4–8 seconds, so this is the main speed lever.</p>
 
+<h2 id="write">Functions that write themselves: write=True</h2>
+<div class="callout"><p><strong>Experimental, new in 0.3.</strong> It may change, or be removed, in a later release without a deprecation period.</p></div>
+<p>When a function's docstring describes a rule rather than a judgment, <code>write=True</code> lets the model write the rule once. On its first call, thunc drafts a body from the docstring, checks it against the model's own answers, puts it into your file in place of <code>...</code> and removes the decorator. From then on the function is plain Python, with no model calls. If the task needs judgment, or no draft passes, the call returns the model's answer and the file is left alone.</p>
+<div class="codeblock"><pre><code class="py">@thunc.function(write=True)
+def minutes(duration: str) -&gt; int:
+    """Convert a duration like '1h 30m', '90 min' or '2 hours' to whole minutes."""
+    ...</code></pre></div>
+<p>It only writes while you develop: never in CI or with <code>THUNC_WRITE=0</code>. Review each change as a diff before you commit it. The <a href="write.html">thunc write guide</a> has the details.</p>
+
 <h2 id="typing">Type checking</h2>
 <p>Signatures and return types are visible to mypy and Pyright. mypy reports the empty bodies; turn that off with <code>disable_error_code = ["empty-body"]</code>. <code>Literal</code> results from <code>thunc.call</code> are typed as <code>Any</code>; <code>@thunc.function</code> has no such gap.</p>
 <p>Docstrings disappear under <code>python -OO</code>. Use <code>instructions=</code> there.</p>

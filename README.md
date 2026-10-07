@@ -32,7 +32,9 @@ type; if it doesn't fit, the model is asked again, and after that `thunc.ThuncEr
 dependencies, Python 3.10+.
 
 It also runs [agents](#agents): typed functions that can read, edit and test your code before they
-answer.
+answer. New in 0.3: `thunc watch` shows a program's calls and agent runs live in the terminal (see
+**Watching** below), and [thunc write](#thunc-write), an experiment, lets a function write its own
+body as plain Python on its first call.
 
 The [docs](https://eltarras.github.io/thunc/docs/) cover everything below, a page per topic.
 
@@ -59,7 +61,7 @@ With an API key set, thunc picks that backend on its own, so `THUNC_BACKEND` isn
 `thunc.configure(backend=...)` does the same. Durable agents on Temporal add
 `pip install "thunc[temporal]"`.
 
-> **Beta (v0.2).** The API may still change. Bug reports and feedback are welcome in
+> **Beta (v0.3).** The API may still change. Bug reports and feedback are welcome in
 > [issues](https://github.com/Eltarras/thunc/issues).
 
 **More examples.** Clone the repo and run them from its root, with no install, through your
@@ -235,7 +237,8 @@ thunc watch support_inbox.py --limit 20   # a script and its arguments, as with 
 thunc watch --agents                      # agent runs in ./.thunc_agents, from any process
 ```
 
-See [watch/README.md](https://github.com/Eltarras/thunc/blob/main/watch/README.md) for the screens,
+The [watching guide](https://eltarras.github.io/thunc/docs/watch.html) and
+[watch/README.md](https://github.com/Eltarras/thunc/blob/main/watch/README.md) cover the screens,
 the keys and `--plain` output for CI.
 
 **Type checking:** signatures and return types are visible to mypy and Pyright. mypy reports

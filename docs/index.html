@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>thunc · call an LLM like a typed Python function</title>
-<meta name="description" content="thunc is a Python library for typed LLM calls: a docstring and type hints in, a validated value out. Agents that read, edit and test code. Works with Claude, OpenAI, local models, Claude Code and Codex. No dependencies.">
+<meta name="description" content="thunc is a Python library for typed LLM calls: a docstring and type hints in, a validated value out. Agents that read, edit and test code, and a live dashboard for both. Works with Claude, OpenAI, local models, Claude Code and Codex. No dependencies.">
 <link rel="canonical" href="https://eltarras.github.io/thunc/">
 <meta property="og:title" content="thunc · call an LLM like a typed Python function">
 <meta property="og:description" content="Docstring is the prompt, return type is the contract. Claude, OpenAI, local models, or your Claude Code login. Zero dependencies.">
@@ -64,7 +64,7 @@
       <a class="btn primary" href="docs/">Get started</a>
       <a class="btn" href="https://github.com/Eltarras/thunc">View on GitHub</a>
     </div>
-    <div class="facts"><span><b>0</b> dependencies</span><span><b>no API key</b> with Claude Code or Codex</span><span><b>beta</b> v0.2</span></div>
+    <div class="facts"><span><b>0</b> dependencies</span><span><b>no API key</b> with Claude Code or Codex</span><span><b>beta</b> v0.3</span></div>
   </div>
   <div class="window">
     <div class="bar"><i></i><i></i><i></i><span>urgency.py</span></div>
@@ -144,6 +144,82 @@ def fix_failing_tests() -> bool:
     """Run the tests and fix any problems that they surface."""
     ...</code></pre></div>
       <a class="btn" href="docs/agents.html">Read the agents guide</a>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="head">
+      <div class="eyebrow accent">Watching · new in 0.3</div>
+      <h2 style="margin-top:8px">See every call as it happens.</h2>
+      <p><code>thunc watch</code> runs your program with a live dashboard in the terminal: the calls waiting on a model, retries and why each reply was rejected, each agent's steps, and a report when it ends. Your program needs nothing added.</p>
+    </div>
+    <div class="window term">
+  <div class="bar"><i></i><i></i><i></i><span>thunc watch support_inbox.py</span></div>
+  <pre><code> thunc watch  support_inbox.py                     claude-code/sonnet   00:18.0   ● running
+  1 Overview   2 Agents   3 Calls   4 Summary
+────────────────────────────────────────────────────────────────────────────────────────────
+ IN FLIGHT  4 running
+   ⠙ draft_reply       ticket="Password reset email never… attempt 1    4.2s  ████████████
+   ⠙ urgency           ticket="Refund still not showing a… attempt 2    4.1s  ██████████░░
+   ⠙ draft_reply       ticket="Where is order A-1043? It … attempt 1    3.1s  █████████░░░
+   ⠙ draft_reply       ticket="Any plans for a public API… attempt 1    2.4s  ███████░░░░░
+
+   FUNCTION          CALLS  CACHED  RETRIES  FAILED      MEAN       P95     MODEL   RECENT
+   category              8       0        0       0      1.5s      2.5s     11.7s   ▃▄▅█▆▇▃▄
+   urgency               7       0        1       0      2.4s      4.7s     16.9s   ▂▄▄▆▃█▅
+   find_order            7       0        0       0      2.1s      3.4s     15.0s   ▅▃█▇▇▅▄
+   draft_reply           4       0        0       0      3.6s      4.4s     14.5s   ▆▆█▇
+
+ AGENTS  0 running
+   ✓ repo-guide      tests_for(feature="caching")            finished · 6 steps       12.4s
+
+ ACTIVITY  results per second, last 30s  ▁▁▁▁▁▁▁▁▁▁▁▁▆▆▃█▃▃▆▃▆▃▆▃▆█▃▃▁▁   overlap 4.7x
+
+ EVENTS
+   17:38:11  ✓ urgency         → 4                                                     4.7s
+   17:38:12  ✓ find_order      → None                                                  2.7s
+   17:38:12  ✓ category        → bug                                                   1.1s
+   17:38:12  ✓ urgency         → 3                                                     2.4s
+   17:38:13  ✓ find_order      → Order(id='A-1043')                                    1.8s
+   17:38:14  ✓ find_order      → None                                                  1.6s
+   17:38:15  ↻ urgency         attempt 1: not valid JSON: 'high'                       2.8s
+────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ or click to select · ⏎ or click again to open   p Pause   f Failures   ? Help   q Quit</code></pre>
+</div>
+    <div class="ctas" style="margin-top:24px">
+      <div class="install"><span>pip install "thunc[watch]"</span><button type="button" data-copy='pip install "thunc[watch]"'>Copy</button></div>
+      <a class="btn" href="docs/watch.html">Read the watching guide</a>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap grid2" style="align-items:start">
+    <div>
+      <div class="eyebrow accent">thunc write · experimental · new in 0.3</div>
+      <h2 style="margin-top:8px">Functions that write themselves.</h2>
+      <p class="muted" style="margin-top:12px;font-size:17px">With <code>write=True</code>, a function writes its own body on its first call. The model drafts Python from the docstring, thunc checks it against the model's own answers and puts it into your file, and from then on it's plain Python with no model calls. Every change is a diff for you to review.</p>
+      <p class="muted" style="font-size:15px">Experimental: it may change, or be removed, in a later release.</p>
+      <a class="btn" href="docs/write.html">Read the thunc write guide</a>
+    </div>
+    <div>
+      <div class="codeblock"><div class="label">before the first call</div><pre><code class="py">@thunc.function(write=True)
+def minutes(duration: str) -&gt; int:
+    """Convert a duration like '1h 30m',
+    '90 min' or '2 hours' to whole minutes."""
+    ...</code></pre></div>
+      <div class="codeblock"><div class="label">after: plain Python, in your file</div><pre><code class="py">def minutes(duration: str) -&gt; int:
+    """Convert a duration like '1h 30m',
+    '90 min' or '2 hours' to whole minutes.
+
+    &gt;&gt;&gt; minutes('1h 30m')
+    90
+    """
+    # Written by thunc from the docstring. Review it.
+    parts = re.findall(r"(\d+(?:\.\d+)?)\s*([a-z]+)", duration.lower())
+    ...</code></pre></div>
     </div>
   </div>
 </section>
