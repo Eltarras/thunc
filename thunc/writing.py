@@ -332,9 +332,9 @@ class Writer:
         """What the draft request gets: the function, its file, and the project types it uses."""
         assert self.path is not None
         inputs: dict[str, Any] = {
-            "function": source.function_source(text, node),
+            "function": _lf(source.function_source(text, node)),
             "file": _relative(self.path, root),
-            "module": text,
+            "module": _lf(text),
             "return_type": describe(self.spec.returns),
             "example_call": self._example(call),
         }
@@ -368,7 +368,7 @@ class Writer:
         calls: list[str] = _call(
             CASES,
             {
-                "function": source.function_source(text, node),
+                "function": _lf(source.function_source(text, node)),
                 "example_call": self._example(call),
             },
             list[str],
@@ -644,6 +644,11 @@ def _signature_types(func: Callable[..., Any]) -> list[type]:
     for hint in hints.values():
         visit(hint)
     return found
+
+
+def _lf(text: str) -> str:
+    """The file's text for a prompt: a CRLF file (Windows) reads the same as any other."""
+    return text.replace("\r\n", "\n")
 
 
 def _project_types(func: Callable[..., Any], root: str, path: str) -> str:
