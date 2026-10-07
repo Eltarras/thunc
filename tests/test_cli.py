@@ -1,5 +1,6 @@
 """The `thunc` command: `thunc cache list` and `thunc cache clear`."""
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -9,7 +10,7 @@ import pytest
 
 import thunc
 from thunc import config
-from thunc.__main__ import main
+from thunc.__main__ import _watch_binary, main
 
 
 @pytest.fixture
@@ -114,3 +115,73 @@ def test_python_dash_m(tmp_path):
         check=False,
     )
     assert result.returncode == 0 and result.stdout.startswith("No saved answers")
+
+
+# --- thunc watch ----------------------------------------------------------------------------
+
+
+@pytest.fixture
+def no_watch_binary(monkeypatch, tmp_path):
+    monkeypatch.delenv("THUNC_WATCH_BIN", raising=False)
+    monkeypatch.setattr("sysconfig.get_path", lambda name: str(tmp_path / "empty"))
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "empty" / "python"))
+    monkeypatch.setattr("shutil.which", lambda name: None)
+
+
+def test_watch_without_the_package_says_how_to_install_it(no_watch_binary, capsys):
+    assert main(["watch", "app.py"]) == 2
+    assert 'pip install "thunc[watch]"' in capsys.readouterr().err
+
+
+def test_watch_hands_every_argument_to_the_dashboard(monkeypatch):
+    started = []
+
+    def record(binary, argv):
+        started.append(argv)
+        raise SystemExit(0)  # execv doesn't return
+
+    class Popen:
+        def __init__(self, argv):
+            started.append(argv)
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setenv("THUNC_WATCH_BIN", "/opt/thunc-watch")
+    monkeypatch.setattr(os, "execv", record)
+    monkeypatch.setattr(subprocess, "Popen", Popen)
+    with pytest.raises(SystemExit) if sys.platform != "win32" else contextlib.nullcontext():
+        main(["watch", "--agents", "--plain", "app.py", "--flag"])
+    # Scripts run on this Python, unless thunc-watch is given its own --python, which comes later.
+    assert started == [["/opt/thunc-watch", "--python", sys.executable, "--agents", "--plain", "app.py", "--flag"]]
+
+
+def test_watch_finds_the_binary_pip_installed_next_to_python(monkeypatch, tmp_path):
+    scripts = tmp_path / "bin"
+    scripts.mkdir()
+    binary = scripts / ("thunc-watch.exe" if sys.platform == "win32" else "thunc-watch")
+    binary.write_text("")
+    monkeypatch.delenv("THUNC_WATCH_BIN", raising=False)
+    monkeypatch.setattr("sysconfig.get_path", lambda name: str(scripts))
+    assert _watch_binary() == str(binary)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="runs a shell script as the dashboard")
+def test_thunc_watch_runs_the_dashboard_in_place_of_itself(tmp_path):
+    fake = tmp_path / "thunc-watch"
+    fake.write_text('#!/bin/sh\necho "dashboard $*"\nexit 3\n')
+    fake.chmod(0o755)
+    env = {**os.environ, "THUNC_WATCH_BIN": str(fake)}
+    done = subprocess.run(
+        [sys.executable, "-m", "thunc", "watch", "--replay", "e.jsonl"], capture_output=True, text=True, env=env
+    )
+    assert done.returncode == 3
+    word, flag, python, *rest = done.stdout.split()
+    assert (word, flag, rest) == ("dashboard", "--python", ["--replay", "e.jsonl"])
+    assert os.path.realpath(python) == os.path.realpath(sys.executable)
+
+
+def test_help_lists_watch(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    assert "watch" in capsys.readouterr().out

@@ -128,6 +128,7 @@ td.nowrap { white-space: nowrap; }
 .window .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
 .window .bar span { margin-left: 8px; font: 12px var(--mono); color: var(--muted); }
 .window pre { border: 0; border-radius: 0; background: transparent; padding: 20px 22px; font-size: 14.5px; }
+.window.term pre { font-size: 11.5px; line-height: 1.45; padding: 16px 18px; } /* a 92-column terminal fits the docs column */
 .band { padding: 64px 0; border-top: 1px solid var(--line); }
 .band .head { max-width: 680px; margin-bottom: 28px; }
 .band .head p { color: var(--muted); font-size: 17px; margin-top: 10px; }

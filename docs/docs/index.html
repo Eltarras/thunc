@@ -43,6 +43,7 @@
     <a href="backends.html">Backends</a>
     <a href="caching.html">Caching, tracing and profiling</a>
     <a href="agents.html">Agents</a>
+    <a href="watch.html">Watching a program</a>
     <div class="eyebrow">Going further</div>
     <a href="temporal.html">Durable agents</a>
     <a href="jev.html">Jev backend</a>
@@ -65,7 +66,8 @@
 <div class="codeblock"><pre><code class="sh">pip install thunc               # Claude Code, Codex and Jev need nothing more
 pip install "thunc[anthropic]"  # adds the Claude API backend
 pip install "thunc[openai]"     # adds the OpenAI API backend, also used for local models
-pip install "thunc[temporal]"   # adds durable agents on Temporal</code></pre></div>
+pip install "thunc[temporal]"   # adds durable agents on Temporal
+pip install "thunc[watch]"      # adds thunc watch, a live dashboard in the terminal</code></pre></div>
 
 <h2 id="backend">Pick a backend</h2>
 <p>thunc runs on whatever you already have. <strong>No API key is needed</strong> if Claude Code or Codex is installed and logged in: thunc calls the CLI with your login.</p>
