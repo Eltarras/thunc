@@ -205,10 +205,11 @@ def _write(target: str, *, dry_run: bool, backend: str | None, model: str | None
         return _fail(f"{qualname}() wasn't written: {exc}")
     if dry_run:
         relative = os.path.relpath(path)
+        # Lines without their endings: a CRLF file's \r would be doubled by stdout on Windows.
         diff = difflib.unified_diff(
-            before.splitlines(keepends=True), after.splitlines(keepends=True), f"a/{relative}", f"b/{relative}"
+            before.splitlines(), after.splitlines(), f"a/{relative}", f"b/{relative}", lineterm=""
         )
-        sys.stdout.writelines(diff)
+        sys.stdout.writelines(line + "\n" for line in diff)
         print(f"\n(dry run: {relative} is unchanged)", file=sys.stderr)
     return 0
 

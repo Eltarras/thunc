@@ -95,11 +95,11 @@ def project(tmp_path, monkeypatch):
 _count = 0
 
 
-def module(path, text=MODULE):
+def module(path, text=MODULE, newline=None):
     """Write `text` to `path` and import it under a fresh name."""
     global _count
     _count += 1
-    path.write_text(text)
+    path.write_text(text, newline=newline)
     spec = importlib.util.spec_from_file_location(f"writing_demo_{_count}", path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
@@ -409,6 +409,24 @@ def test_thunc_write_dry_run_shows_a_diff_and_leaves_the_file(model, project, cl
     assert out.startswith("--- a/app.py\n+++ b/app.py\n")
     assert "-@thunc.function(write=True)\n" in out and "+import re\n" in out and "-    ...\n" in out
     assert "(dry run: app.py is unchanged)" in err
+
+
+def test_a_crlf_file_reaches_the_model_as_lf_and_stays_crlf(model, project):
+    app = module(project / "app.py", newline="\r\n")  # as on Windows
+    model.drafts = [draft()]
+    assert app.minutes("1h 30m") == 90
+    assert "\r" not in model.draft_prompts[0] and "\r" not in model.case_prompts[0]
+    assert "<function>\n@thunc.function(write=True)\ndef minutes(duration: str) -> int:" in model.draft_prompts[0]
+    written = (project / "app.py").read_bytes()
+    assert b"def minutes(" in written and b"\n" not in written.replace(b"\r\n", b"")
+
+
+def test_thunc_write_dry_run_diff_of_a_crlf_file_has_no_cr(model, project, cli, capsys):
+    (project / "app.py").write_text(MODULE, newline="\r\n")
+    model.drafts = [draft()]
+    assert cli("--dry-run", "app.py::minutes") == 0
+    out, _ = capsys.readouterr()
+    assert "\r" not in out and "-@thunc.function(write=True)\n" in out and "+import re\n" in out
 
 
 def test_thunc_write_says_why_it_didnt_write(model, project, cli, capsys):
