@@ -459,3 +459,10 @@ def test_thunc_write_ignores_a_saved_reason_and_refuses_methods(model, project, 
     )
     assert cli("clock.py::Clock.minutes") == 1
     assert "it's a method, and thunc write has no instance to test it with" in capsys.readouterr().err
+
+
+def test_the_timing_report_has_a_fixed_order_whichever_part_finishes_first():
+    timer = writing._Timer()
+    for part in ("test calls", "draft", "answer"):  # the order they finished in
+        timer.timed(part, lambda: None)()
+    assert re.search(r"\(answer \d+s, draft \d+s, test calls \d+s; side by side\)", timer.report())

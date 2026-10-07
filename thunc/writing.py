@@ -123,8 +123,12 @@ class _Timer:
 
         return run
 
+    ORDER = ("answer", "draft", "test calls")
+
     def report(self) -> str:
-        shown = [f"{part} {' + '.join(f'{s:.0f}s' for s in times)}" for part, times in self.parts.items()]
+        # In a fixed order: the parts run side by side, so the order they finish in varies.
+        parts = sorted(self.parts.items(), key=lambda item: self.ORDER.index(item[0]))
+        shown = [f"{part} {' + '.join(f'{s:.0f}s' for s in times)}" for part, times in parts]
         return f"{time.monotonic() - self.started:.0f}s ({', '.join(shown)}; side by side)"
 
 
