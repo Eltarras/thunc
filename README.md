@@ -93,7 +93,7 @@ Anything from users, files or the web goes in the inputs:
 
 | | |
 |---|---|
-| `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `system=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`, `write=` (see [thunc write](#thunc-write)). The body must be empty (`...`); real code raises `TypeError`. `async def` works |
+| `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `system=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`, `write=` (experimental: see [thunc write](#thunc-write)). The body must be empty (`...`); real code raises `TypeError`. `async def` works |
 | `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None, system=None, cache=False, name=None)` | One prompt. Inputs are sent separately from the instructions. `name=` groups its cached answers |
 | `thunc.map(func, items, *, workers=8)` | Runs calls in parallel, keeping the input order. Each call takes 4–8s, so this is the main speed lever |
 | `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=, system=, agents_dir=)` | Process-wide settings. `trace="calls.jsonl"` logs every call |
@@ -243,7 +243,8 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
 ## thunc write
 
-> **New in 0.3.** thunc write edits your source files, while you develop, as a diff to review. The API may change as feedback comes in.
+> **Experimental, new in 0.3.** Its behavior, options and the code it writes may change, or it may be removed, in a later
+> release without a deprecation period. thunc write edits your source files, while you develop, as a diff to review.
 
 Functions that write themselves. With `write=True`, a function writes its own body on its first call:
 

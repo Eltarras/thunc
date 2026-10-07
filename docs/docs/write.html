@@ -52,15 +52,15 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.2.3 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.3.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
-  <div class="eyebrow">Going further · new in 0.3</div>
+  <div class="eyebrow">Going further · new in 0.3 · experimental</div>
   <h1>thunc write</h1>
   <p class="lede">Functions that write themselves. A function declared with <code>write=True</code> writes its own body on its first call. The model writes Python from the docstring, thunc checks it against the model's own answers and puts it into your file in place of <code>...</code>, and the call runs it. From then on it's plain Python, with no model calls.</p>
 </header>
-<div class="callout"><p><strong>New in 0.3.</strong> thunc write edits your source files. It only does it while you develop, and every change is a diff for you to review before you commit it. The API may change as feedback comes in.</p></div>
+<div class="callout"><p><strong>Experimental, new in 0.3.</strong> Its behavior, options and the code it writes may change, or it may be removed, in a later release without a deprecation period. thunc write edits your source files. It only does it while you develop, and every change is a diff for you to review before you commit it.</p></div>
 
 <h2 id="example">Before and after the first call</h2>
 <div class="codeblock"><div class="label">durations.py, before</div><pre><code class="py">import thunc

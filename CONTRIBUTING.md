@@ -198,6 +198,14 @@ no reliable way to tell them from a real one. Only an empty reply is retried.
 - On Windows, Ctrl+C and quitting end the program at once, without the `KeyboardInterrupt` it gets
   on macOS and Linux.
 
+**Open: thunc write (experimental).** It may change or be removed in a later release.
+
+- The draft is checked against the model's own answers, so a rule the model gets wrong every time
+  passes. The checked calls go into the docstring as doctests for review.
+- `thunc write FILE::FUNCTION` refuses methods: there's no instance to make the test calls with.
+  A method is written on its first call instead.
+- It doesn't run on `jev`, which can't write code.
+
 ## Reporting bugs
 
 Open an [issue](https://github.com/Eltarras/thunc/issues) with:
