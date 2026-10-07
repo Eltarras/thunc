@@ -52,7 +52,7 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html" class="active" aria-current="page">Changelog</a>
   </nav>
-  <div class="version">thunc 0.3.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.3.1 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -63,6 +63,7 @@
 <div class="tablewrap"><table>
 <thead><tr><th>Version</th><th>Released</th><th>Headline</th></tr></thead>
 <tbody>
+<tr><td><a href="#v0-3-1"><code>0.3.1</code></a></td><td class="nowrap">7 Oct 2026</td><td class="wrap">The 0.3.0 changes that missed its package: a fixed order in thunc write's timing message, and the README</td></tr>
 <tr><td><a href="#v0-3-0"><code>0.3.0</code></a></td><td class="nowrap">7 Oct 2026</td><td class="wrap"><code>thunc watch</code>: a live dashboard in the terminal for calls and agent runs; thunc write, functions that write themselves (experimental)</td></tr>
 <tr><td><a href="#v0-2-3"><code>0.2.3</code></a></td><td class="nowrap">6 Oct 2026</td><td class="wrap">Native tool calls on Codex and in durable runs on Claude Code; durable <code>tools=</code>; a sturdier Claude API path; multi-edit</td></tr>
 <tr><td><a href="#v0-2-2"><code>0.2.2</code></a></td><td class="nowrap">5 Oct 2026</td><td class="wrap">Agents use their tools reliably; native tool calls on Claude Code; faster calls; <code>thunc run --profile</code></td></tr>
@@ -73,6 +74,19 @@
 <tr><td><a href="#v0-1-1"><code>0.1.1</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">The OpenAI backend and local models</td></tr>
 <tr><td><a href="#v0-1-0"><code>0.1.0</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">First release</td></tr>
 </tbody></table></div>
+<div class="release">
+<h2 id="v0-3-1">0.3.1 <span class="pill">beta</span></h2>
+<p class="release-meta">7 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.3.1">Release notes</a> · <a href="https://pypi.org/project/thunc/0.3.1/">PyPI</a></p>
+<p><strong>The 0.3.0 changes that missed its package.</strong> The v0.3.0 tag was made on an earlier commit than intended, so two changes merged before the release didn't reach PyPI. Nothing else is new.</p>
+<h3>Fixed</h3>
+<ul>
+<li><strong>thunc write's timing message lists its parts in a fixed order</strong>: answer, draft, test calls. The three run side by side and were listed in the order they finished, so the message changed from run to run (<a href="https://github.com/Eltarras/thunc/pull/65">#65</a>).</li>
+</ul>
+<h3>Docs</h3>
+<ul>
+<li>The README on PyPI says beta v0.3 and its intro mentions <code>thunc watch</code> and thunc write. The website's landing page has a section for each, the Functions guide covers <code>write=True</code>, and Get started links both guides (<a href="https://github.com/Eltarras/thunc/pull/66">#66</a>).</li>
+</ul>
+</div>
 <div class="release">
 <h2 id="v0-3-0">0.3.0 <span class="pill">beta</span></h2>
 <p class="release-meta">7 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.3.0">Release notes</a> · <a href="https://pypi.org/project/thunc/0.3.0/">PyPI</a></p>
