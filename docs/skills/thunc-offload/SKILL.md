@@ -6,15 +6,15 @@ description: Hand long, self-contained work to a thunc agent or typed thunc func
 # Offloading to thunc
 
 [thunc](https://eltarras.github.io/thunc/) runs typed Python functions and agents on a model you
-choose. In thunc's tool-use benchmark (8 coding tasks, 24 runs per setup, the same model on both
-sides), a thunc agent on the `claude-code` backend cost 78% less than Claude Code on Opus 5.5 and
-73% less on Sonnet 5.5, with every run passing on both. Its prompt is about a fifth of the size.
-A cheaper model (`sonnet`, `haiku`) lowers the cost further, and the work stays out of this
-session's context: you read back a small typed result, not every file and command output.
+choose. A thunc agent on the `claude-code` backend does a coding task for far less than Claude Code
+does the same task: 78% less on Opus 5.5 and 73% less on Sonnet 5.5 in thunc's tool-use benchmark,
+because its prompt is about a fifth of the size. The work also stays out of this session's context:
+you read back a small typed result, not every file and command output.
 
-Handing off has a cost of its own: about 3 or 4 turns here to write the task, run it and check the
-result. On a task this session would finish in a handful of turns, that's about what it saves, so
-do small tasks yourself.
+This session still has its own part to do: writing the task, waiting for the run and checking the
+result. Counting that, handing a multi-module feature to a Sonnet agent from Opus came out 21%
+cheaper overall than Opus doing it alone, with the same pass rate on hidden tests. On small fixes
+that part costs about what handing off saves, so do small tasks yourself.
 
 Run scripts with `uv run --no-project --with "thunc>=0.3" python <script>`, or with a Python that
 has thunc installed (`pip install thunc`). Write scripts to a scratch or temp folder, never into
@@ -74,7 +74,10 @@ print("changed:", run.files_changed, "denied:", run.denied, "steps:", run.steps,
   run the tests once yourself instead of trusting the agent's report.
 - A failed run raises `thunc.AgentError`, whose `.run` holds the record. If the agent fails twice,
   do the task yourself.
-- For runs longer than a few minutes, start the script in the background.
+- Wait for the run to finish before you end your turn: run the script in the foreground with a
+  long Bash timeout (up to 10 minutes). If it may take longer, start it in the background and wait
+  for it with a loop that ends when it exits. Don't end your turn and rely on being notified: a
+  headless session (`claude -p`) exits when the turn ends, and the agent is cut off mid-run.
 
 ## Many items
 

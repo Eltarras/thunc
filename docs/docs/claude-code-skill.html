@@ -75,32 +75,40 @@ curl -fsSL https://eltarras.github.io/thunc/skills/thunc-offload/SKILL.md -o ~/.
 <p>It needs Claude Code, logged in, and Python 3.10 or later. thunc itself comes from <a href="https://docs.astral.sh/uv/">uv</a> when a script runs (<code>uv run --with thunc</code>), or from <code>pip install thunc</code>. The skill runs thunc on the <code>claude-code</code> backend, so it uses your Claude Code login and no API key. It only works in Claude Code, not in Claude apps without a local <code>claude</code> CLI.</p>
 
 <h2 id="use">Using it</h2>
-<p>Claude Code reads the skill's description in every session and uses the skill when a task fits. Two kinds of task fit:</p>
+<p>The skill is for two kinds of task:</p>
 <ul>
 <li><strong>Long agentic work with a checkable outcome</strong>: a wide refactor or rename, a debugging hunt with no obvious lead, a feature with tests. The rough bar is a task that would take Claude Code more than about 10 turns.</li>
 <li><strong>The same judgment applied to many items</strong>: classifying, extracting or summarizing across more than about 10 files, log lines, rows or tickets.</li>
 </ul>
-<p>To use it on purpose, say so ("offload this to thunc") or type <code>/thunc-offload</code>.</p>
+<p><strong>Ask for it.</strong> Claude Code sees the skill in every session, but in our tests it never handed work off on its own, not even on a feature task where handing off was 21% cheaper. Say "offload this to thunc", or type <code>/thunc-offload</code>.</p>
 <p>For agentic work, Claude Code then:</p>
 <ol>
 <li>writes the job as an <a href="agents.html">agent task</a> with a typed result, the narrowest permissions that work, and everything the agent needs in the docstring, because the agent can't see the conversation;</li>
 <li>runs it on Sonnet through your Claude Code login, with the agent's run records kept in <code>~/.cache/thunc/agents</code>, out of your repo;</li>
-<li>reads the diff and reruns the tests itself instead of trusting the agent's report;</li>
+<li>waits for the run to finish, then reads the diff and reruns the tests itself instead of trusting the agent's report;</li>
 <li>tells you what it handed off, to which model, and what it checked.</li>
 </ol>
 <p>For batch work, it writes a typed <a href="functions.html">function</a> on Haiku, runs it with <code>thunc.map</code>, caches the answers when one answer per input is right, and reads back only the summary.</p>
 
-<h2 id="cost">When it pays off</h2>
-<p>A thunc agent does the same task as Claude Code for much less, because its prompt is about a fifth of the size. In thunc's tool-use benchmark, both setups used the same model on 8 coding tasks, 3 runs each, and every run passed in both:</p>
+<h2 id="cost">What it saves</h2>
+<p>We gave Claude Code on Opus 5.5 a feature to build from a spec: mid-month plan changes with prorated billing, storage, a CLI command and reporting, across 4 or 5 modules of a small billing app. 24 hidden tests the agents never saw graded each result, and each setup ran 3 times. The costs include everything: the main Opus session, the thunc agent, and the main session checking the work.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Setup</th><th>Cost per run</th><th>Range</th><th>Hidden tests passed</th></tr></thead>
+<tbody>
+<tr><td>Claude Code alone</td><td>$0.52</td><td>$0.45–0.62</td><td>72/72</td></tr>
+<tr><td>Claude Code, handing off to a thunc agent on Sonnet</td><td><strong>$0.41</strong><br><span class="muted">$0.30 main session + $0.11 agent</span></td><td>$0.38–0.45</td><td>72/72</td></tr>
+</tbody></table></div>
+<p><strong>21% cheaper overall, with the same pass rate.</strong> Every handoff run cost less than every run of Claude Code alone, and the wall time was about the same (108 against 102 seconds).</p>
+<p>Most of the remaining cost is the main session. The thunc agent built the feature for $0.11, but Claude Code still read the code, wrote the task and checked the diff, which cost $0.30. That's why the saving on the handed-off work is much bigger than the saving overall. In thunc's tool-use benchmark, a thunc agent and Claude Code each did 8 coding tasks on their own, with the same model, and every run passed:</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Model</th><th>Claude Code, per task</th><th>thunc agent, per task</th><th>Saving</th></tr></thead>
 <tbody>
-<tr><td>Claude Opus 5.5</td><td>$0.174</td><td>$0.039</td><td><strong>78%</strong></td></tr>
-<tr><td>Claude Sonnet 5.5</td><td>$0.078</td><td>$0.021</td><td><strong>73%</strong></td></tr>
+<tr><td>Claude Opus 5.5</td><td>$0.174</td><td>$0.039</td><td>78%</td></tr>
+<tr><td>Claude Sonnet 5.5</td><td>$0.078</td><td>$0.021</td><td>73%</td></tr>
 </tbody></table></div>
-<p class="muted">Both ran on a Claude Code subscription; costs are their tokens at API prices. Details and per-task numbers: <a href="https://github.com/Eltarras/thunc/blob/main/live_tests/bench_tooluse_report.md">the benchmark report</a>.</p>
-<p>With the skill, Claude Code doesn't go away: it writes the task, starts the run and checks the result, which takes about 3 or 4 turns of its own. So the saving shows up on tasks that would otherwise take Claude Code many turns, not on small ones. We tested it on bug fixes across three files, in a small repo and in a 76-module one. Handing off cost about the same as Claude Code fixing the bugs itself, about $0.27. Without being asked, Claude Code didn't hand off fixes that small, which is what the skill tells it to do.</p>
-<div class="callout"><p><strong>Rule of thumb:</strong> let Claude Code fix small things itself. Hand off the long jobs, and batch work that would otherwise fill the conversation with files and outputs.</p></div>
+<p class="muted">Agent on its own, not counting a main session: thunc's prompt is about a fifth of the size of Claude Code's. Everything ran on a Claude Code subscription; costs are tokens at API prices. Details: <a href="https://github.com/Eltarras/thunc/blob/main/live_tests/bench_tooluse_report.md">the benchmark report</a>.</p>
+<p>Since the main session's part is roughly fixed, the overall saving depends on the size of the task. On small bug fixes across three files, handing off cost about the same as Claude Code fixing the bugs itself, about $0.27. These numbers come from one feature task and a few small ones, 3 runs or fewer each, so treat them as a guide.</p>
+<div class="callout"><p><strong>Rule of thumb:</strong> let Claude Code fix small things itself. Ask it to hand off long jobs, and batch work that would otherwise fill the conversation with files and outputs.</p></div>
 
 <h2 id="safety">What the agent may do</h2>
 <p>The skill tells Claude Code to grant the narrowest <a href="agents.html#permissions">permissions</a> that work, such as <code>write:src/**</code> and <code>run:pytest</code>, and never <code>git commit</code> or <code>git push</code> unless you asked. Permissions limit which tools the model uses, but they aren't a sandbox: a permitted command such as <code>pytest</code> runs your project's code. Work in a git repository with a clean tree, so every change is a diff you can review.</p>
