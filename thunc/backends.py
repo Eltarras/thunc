@@ -32,7 +32,7 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any, Literal, TypeVar, cast, get_args, get_origin
 
-from .errors import ThuncError, TransientError, transient_status
+from .errors import ThuncError, TransientError, transient_claude_error, transient_status
 from .schema import describe
 
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
@@ -110,7 +110,7 @@ def anthropic_api(
     except anthropic.APIConnectionError as exc:
         raise TransientError(f"Could not reach the Claude API: {exc}") from exc
     except anthropic.APIStatusError as exc:
-        error = TransientError if transient_status(exc.status_code) else ThuncError
+        error = TransientError if transient_claude_error(exc.status_code, exc.body) else ThuncError
         raise error(f"Claude API error {exc.status_code}: {exc.message}") from exc
 
     if response.stop_reason == "refusal":
