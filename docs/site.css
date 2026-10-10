@@ -223,3 +223,30 @@ a.card { display: block; text-decoration: none; color: inherit; transition: bord
 a.card:hover { border-color: var(--accent); }
 a.card h3 { color: var(--fg); }
 @media (max-width: 640px) { .cards { grid-template-columns: minmax(0, 1fr); } }
+
+/* blog */
+.post { max-width: 760px; margin: 0 auto; padding: 56px 24px 80px; }
+.post > header { padding-bottom: 28px; border-bottom: 1px solid var(--line); }
+.post > header .eyebrow { margin-bottom: 12px; }
+.post > header .lede { font-size: 18.5px; color: var(--muted); margin: 16px 0 0; }
+.post .byline { font: 13px var(--mono); color: var(--muted); margin: 18px 0 0; }
+.post h2 { margin: 52px 0 14px; padding-top: 4px; }
+.post .day + h2 { margin-top: 8px; }
+.post .day { margin-top: 56px; }
+.post h2 a.anchor { color: var(--line); text-decoration: none; margin-left: 8px; font-weight: 400; opacity: 0; }
+.post h2:hover a.anchor { opacity: 1; }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 28px 0 0; }
+.stats div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.stats b { display: block; font: 600 26px/1.15 var(--display); color: var(--accent); }
+.stats span { display: block; margin-top: 4px; font: 12.5px/1.4 var(--mono); color: var(--muted); }
+.timeline { list-style: none; padding: 0; margin: 18px 0 18px 6px; border-left: 2px solid var(--line); }
+.timeline li { position: relative; margin: 0; padding: 0 0 12px 22px; }
+.timeline li::before { content: ""; position: absolute; left: -7px; top: 7px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--accent); }
+.timeline time { display: inline-block; min-width: 4.6em; font: 500 12.5px var(--mono); color: var(--muted); }
+.timeline b { font: 600 14px var(--mono); margin-right: 8px; }
+.cta-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 44px; padding-top: 28px; border-top: 1px solid var(--line); }
+@media (max-width: 640px) {
+  .post { padding: 36px 16px 64px; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .timeline time { display: block; }
+}

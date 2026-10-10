@@ -83,7 +83,7 @@
     current.parentNode.scrollLeft = current.offsetLeft - current.parentNode.offsetLeft - 16;
   }
 
-  document.querySelectorAll(".docs main h2[id], .docs main h3[id]").forEach(function (h) {
+  document.querySelectorAll(".docs main h2[id], .docs main h3[id], .post h2[id]").forEach(function (h) {
     var a = document.createElement("a");
     a.className = "anchor";
     a.href = "#" + h.id;
