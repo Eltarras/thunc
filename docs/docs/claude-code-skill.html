@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code skill · thunc docs</title>
+<meta name="description" content="thunc-offload, a Claude Code skill: Claude Code hands long, self-contained jobs to a thunc agent on a cheaper model, checks the result, and keeps batch LLM work out of the conversation.">
+<link rel="canonical" href="https://eltarras.github.io/thunc/docs/claude-code-skill.html">
+<meta property="og:title" content="Claude Code skill · thunc docs">
+<meta property="og:description" content="thunc-offload, a Claude Code skill: Claude Code hands long, self-contained jobs to a thunc agent on a cheaper model, checks the result, and keeps batch LLM work out of the conversation.">
+<meta property="og:image" content="https://eltarras.github.io/thunc/og.png">
+<meta property="og:url" content="https://eltarras.github.io/thunc/docs/claude-code-skill.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="thunc">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/thunc/favicon.ico" sizes="48x48">
+<link rel="icon" href="/thunc/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/thunc/favicon-96.png" type="image/png" sizes="96x96">
+<link rel="apple-touch-icon" href="/thunc/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href=".././">thunc<span>()</span></a>
+  <nav aria-label="Site">
+    <a href="../docs/" class="active">Docs</a>
+    <a href="../docs/agents.html" class="hide-sm">Agents</a>
+    <a href="../blog/" class="hide-sm">Blog</a>
+    <a href="https://pypi.org/project/thunc/" class="hide-sm">PyPI</a>
+    <a href="https://github.com/Eltarras/thunc" class="gh">GitHub</a>
+  </nav>
+</div></header>
+<div class="docs">
+<aside>
+  <nav aria-label="Docs">
+    <div class="eyebrow">Guide</div>
+    <a href="./">Get started</a>
+    <a href="functions.html">Functions</a>
+    <a href="backends.html">Backends</a>
+    <a href="caching.html">Caching, tracing and profiling</a>
+    <a href="agents.html">Agents</a>
+    <a href="watch.html">Watching a program</a>
+    <div class="eyebrow">Going further</div>
+    <a href="write.html">thunc write</a>
+    <a href="temporal.html">Durable agents</a>
+    <a href="jev.html">Jev backend</a>
+    <a href="claude-code-skill.html" class="active" aria-current="page">Claude Code skill</a>
+    <div class="eyebrow">Reference</div>
+    <a href="api.html">API reference</a>
+    <a href="changelog.html">Changelog</a>
+  </nav>
+  <div class="version">thunc 0.3.2 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+</aside>
+<main>
+<header>
+  <div class="eyebrow">Going further · Claude Code</div>
+  <h1>Claude Code skill</h1>
+  <p class="lede"><code>thunc-offload</code> is a skill that teaches Claude Code when and how to hand work to thunc. Long, self-contained jobs go to a thunc agent on a cheaper model, and Claude Code checks the result. Batch work, such as classifying hundreds of log lines, runs as typed functions, so none of it lands in the conversation.</p>
+</header>
+
+<h2 id="install">Install</h2>
+<p>The skill is one file. Download it into <code>~/.claude/skills/thunc-offload/</code> for every project:</p>
+<div class="codeblock"><pre><code class="sh">mkdir -p ~/.claude/skills/thunc-offload
+curl -fsSL https://eltarras.github.io/thunc/skills/thunc-offload/SKILL.md -o ~/.claude/skills/thunc-offload/SKILL.md</code></pre></div>
+<div class="ctas">
+  <a class="btn primary" href="../skills/thunc-offload/SKILL.md" download="SKILL.md">Download SKILL.md</a>
+  <a class="btn" href="https://github.com/Eltarras/thunc/blob/main/docs/skills/thunc-offload/SKILL.md">Read it on GitHub</a>
+</div>
+<p>To share it with everyone on a project, put it in the repository's <code>.claude/skills/thunc-offload/SKILL.md</code> instead and commit it. Claude Code finds new skills when a session starts.</p>
+<p>It needs Claude Code, logged in, and Python 3.10 or later. thunc itself comes from <a href="https://docs.astral.sh/uv/">uv</a> when a script runs (<code>uv run --with thunc</code>), or from <code>pip install thunc</code>. The skill runs thunc on the <code>claude-code</code> backend, so it uses your Claude Code login and no API key. It only works in Claude Code, not in Claude apps without a local <code>claude</code> CLI.</p>
+
+<h2 id="use">Using it</h2>
+<p>Claude Code reads the skill's description in every session and uses the skill when a task fits. Two kinds of task fit:</p>
+<ul>
+<li><strong>Long agentic work with a checkable outcome</strong>: a wide refactor or rename, a debugging hunt with no obvious lead, a feature with tests. The rough bar is a task that would take Claude Code more than about 10 turns.</li>
+<li><strong>The same judgment applied to many items</strong>: classifying, extracting or summarizing across more than about 10 files, log lines, rows or tickets.</li>
+</ul>
+<p>To use it on purpose, say so ("offload this to thunc") or type <code>/thunc-offload</code>.</p>
+<p>For agentic work, Claude Code then:</p>
+<ol>
+<li>writes the job as an <a href="agents.html">agent task</a> with a typed result, the narrowest permissions that work, and everything the agent needs in the docstring, because the agent can't see the conversation;</li>
+<li>runs it on Sonnet through your Claude Code login, with the agent's run records kept in <code>~/.cache/thunc/agents</code>, out of your repo;</li>
+<li>reads the diff and reruns the tests itself instead of trusting the agent's report;</li>
+<li>tells you what it handed off, to which model, and what it checked.</li>
+</ol>
+<p>For batch work, it writes a typed <a href="functions.html">function</a> on Haiku, runs it with <code>thunc.map</code>, caches the answers when one answer per input is right, and reads back only the summary.</p>
+
+<h2 id="cost">When it pays off</h2>
+<p>A thunc agent does the same task as Claude Code for much less, because its prompt is about a fifth of the size. In thunc's tool-use benchmark, both setups used the same model on 8 coding tasks, 3 runs each, and every run passed in both:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Model</th><th>Claude Code, per task</th><th>thunc agent, per task</th><th>Saving</th></tr></thead>
+<tbody>
+<tr><td>Claude Opus 5.5</td><td>$0.174</td><td>$0.039</td><td><strong>78%</strong></td></tr>
+<tr><td>Claude Sonnet 5.5</td><td>$0.078</td><td>$0.021</td><td><strong>73%</strong></td></tr>
+</tbody></table></div>
+<p class="muted">Both ran on a Claude Code subscription; costs are their tokens at API prices. Details and per-task numbers: <a href="https://github.com/Eltarras/thunc/blob/main/live_tests/bench_tooluse_report.md">the benchmark report</a>.</p>
+<p>With the skill, Claude Code doesn't go away: it writes the task, starts the run and checks the result, which takes about 3 or 4 turns of its own. So the saving shows up on tasks that would otherwise take Claude Code many turns, not on small ones. We tested it on bug fixes across three files, in a small repo and in a 76-module one. Handing off cost about the same as Claude Code fixing the bugs itself, about $0.27. Without being asked, Claude Code didn't hand off fixes that small, which is what the skill tells it to do.</p>
+<div class="callout"><p><strong>Rule of thumb:</strong> let Claude Code fix small things itself. Hand off the long jobs, and batch work that would otherwise fill the conversation with files and outputs.</p></div>
+
+<h2 id="safety">What the agent may do</h2>
+<p>The skill tells Claude Code to grant the narrowest <a href="agents.html#permissions">permissions</a> that work, such as <code>write:src/**</code> and <code>run:pytest</code>, and never <code>git commit</code> or <code>git push</code> unless you asked. Permissions limit which tools the model uses, but they aren't a sandbox: a permitted command such as <code>pytest</code> runs your project's code. Work in a git repository with a clean tree, so every change is a diff you can review.</p>
+<nav class="pager" aria-label="Pages"><a class="prev" href="jev.html"><span>Previous</span>Jev backend</a><a class="next" href="api.html"><span>Next</span>API reference</a></nav>
+<p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/claude-code-skill.html">Edit this page on GitHub</a></p>
+</main>
+</div>
+<footer class="sitefoot"><div class="wrap">
+  <span>thunc() · beta · MIT</span>
+  <span><a href="../docs/">Docs</a> · <a href="../docs/changelog.html">Changelog</a> · <a href="../blog/">Blog</a> · <a href="https://github.com/Eltarras/thunc">GitHub</a> · <a href="https://pypi.org/project/thunc/">PyPI</a> · <a href="https://github.com/Eltarras/thunc/discussions">Discussions</a> · <a href="https://github.com/Eltarras/thunc/issues">Issues</a></span>
+</div></footer>
+<script src="../site.js"></script>
+</body>
+</html>
