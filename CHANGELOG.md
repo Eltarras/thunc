@@ -3,6 +3,26 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
+## 0.3.2 (beta)
+
+**Steadier agent runs on the Claude API, and a trace that can't be written no longer costs the
+answer.** Two fixes from a stability review of 0.3.1. Nothing else is new.
+
+### Fixed
+
+- **An error the Claude API sends mid-reply is retried when asking again may fix it.** An
+  overloaded, rate-limit, timeout or server error that arrives while a reply streams comes with the
+  stream's HTTP status, 200, so thunc took it for a permanent error and the agent run failed. It's
+  now retried like the same error arriving before the reply: twice, with a pause, as the docs say.
+  A bad request, a bad key or a billing error still fails at once. In a simulation of 10-step runs
+  with 5% of requests failing this way, 99.9% of runs finish, up from 58.9%
+  ([#68](https://github.com/Eltarras/thunc/pull/68)).
+- **A trace file that can't be written warns instead of failing the call.** With `trace=` or
+  `THUNC_TRACE` naming a folder that doesn't exist or a read-only file, every call and agent run
+  raised the file's error: a successful call lost its answer, already paid for, and a failed one
+  hid its own error. Now thunc warns once per path, and the call returns its value or raises its
+  own error ([#68](https://github.com/Eltarras/thunc/pull/68)).
+
 ## 0.3.1 (beta)
 
 **The 0.3.0 changes that missed its package.** The v0.3.0 tag was made on an earlier commit than
