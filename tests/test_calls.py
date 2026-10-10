@@ -325,6 +325,18 @@ def test_trace_records_each_call(fake, tmp_path):
     assert not failed["ok"] and failed["attempts"] == 3
 
 
+def test_a_trace_that_cant_be_written_warns_once_and_the_calls_stand(fake, tmp_path):
+    thunc.configure(trace=str(tmp_path / "missing" / "calls.jsonl"))  # a folder that doesn't exist
+    fake.replies = ["3", "4"]
+    with pytest.warns(RuntimeWarning, match="could not write the trace") as caught:
+        assert thunc.call("Rate.", returns=int) == 3  # the answer is returned, not lost
+        assert thunc.call("Rate.", returns=int) == 4
+    assert len(caught) == 1 and caught[0].filename == __file__  # once per path, at the caller
+    fake.replies = ["?"] * 3
+    with pytest.raises(thunc.ThuncError, match="No valid .* after 3 attempt"):  # the call's own error, not the trace's
+        thunc.call("Rate.", returns=int)
+
+
 # --- system prompts ------------------------------------------------------------------------
 
 
