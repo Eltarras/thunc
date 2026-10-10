@@ -6,10 +6,42 @@ than the model? Same model, same tasks, compared with Claude Code as the referen
 **Answer.** Most of it, and the three fixes below close the gap. On Claude Sonnet 5.5, thunc
 agents on the `claude-code` backend first passed **12 of 24** runs, against **24 of 24** for
 Claude Code. After the fixes they pass **24 of 24**, slightly faster than Claude Code and at
-**about a third of its cost**. The original findings follow the rerun below; findings 1, 2, 5 and 6
-are now fixed, and finding 3 is reduced.
+**about a third of its cost**; on Opus 5.5 (the 10 October rerun), at 22% of it. The original
+findings follow the reruns below; findings 1, 2, 5 and 6 are now fixed, and finding 3 is reduced.
 
 Reproduce with `python -m live_tests.bench_tooluse` (see its docstring).
+
+## Opus 5.5 rerun, 10 October 2026
+
+`--harness thunc,claude-code --runs 3 --model claude-opus-5-5`, run from the `0.3/self-writing-functions`
+branch. Same 8 tasks, 3 runs each (24 per harness). Native calls on the `claude-code`
+backend had only been measured on Sonnet; the Opus numbers for that backend further down are from
+the text protocol, before native calls.
+
+| Task | thunc pass | turns | secs | $ | claude-code pass | turns | secs | $ |
+|---|---|---|---|---|---|---|---|---|
+| needle | 3/3 | 8.0 | 22 | 0.071 | 3/3 | 5.7 | 17 | 0.247 |
+| deep_fix | 3/3 | 7.3 | 19 | 0.070 | 3/3 | 5.0 | 17 | 0.319 |
+| rename | 3/3 | 4.0 | 10 | 0.028 | 3/3 | 4.0 | 11 | 0.174 |
+| write_tricky | 3/3 | 3.7 | 12 | 0.020 | 3/3 | 6.0 | 20 | 0.150 |
+| tabs | 3/3 | 3.0 | 8 | 0.016 | 3/3 | 4.7 | 14 | 0.125 |
+| noisy_build | 3/3 | 3.0 | 10 | 0.066 | 3/3 | 4.3 | 13 | 0.127 |
+| subdir | 3/3 | 4.0 | 10 | 0.017 | 3/3 | 5.0 | 13 | 0.127 |
+| routes | 3/3 | 3.3 | 13 | 0.022 | 3/3 | 3.0 | 15 | 0.124 |
+
+| Harness | Passed | Turns per task | Seconds per task | $ per task | Cache reads per task | Cache writes per task | Tool errors |
+|---|---|---|---|---|---|---|---|
+| thunc (native calls) | 24/24 | 4.5 | 13 | **0.039** | 19,609 | 4,100 | 0 |
+| claude-code | 24/24 | 4.7 | 15 | 0.174 | 113,381 | 16,570 | 7 |
+
+- **thunc costs 78% less on Opus** ($0.93 against $4.18 for all 24 runs), against 73% on Sonnet.
+  It was cheaper on every task, from 48% (`noisy_build`) to 87% (`write_tricky`, `tabs`, `subdir`).
+- **The difference is the prompt.** Claude Code reads about 5.8 times as many cached tokens per
+  task and writes 4 times as many to the cache (the CLI's 1-hour cache writes cost twice the input rate).
+- **Turns and time are close.** thunc takes more turns on `needle` and `deep_fix`, and fewer on
+  `write_tricky` and `tabs`.
+- Claude Code's 7 tool errors were Bash commands that exited non-zero (`cat -A`, which macOS
+  doesn't have, and test runs that failed); every run still passed.
 
 ## 0.2.3 rerun, 5 October 2026
 
