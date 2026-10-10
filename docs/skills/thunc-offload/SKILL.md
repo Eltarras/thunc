@@ -33,26 +33,32 @@ out of the repo.
 import thunc
 from dataclasses import dataclass
 
+
 @dataclass
 class Fix:
-    root_causes: list[str]   # one line per bug
+    root_causes: list[str]  # one line per bug
     files_changed: list[str]
     tests_passing: bool
 
+
 agent = thunc.Agent(
-    "fix-tests",                      # one name per kind of job
+    "fix-tests",  # one name per kind of job
     workdir="/abs/path/to/repo",
     permissions=["write", "run:python", "run:pytest"],  # the narrowest that works
-    backend="claude-code", model="sonnet",
-    follow=True,                      # gives it the repo's CLAUDE.md / AGENTS.md
-    max_steps=40, timeout=900,
+    backend="claude-code",
+    model="sonnet",
+    follow=True,  # gives it the repo's CLAUDE.md / AGENTS.md
+    max_steps=40,
+    timeout=900,
 )
+
 
 @agent.task
 def fix_failing_tests() -> Fix:
     """Run the test suite with `python -m pytest -q`, find why tests fail, and fix the source code
     (not the tests). Rerun until everything passes. Report each root cause in one line."""
     ...
+
 
 run = agent.run(fix_failing_tests)
 print(run.value)
@@ -75,10 +81,12 @@ print("changed:", run.files_changed, "denied:", run.denied, "steps:", run.steps,
 ```python
 from typing import Literal
 
+
 @thunc.function(cache=True, backend="claude-code", model="haiku")
 def triage(line: str) -> Literal["bug", "noise", "config"]:
     """Classify this log line by what it indicates."""
     ...
+
 
 results = thunc.map(triage, items, workers=8)
 ```
