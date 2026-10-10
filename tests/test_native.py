@@ -48,6 +48,22 @@ def use(tool, id, **args):
 THINKING = {"type": "thinking", "thinking": "", "signature": "sig"}
 
 
+class MidReply:
+    """A reply whose stream fails partway, as the SDK raises an `event: error` while it's read."""
+
+    def __init__(self, error):
+        self.error = error
+
+
+def sent_mid_reply(kind):
+    """The error the SDK raises for an `event: error` in the stream: it has the stream's status, 200."""
+    import httpx2
+
+    body = {"type": "error", "error": {"type": kind, "message": kind}}
+    response = httpx2.Response(200, request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages"))
+    return anthropic.APIStatusError(json.dumps(body), response=response, body=body)
+
+
 @pytest.fixture
 def claude(monkeypatch):
     """A scripted Messages API. Append replies to .replies; each request is in .requests."""
@@ -70,6 +86,8 @@ def claude(monkeypatch):
             if self.reply == "stall":  # nothing arrives until the stream is closed
                 self.closed.wait(30)
                 raise anthropic.APIConnectionError(request=None)
+            if isinstance(self.reply, MidReply):
+                raise self.reply.error
             return iter(())
 
         def close(self):
@@ -309,6 +327,39 @@ def test_claude_overloaded_and_unreachable_are_retried(claude, repo, monkeypatch
     with open(run.session, encoding="utf-8") as f:
         retries = [json.loads(line) for line in f if '"retry"' in line]
     assert [r["error"][:20] for r in retries] == ["Claude API error 529", "Could not reach the "]
+
+
+@pytest.mark.parametrize("kind", ["overloaded_error", "api_error", "rate_limit_error"])
+def test_claude_an_error_sent_mid_reply_is_retried(claude, repo, monkeypatch, kind):
+    monkeypatch.setattr(sys.modules["thunc.agent"], "RETRY_DELAY", 0)
+    claude.replies = [MidReply(sent_mid_reply(kind)), message(use("finish", "t1", value="ok"))]
+    agent = thunc.Agent("x", workdir=repo)
+    assert agent.run(_task(agent)).value == "ok"
+    assert len(claude.requests) == 2
+
+
+def test_claude_a_bad_request_sent_mid_reply_is_not_retried(claude, repo):
+    claude.replies = [MidReply(sent_mid_reply("invalid_request_error"))]
+    with pytest.raises(thunc.AgentError, match="invalid_request_error"):
+        _task(thunc.Agent("x", workdir=repo))()
+    assert len(claude.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "status, body, transient",
+    [
+        (529, None, True),
+        (400, None, False),
+        (200, {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}, True),
+        (200, {"type": "error", "error": {"type": "authentication_error", "message": "Bad key"}}, False),
+        (200, "event: error", False),  # a body that isn't JSON
+        (200, {"error": "Overloaded"}, False),
+    ],
+)
+def test_which_claude_errors_are_worth_asking_again_for(status, body, transient):
+    from thunc.errors import transient_claude_error
+
+    assert transient_claude_error(status, body) is transient
 
 
 def test_claude_a_bad_request_is_not_retried(claude, repo):

@@ -438,6 +438,15 @@ def test_async_task_and_trace(fake, repo, tmp_path_factory):
     assert entry["value"] == "ok" and entry["system"].startswith("You are an agent")
 
 
+def test_a_trace_that_cant_be_written_doesnt_end_the_run(fake, repo, tmp_path_factory):
+    thunc.configure(trace=str(tmp_path_factory.mktemp("trace") / "missing" / "calls.jsonl"))
+    fake.replies = [act("list"), finish("ok")]
+    agent = thunc.Agent("guide", workdir=repo)
+    with pytest.warns(RuntimeWarning, match="could not write the trace"):
+        run = agent.run(make_task(agent))
+    assert run.value == "ok" and run.error is None
+
+
 # --- memory and the agent's folder ----------------------------------------------------------
 
 

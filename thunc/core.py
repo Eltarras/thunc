@@ -7,6 +7,7 @@ import hashlib
 import json
 import threading
 import time
+import warnings
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar, overload
@@ -355,6 +356,7 @@ def _cache_identity(
 
 
 _trace_lock = threading.Lock()
+_trace_warned: set[str] = set()  # trace paths that failed and were warned about
 
 
 def _trace(
@@ -394,12 +396,22 @@ def _trace(
         "error": None if result["error"] is None else str(result["error"]) or type(result["error"]).__name__,
         "seconds": round(time.monotonic() - started, 3),
     }
-    with _trace_lock, open(path, "a", encoding="utf-8", errors="backslashreplace") as f:
-        try:
-            line = json.dumps(entry, ensure_ascii=False, default=_traceable)
-        except (RecursionError, TypeError, ValueError):  # very deep, circular, or tuple keys: shortened
-            line = json.dumps({**entry, "inputs": short_repr(inputs), "value": short_repr(result["value"])})
-        # U+0085/2028/2029 are valid in JSON but split lines for str.splitlines(): escape them (only in strings).
-        for separator in "\x85\u2028\u2029":
-            line = line.replace(separator, f"\\u{ord(separator):04x}")
-        f.write(line + "\n")
+    try:
+        with _trace_lock, open(path, "a", encoding="utf-8", errors="backslashreplace") as f:
+            try:
+                line = json.dumps(entry, ensure_ascii=False, default=_traceable)
+            except (RecursionError, TypeError, ValueError):  # very deep, circular, or tuple keys: shortened
+                line = json.dumps({**entry, "inputs": short_repr(inputs), "value": short_repr(result["value"])})
+            # U+0085/2028/2029 are valid in JSON but split lines for str.splitlines(): escape them (only in strings).
+            for separator in "\x85\u2028\u2029":
+                line = line.replace(separator, f"\\u{ord(separator):04x}")
+            f.write(line + "\n")
+    except OSError as exc:
+        # A trace that can't be written warns, once per path, and the call's own outcome stands: a
+        # value already paid for is returned, and a failure keeps its own error.
+        with _trace_lock:
+            if path in _trace_warned:
+                return
+            _trace_warned.add(path)
+        # stacklevel: _trace <- _call <- thunc.call or the @thunc.function wrapper <- the user's code
+        warnings.warn(f"thunc could not write the trace to {path!r}: {exc}", RuntimeWarning, stacklevel=4)

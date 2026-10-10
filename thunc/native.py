@@ -28,7 +28,7 @@ from . import tools as builtin_tools
 from .backends import _FALLBACK_MODELS, DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL, sdk_client
 from .config import resolve_backend, setting
 from .core import _send, _sendable
-from .errors import ThuncError, TransientError, transient_status
+from .errors import ThuncError, TransientError, transient_claude_error, transient_status
 from .schema import parse, shorten
 
 NUDGE = "Reply by calling one of your tools. When you're done, call finish with your result."
@@ -426,7 +426,7 @@ class AnthropicConversation:
         except anthropic.APIConnectionError as exc:
             raise TransientError(f"Could not reach the Claude API: {exc}") from exc
         except anthropic.APIStatusError as exc:
-            error = TransientError if transient_status(exc.status_code) else ThuncError
+            error = TransientError if transient_claude_error(exc.status_code, exc.body) else ThuncError
             raise error(f"Claude API error {exc.status_code}: {exc.message}") from exc
 
     def results(self, results: Sequence[tuple[Call, str, bool]]) -> None:
