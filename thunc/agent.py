@@ -38,10 +38,10 @@ import warnings
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
-from . import claude_code, codex, events, native, profiling, recordings, relay, tools
+from . import claude_code, codex, config, events, native, profiling, recordings, relay, tools
 from .backends import TYPED_BACKENDS
 from .config import _check_backend, resolve_backend, setting
-from .core import _plain, _render, _trace
+from .core import CallInfo, _plain, _render, _trace, current_call
 from .decorator import _read_signature, _wrap
 from .errors import ThuncError, TransientError
 from .execution import KNOWN, AgentState
@@ -286,7 +286,7 @@ class Agent:
 
     def _native(self) -> bool:
         """Whether a run uses an API's own tool calls (see protocol=). Durable runs ask this too."""
-        if self.protocol == "text":
+        if self.protocol == "text" or config.forced_backend is not None:  # a fake model takes text
             return False
         backend = resolve_backend(self.backend)
         if backend in native.NATIVE:
@@ -579,6 +579,7 @@ class Agent:
                 error=error,
             )
 
+        token = current_call.set(CallInfo(name, instructions, inputs, returns, agent=True))
         try:
             while True:
                 state.begin_turn(self.max_steps, name)
@@ -670,6 +671,7 @@ class Agent:
             _emit_failed(run_id, answers, started, workdir, str(exc) or type(exc).__name__)
             raise
         finally:
+            current_call.reset(token)
             _trace(instructions, inputs, returns, answers, result, started, system, backend, model, name)
             if (profiler := profiling.active()) is not None:
                 profiler.add(

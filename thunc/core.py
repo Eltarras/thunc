@@ -13,6 +13,7 @@ import time
 import warnings
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from . import events, recordings
@@ -29,6 +30,20 @@ if TYPE_CHECKING:  # for type checkers only: thunc has no dependencies at run ti
 
 T = TypeVar("T")
 A = TypeVar("A")
+
+
+@dataclasses.dataclass(frozen=True)
+class CallInfo:
+    """The call or agent run a backend request belongs to, for thunc.testing's fake model."""
+
+    function: str | None  # the function's qualified name, a task's "agent.task", or thunc.call's name=
+    instructions: str
+    inputs: dict[str, Any]
+    returns: Any
+    agent: bool = False
+
+
+current_call: ContextVar[CallInfo | None] = ContextVar("thunc_current_call", default=None)
 
 PERSONA = "You are a function inside a computer program. Follow the instructions."
 # Sent with every system prompt, the program's own included: parsing and the injection defence rely on it.
@@ -249,6 +264,7 @@ def _call(
                 inputs={key: events.preview(value) for key, value in inputs.items()},
             )
 
+    token = current_call.set(CallInfo(name, instructions, inputs, returns))
     try:
         record = recordings.mode()
         recording = recordings.call_key(system, request, name) if record else None
@@ -330,6 +346,7 @@ def _call(
         result["error"] = exc
         raise
     finally:
+        current_call.reset(token)
         if call_id:
             failed = result["error"]
             events.emit(

@@ -21,6 +21,9 @@ classifiers = [
 [project.scripts]
 thunc = "thunc.__main__:main"
 
+[project.entry-points.pytest11]
+thunc = "thunc.pytest_plugin"  # the thunc_model and thunc_isolated fixtures (thunc/testing.py)
+
 [project.urls]
 Homepage = "https://eltarras.github.io/thunc/"
 Documentation = "https://eltarras.github.io/thunc/docs/"
