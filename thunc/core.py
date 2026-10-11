@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import functools
 import hashlib
+import inspect
 import json
 import threading
 import time
 import warnings
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from . import events, recordings
 from .backends import BACKENDS, DEFAULT_MODELS, TYPED_BACKENDS
@@ -20,6 +23,9 @@ from .config import resolve_backend, setting, trace_path
 from .errors import ThuncError
 from .profiling import UNNAMED, CallRecord, active, timed
 from .schema import describe, parse, short_repr, shorten
+
+if TYPE_CHECKING:  # for type checkers only: thunc has no dependencies at run time
+    from typing_extensions import TypeForm  # returns=Literal[...] is typed as the Literal, not Any
 
 T = TypeVar("T")
 A = TypeVar("A")
@@ -73,6 +79,20 @@ def call(
     instructions: str,
     inputs: Mapping[str, Any] | None = None,
     *,
+    returns: TypeForm[T],
+    retries: int = 2,
+    ensure: Callable[[T], bool] | None = None,
+    backend: str | None = None,
+    model: str | None = None,
+    system: str | None = None,
+    cache: bool = False,
+    name: str | None = None,
+) -> T: ...
+@overload
+def call(
+    instructions: str,
+    inputs: Mapping[str, Any] | None = None,
+    *,
     returns: Any,
     retries: int = 2,
     ensure: Callable[[Any], bool] | None = None,
@@ -112,6 +132,84 @@ def call(
     it, configure(system=...) applies, then thunc's default.
     """
     return _call(instructions, inputs, returns, retries, ensure, backend, model, cache, name, None, system)
+
+
+@overload
+async def acall(
+    instructions: str,
+    inputs: Mapping[str, Any] | None = None,
+    *,
+    retries: int = 2,
+    ensure: Callable[[str], bool] | None = None,
+    backend: str | None = None,
+    model: str | None = None,
+    system: str | None = None,
+    cache: bool = False,
+    name: str | None = None,
+) -> str: ...
+@overload
+async def acall(
+    instructions: str,
+    inputs: Mapping[str, Any] | None = None,
+    *,
+    returns: type[T],
+    retries: int = 2,
+    ensure: Callable[[T], bool] | None = None,
+    backend: str | None = None,
+    model: str | None = None,
+    system: str | None = None,
+    cache: bool = False,
+    name: str | None = None,
+) -> T: ...
+@overload
+async def acall(
+    instructions: str,
+    inputs: Mapping[str, Any] | None = None,
+    *,
+    returns: TypeForm[T],
+    retries: int = 2,
+    ensure: Callable[[T], bool] | None = None,
+    backend: str | None = None,
+    model: str | None = None,
+    system: str | None = None,
+    cache: bool = False,
+    name: str | None = None,
+) -> T: ...
+@overload
+async def acall(
+    instructions: str,
+    inputs: Mapping[str, Any] | None = None,
+    *,
+    returns: Any,
+    retries: int = 2,
+    ensure: Callable[[Any], bool] | None = None,
+    backend: str | None = None,
+    model: str | None = None,
+    system: str | None = None,
+    cache: bool = False,
+    name: str | None = None,
+) -> Any: ...
+async def acall(
+    instructions: str,
+    inputs: Mapping[str, Any] | None = None,
+    *,
+    returns: Any = str,
+    retries: int = 2,
+    ensure: Callable[[Any], bool] | None = None,
+    backend: str | None = None,
+    model: str | None = None,
+    system: str | None = None,
+    cache: bool = False,
+    name: str | None = None,
+) -> Any:
+    """thunc.call, to await: `await thunc.acall("Summarize this.", {"text": note})`.
+
+    The call runs in a worker thread (asyncio.to_thread), as an `async def` @thunc.function does, so
+    the event loop keeps running while the model answers. To run many at once, use thunc.amap.
+    """
+    return await asyncio.to_thread(
+        _call, instructions, inputs, returns, retries, ensure, backend, model, cache, name, None, system
+    )
 
 
 def _call(
@@ -263,10 +361,59 @@ def _call(
             )
 
 
-def map(func: Callable[[A], T], items: Iterable[A], *, workers: int = 8) -> list[T]:
-    """Like the built-in map, but up to `workers` calls run at once. Results keep input order."""
+@overload
+def map(func: Callable[[A], Awaitable[T]], items: Iterable[A], *, workers: int = 8) -> list[T]: ...
+@overload
+def map(func: Callable[[A], T], items: Iterable[A], *, workers: int = 8) -> list[T]: ...
+def map(func: Callable[[A], Any], items: Iterable[A], *, workers: int = 8) -> list[Any]:
+    """Like the built-in map, but up to `workers` calls run at once. Results keep input order.
+    An `async def` function works too: each call runs to completion in its worker thread. From async
+    code, use `await thunc.amap(...)` instead, which doesn't block the event loop."""
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(func, items))
+        return list(pool.map(functools.partial(_completed, func), items))
+
+
+@overload
+async def amap(func: Callable[[A], Awaitable[T]], items: Iterable[A], *, workers: int = 8) -> list[T]: ...
+@overload
+async def amap(func: Callable[[A], T], items: Iterable[A], *, workers: int = 8) -> list[T]: ...
+async def amap(func: Callable[[A], Any], items: Iterable[A], *, workers: int = 8) -> list[Any]:
+    """thunc.map, to await: up to `workers` calls run at once, and the results keep input order.
+
+        labels = await thunc.amap(category, tickets)
+
+    `func` can be an `async def` function (awaited) or a plain one (run in a worker thread). The
+    first call that raises cancels the ones still waiting to start, and its error is raised."""
+    if workers < 1:
+        raise ValueError(f"amap: workers must be at least 1, got {workers}")
+    limit = asyncio.Semaphore(workers)
+
+    is_async = inspect.iscoroutinefunction(func)
+
+    async def one(item: A) -> Any:
+        async with limit:
+            result = func(item) if is_async else await asyncio.to_thread(func, item)
+            return await result if inspect.isawaitable(result) else result
+
+    tasks = [asyncio.ensure_future(one(item)) for item in items]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        raise
+
+
+def _completed(func: Callable[[A], Any], item: A) -> Any:
+    """func(item), run to completion: an awaitable it returns is awaited in this thread's own loop."""
+    result = func(item)
+    if inspect.isawaitable(result):
+        return asyncio.run(_awaited(result))
+    return result
+
+
+async def _awaited(awaitable: Awaitable[T]) -> T:
+    return await awaitable
 
 
 def _sendable(text: str) -> str:

@@ -17,7 +17,7 @@ from . import prompts
 from .agent import Agent, agent
 from .cache import CacheGroup, cache_info, clear_cache
 from .config import configure
-from .core import call, map
+from .core import acall, amap, call, map
 from .decorator import function
 from .errors import ThuncError
 from .runs import AgentError, Run
@@ -25,6 +25,8 @@ from .runs import AgentError, Run
 __all__ = [
     "Agent",
     "AgentError",
+    "acall",
+    "amap",
     "CacheGroup",
     "ThuncError",
     "cache_info",
