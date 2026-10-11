@@ -264,7 +264,7 @@ def _call(
         backend_name = resolve_backend(backend)
         typed = backend_name in TYPED_BACKENDS
         if typed:  # a typed backend's model is fixed; a configured model is meant for the other backends
-            model = DEFAULT_MODELS[backend_name]
+            model = DEFAULT_MODELS.get(backend_name)
         started_event()
 
         def recorded(answer: str) -> None:
