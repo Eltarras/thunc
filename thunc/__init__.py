@@ -17,15 +17,19 @@ from . import prompts
 from .agent import Agent, agent
 from .cache import CacheGroup, cache_info, clear_cache
 from .config import configure
-from .core import call, map
+from .core import acall, amap, call, map
 from .decorator import function
+from .deprecation import ThuncDeprecationWarning
 from .errors import ThuncError
 from .runs import AgentError, Run
 
 __all__ = [
     "Agent",
     "AgentError",
+    "acall",
+    "amap",
     "CacheGroup",
+    "ThuncDeprecationWarning",
     "ThuncError",
     "cache_info",
     "call",
@@ -37,4 +41,4 @@ __all__ = [
     "Run",
     "agent",
 ]
-__version__ = "0.3.2"
+__version__ = "0.4.0"

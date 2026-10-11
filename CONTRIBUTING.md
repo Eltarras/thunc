@@ -83,6 +83,30 @@ A change to the events in `thunc/events.py` is a change to what the dashboard re
   [Temporal guide](examples/temporal/README.md) when you change durable runs.
 - **One change per PR**, with a description of what it does and how you tested it.
 
+## Deprecations
+
+Before 1.0 the API can still change, but not under anyone's feet. A public name, argument or behavior
+that's going away is deprecated first, with the tools in `thunc/deprecation.py`:
+
+```python
+@deprecated(since="0.7", removed_in="0.9", instead="thunc.acall")
+def old_call(...): ...
+
+@renamed_parameter("retry", "retries", since="0.7", removed_in="0.9")
+def call(..., retries=2): ...
+```
+
+- It keeps working, and warns with `thunc.ThuncDeprecationWarning` where it's used, naming the release
+  that removes it and what to use instead. The warning is shown by default, once per place.
+- It's removed no sooner than two minor releases later (deprecated in 0.7, removed in 0.9 at the
+  earliest), and from 1.0 on, only in a major release.
+- The CHANGELOG lists it under **Deprecated** in the release that deprecates it, and under
+  **Removed** in the one that removes it.
+- `tests/test_deprecation.py` fails once thunc's version reaches a deprecation's `removed_in`, so
+  the release that should remove it can't ship with it still in place.
+- For a behavior change that can't warn at the call (what a function returns, say), say so in the
+  CHANGELOG's **Behavior changes** a release ahead, and in the docs page it affects.
+
 ## Adding a backend
 
 1. Write a function in `thunc/backends.py` with the same signature as the others:
@@ -129,7 +153,7 @@ no reliable way to tell them from a real one. Only an empty reply is retried.
 
 **Open: behavior that might change.**
 
-- `thunc.map` loses every result when one item fails, and returns coroutines for `async` functions.
+- `thunc.map` and `thunc.amap` lose every result when one item fails.
 - Backend errors (timeouts, connection failures) are never retried by `thunc.call`; only bad
   replies are. Local agent runs retry a step that failed with a `TransientError` twice, and durable
   runs retry transient provider failures.

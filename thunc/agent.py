@@ -36,7 +36,7 @@ import time
 import typing
 import warnings
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
-from typing import Any, ParamSpec, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
 
 from . import claude_code, codex, events, native, profiling, recordings, relay, tools
 from .backends import TYPED_BACKENDS
@@ -50,6 +50,9 @@ from .prompts import AGENT_CONTRACT, AGENT_PERSONA, method
 from .runs import AgentError, Run
 from .schema import describe, json_schema, resolve_strings, shorten, validate
 from .store import Session, Store, slug
+
+if TYPE_CHECKING:  # for type checkers only: thunc has no dependencies at run time
+    from typing_extensions import TypeForm  # returns=Literal[...] is typed as the Literal, not Any
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -236,6 +239,15 @@ class Agent:
         inputs: Mapping[str, Any] | None = None,
         *,
         returns: type[T],
+        ensure: Callable[[T], bool] | None = None,
+    ) -> T: ...
+    @overload
+    def call(
+        self,
+        instructions: str,
+        inputs: Mapping[str, Any] | None = None,
+        *,
+        returns: TypeForm[T],
         ensure: Callable[[T], bool] | None = None,
     ) -> T: ...
     @overload

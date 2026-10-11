@@ -32,9 +32,11 @@ type; if it doesn't fit, the model is asked again, and after that `thunc.ThuncEr
 dependencies, Python 3.10+.
 
 It also runs [agents](#agents): typed functions that can read, edit and test your code before they
-answer. New in 0.3: `thunc watch` shows a program's calls and agent runs live in the terminal (see
-**Watching** below), and [thunc write](#thunc-write), an experiment, lets a function write its own
-body as plain Python on its first call.
+answer. New in 0.4: [record and replay](#recording-and-replaying) runs your tests and CI with no
+model, `Enum` return types, and `thunc.acall` / `thunc.amap` for async code. `thunc watch` shows a
+program's calls and agent runs live in the terminal (see **Watching** below), and
+[thunc write](#thunc-write), an experiment, lets a function write its own body as plain Python on its
+first call.
 
 The [docs](https://eltarras.github.io/thunc/docs/) cover everything below, a page per topic.
 
@@ -61,7 +63,7 @@ With an API key set, thunc picks that backend on its own, so `THUNC_BACKEND` isn
 `thunc.configure(backend=...)` does the same. Durable agents on Temporal add
 `pip install "thunc[temporal]"`.
 
-> **Beta (v0.3).** The API may still change. Bug reports and feedback are welcome in
+> **Beta (v0.4).** The API may still change. Bug reports and feedback are welcome in
 > [issues](https://github.com/Eltarras/thunc/issues).
 
 **More examples.** Clone the repo and run them from its root, with no install, through your
@@ -97,14 +99,25 @@ Anything from users, files or the web goes in the inputs:
 |---|---|
 | `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `system=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`, `write=` (experimental: see [thunc write](#thunc-write)). The body must be empty (`...`); real code raises `TypeError`. `async def` works |
 | `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None, system=None, cache=False, name=None)` | One prompt. Inputs are sent separately from the instructions. `name=` groups its cached answers |
-| `thunc.map(func, items, *, workers=8)` | Runs calls in parallel, keeping the input order. Each call takes 4–8s, so this is the main speed lever |
+| `thunc.map(func, items, *, workers=8)` | Runs calls in parallel, keeping the input order. Each call takes 4–8s, so this is the main speed lever. `async def` functions work too |
+| `await thunc.acall(...)`, `await thunc.amap(func, items, *, workers=8)` | `thunc.call` and `thunc.map` for async code (see **Async** below) |
 | `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=, system=, agents_dir=, recordings=)` | Process-wide settings. `trace="calls.jsonl"` logs every call; `recordings="tests/recordings"` replays recorded answers (see [Recording and replaying](#recording-and-replaying)) |
 | `thunc.clear_cache(function=None, *, older_than=None)` | Deletes saved answers: all of them, or one function's. Returns how many |
 | `thunc.cache_info()` | What's in the cache, one group per function |
 | `thunc.ThuncError` | Raised when no valid answer arrives after the retries |
+| `thunc.ThuncDeprecationWarning` | Warned where you use a deprecated part of the API, naming the release that removes it (see [CONTRIBUTING](CONTRIBUTING.md#deprecations) for the policy) |
 
-**Return types:** `str`, `bool`, `int`, `float`, `Literal[...]`, `list[T]`, `dict[str, T]`,
-`T | None`, and dataclasses (built into real instances).
+**Return types:** `str`, `bool`, `int`, `float`, `Literal[...]`, `Enum` classes (their members come
+back), `list[T]`, `dict[str, T]`, `T | None`, and dataclasses (built into real instances). An enum is
+asked for by its values, with names shown where a value doesn't say what it means (`3 (HIGH)`).
+
+**Typing:** `returns=` is typed as a type form, so `thunc.call(..., returns=Literal["a", "b"])` is a
+`Literal["a", "b"]` to current mypy and Pyright ([TypeForm](https://peps.python.org/pep-0747/)), not `Any`; the same for unions, `list[Item]` and
+`agent.call`.
+
+**Async:** an `async def` function gives an awaitable; `await thunc.acall(...)` is `thunc.call`, and
+`await thunc.amap(func, items, workers=8)` runs up to `workers` calls at once in input order, for
+`async def` and plain functions alike. Calls run in worker threads, so the event loop stays free.
 
 **`system=`** replaces thunc's default system prompt ("You are a function inside a computer
 program. Follow the instructions."), for example `system="You are a strict essay grader."`. thunc
@@ -592,7 +605,8 @@ thunc/
   __main__.py    the thunc command: thunc run [--profile], thunc watch, thunc write, thunc cache list / clear
   profiling.py   thunc run --profile: timing records and the report
   events.py      THUNC_EVENTS: the live events thunc watch reads
-  core.py        thunc.call, thunc.map, tracing
+  core.py        thunc.call, thunc.acall, thunc.map, thunc.amap, tracing
+  deprecation.py ThuncDeprecationWarning, and @deprecated / @renamed_parameter
   cache.py       the answer cache: saving, listing, clearing
   recordings.py  record and replay: THUNC_RECORDINGS and THUNC_RECORD, for calls and agent runs
   schema.py      return types: describe, parse, validate
@@ -610,7 +624,6 @@ examples/
 
 ## Limitations
 
-- **`Literal` results from `thunc.call` are typed as `Any`.** `@thunc.function` has no such gap.
 - **Docstrings disappear under `python -OO`.** Use `instructions=` there.
 
 ## Development

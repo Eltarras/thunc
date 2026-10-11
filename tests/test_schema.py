@@ -7,7 +7,8 @@ from typing import Any, ClassVar, Literal
 
 import pytest
 
-from thunc.schema import describe, parse
+import thunc
+from thunc.schema import describe, json_schema, parse
 
 
 @dataclass
@@ -351,3 +352,91 @@ def test_describe_dataclass_marks_optional_fields():
     assert describe(Order) == (
         'a JSON object with these fields: {"order_id": a JSON string, "amount": a JSON number or null (optional)}'
     )
+
+
+# --- Enum classes as return types -----------------------------------------------------------
+
+
+class Priority(Enum):
+    LOW = 1
+    HIGH = 3
+
+
+class Mood(Enum):
+    happy = "happy"
+    sad = "sad"
+    MEH = "meh"
+    SO_SO = "meh"  # an alias: the same member as MEH
+
+
+@pytest.mark.parametrize(
+    "text, tp, expected",
+    [
+        ('"red"', Color, Color.RED),
+        ("blue", Color, Color.BLUE),  # an unquoted label, as for a Literal
+        ("'blue'", Color, Color.BLUE),
+        ("3", Priority, Priority.HIGH),
+        ("3.0", Priority, Priority.HIGH),
+        ('"meh"', Mood, Mood.MEH),
+        ("1", Level, Level.ONE),
+        ('["red", "blue"]', list[Color], [Color.RED, Color.BLUE]),
+        ("null", Color | None, None),
+        ('{"mood": "sad"}', Mood, Mood.sad),  # an answer in a one-key object, unwrapped
+    ],
+)
+def test_enum_classes_come_back_as_members(text, tp, expected):
+    value = parse(text, tp)
+    assert value == expected and repr(value) == repr(expected)
+
+
+@pytest.mark.parametrize(
+    "text, tp",
+    [
+        ('"RED"', Color),  # a name, not a value: asked again rather than guessed
+        ("HIGH", Priority),
+        ('"3"', Priority),  # a string, not the number
+        ("true", Level),  # true isn't 1
+        ("2", Priority),
+        ('"purple"', Color),
+    ],
+)
+def test_enum_answers_that_are_not_a_value_are_retried(text, tp):
+    with pytest.raises(ValueError):
+        parse(text, tp)
+
+
+def test_an_enum_is_described_by_its_values_with_names_where_they_add_meaning():
+    assert describe(Color) == 'exactly one of these JSON values: "red", "blue"'
+    assert describe(Priority) == "exactly one of these JSON values: 1 (LOW), 3 (HIGH)"
+    assert describe(Mood) == 'exactly one of these JSON values: "happy", "sad", "meh"'  # no alias
+    assert json_schema(Priority) == {"enum": [1, 3]}
+    assert json_schema(list[Color]) == {"type": "array", "items": {"enum": ["red", "blue"]}}
+
+
+def test_enums_json_cant_carry_and_flags_are_unsupported():
+    import enum
+
+    class Point(Enum):
+        ORIGIN = (0, 0)
+
+    class Empty(Enum):
+        pass
+
+    class Perm(enum.Flag):
+        R = 1
+        W = 2
+
+    for tp in (Point, Empty, Perm):
+        with pytest.raises(thunc.ThuncError, match="Unsupported return type"):
+            describe(tp)
+
+
+def test_a_function_returning_an_enum(fake):
+    @thunc.function
+    def priority(ticket: str) -> Priority:
+        """How urgent is this?"""
+        ...
+
+    fake.replies = ["HIGH", "3"]  # the name is retried with the values listed
+    assert priority("Site down") is Priority.HIGH
+    assert "1 (LOW), 3 (HIGH)" in fake.prompts[0] and "invalid" in fake.prompts[1]
