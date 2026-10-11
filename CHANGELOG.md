@@ -3,6 +3,39 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
+## 0.6.0 (beta)
+
+**Agents settle.** The agent API is frozen: it changes only through deprecations from here on, and
+a test of every public signature keeps it so. The run record now carries a format number, as the
+events always have, and both formats, like durable task fingerprints, have a written compatibility
+promise. thunc write stays experimental through 1.0. A program written for 0.5 runs unchanged.
+
+### Added
+
+- **`agent.acall`**, `agent.call` to await, as `thunc.acall` is for `thunc.call`.
+- **A format number in an agent run's record**: `"format": 1` on its `start` line. Within one
+  format, the record and the `THUNC_EVENTS` stream only gain events and fields; a change an old
+  reader would misread gets a new number. The API docs list every line and field, and a test checks
+  them. `thunc watch` skips a record in a format it doesn't know.
+- **A compatibility promise for durable task fingerprints**: upgrading thunc doesn't change the
+  fingerprint of a task registered the same way. A test pins the fingerprints of four task shapes;
+  they're the same as 0.3.2's.
+- **`tests/api.txt`**, every public signature, and a test that fails when the API differs from it.
+- The tool-use benchmark's `--read-limit`, and its measurement on `deep_fix`: reading the whole file
+  halves the turns but doubles the cost, so `read` keeps giving 400 lines by default.
+
+### Changed
+
+- `Agent(protocol=...)` and `Agent(effort=...)` are typed as their `Literal` choices, so a type
+  checker catches a value the run would refuse.
+
+### Not changed
+
+- **thunc write stays experimental through 1.0**, outside the frozen API: it may change, or be
+  removed, without a deprecation period.
+- Steps on native Codex runs still count tool calls, and native Codex runs still report no tokens:
+  `codex exec --json` marks no model reply and reports tokens only when a turn ends.
+
 ## 0.5.0 (beta)
 
 **Testable and extensible.** `thunc.testing` gives your tests a scripted fake model and pytest

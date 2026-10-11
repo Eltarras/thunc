@@ -54,7 +54,7 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html" class="active" aria-current="page">Changelog</a>
   </nav>
-  <div class="version">thunc 0.5.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.6.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -65,6 +65,7 @@
 <div class="tablewrap"><table>
 <thead><tr><th>Version</th><th>Released</th><th>Headline</th></tr></thead>
 <tbody>
+<tr><td><a href="#v0-6-0"><code>0.6.0</code></a></td><td class="nowrap">11 Oct 2026</td><td class="wrap">The agent API is frozen; the run record, the events and durable fingerprints get a compatibility promise; <code>agent.acall</code></td></tr>
 <tr><td><a href="#v0-5-0"><code>0.5.0</code></a></td><td class="nowrap">11 Oct 2026</td><td class="wrap"><code>thunc.testing</code>: a fake model and pytest fixtures; <code>thunc.register_backend</code>; Ollama</td></tr>
 <tr><td><a href="#v0-4-0"><code>0.4.0</code></a></td><td class="nowrap">11 Oct 2026</td><td class="wrap">Record and replay for tests and CI; <code>Enum</code> return types; <code>thunc.acall</code> and <code>thunc.amap</code>; precise types for <code>returns=</code>; deprecations</td></tr>
 <tr><td><a href="#v0-3-2"><code>0.3.2</code></a></td><td class="nowrap">10 Oct 2026</td><td class="wrap">Agent runs on the Claude API retry errors sent mid-reply; a trace that can't be written warns instead of failing the call</td></tr>
@@ -79,6 +80,23 @@
 <tr><td><a href="#v0-1-1"><code>0.1.1</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">The OpenAI backend and local models</td></tr>
 <tr><td><a href="#v0-1-0"><code>0.1.0</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">First release</td></tr>
 </tbody></table></div>
+<div class="release">
+<h2 id="v0-6-0">0.6.0 <span class="pill">beta</span></h2>
+<p class="release-meta">11 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.6.0">Release notes</a> · <a href="https://pypi.org/project/thunc/0.6.0/">PyPI</a></p>
+<p><strong>Agents settle.</strong> The agent API is <a href="api.html#stability">frozen</a>, and the run record, the events and durable fingerprints have a <a href="api.html#formats">compatibility promise</a>. thunc write stays experimental through 1.0. A program written for 0.5 runs unchanged.</p>
+<h3>Added</h3>
+<ul>
+<li><strong><code>agent.acall</code></strong>, <code>agent.call</code> to await.</li>
+<li><strong>A format number in an agent run's record</strong> (<code>"format": 1</code> on its <code>start</code> line). The record and the <code>THUNC_EVENTS</code> stream only gain events and fields within a format; the API docs list them all, and a test checks them. <code>thunc watch</code> skips a record in a format it doesn't know.</li>
+<li><strong>Durable task fingerprints don't change with thunc</strong>: a test pins them, and they're the same as 0.3.2's.</li>
+<li><code>tests/api.txt</code>: every public signature, and a test that fails when the API differs from it.</li>
+<li>The tool-use benchmark's <code>--read-limit</code>: reading the whole file on <code>deep_fix</code> halves the turns and doubles the cost, so <code>read</code> keeps its 400 lines.</li>
+</ul>
+<h3>Changed</h3>
+<ul>
+<li><code>Agent(protocol=...)</code> and <code>Agent(effort=...)</code> are typed as their <code>Literal</code> choices.</li>
+</ul>
+</div>
 <div class="release">
 <h2 id="v0-5-0">0.5.0 <span class="pill">beta</span></h2>
 <p class="release-meta">11 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.5.0">Release notes</a> · <a href="https://pypi.org/project/thunc/0.5.0/">PyPI</a></p>
