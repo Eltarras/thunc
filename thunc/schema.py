@@ -1,7 +1,7 @@
 """Return types: describe one to the model, and turn the model's text back into a checked value.
 
-Supported: str, bool, int, float, None, Any, Literal[...], list[T], dict[str, T], unions
-(T | None) and dataclasses.
+Supported: str, bool, int, float, None, Any, Literal[...], Enum classes, list[T], dict[str, T],
+unions (T | None) and dataclasses.
 """
 
 from __future__ import annotations
@@ -34,6 +34,8 @@ def describe(tp: Any, nested: bool = False) -> str:
     }
     if tp in simple:
         return simple[tp]
+    if is_enum(tp):
+        return "exactly one of these JSON values: " + ", ".join(_member(m) for m in _members(tp))
     if _is_dataclass(tp):
         fields = [
             f'"{name}": {describe(hint, True)}{"" if required else " (optional)"}'
@@ -130,10 +132,12 @@ def _bare_word(text: str, tp: Any) -> Any:
     """The usual near-misses that aren't JSON of the right kind: yes/no for a bool, an unquoted
     (or single-quoted) label for a string Literal. Also inside an Optional. _NO_WORD if neither."""
     options = _options(tp)
-    literals = [typing.get_args(o) for o in options if typing.get_origin(o) is Literal]
+    # (label, what it reads as): a Literal's string options, and an Enum's members with string values
+    labels = [(a, a) for o in options if typing.get_origin(o) is Literal for a in typing.get_args(o)]
+    labels += [(m.value, m) for o in options if is_enum(o) for m in _members(o)]
     unquoted = text[1:-1] if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"" else text
     for label in (text, unquoted):  # the text as it is first: Literal["'quoted'"] has the quotes
-        for option in (a for labels in literals for a in labels if isinstance(a, str) and a == label):
+        for option in (result for value, result in labels if isinstance(value, str) and value == label):
             return option  # an exact label first: "no" for Literal["no", "partial"] | bool is the label
     word = text.lower().rstrip(".")
     if bool in options and str not in options and word in {"true", "yes", "false", "no"}:
@@ -247,6 +251,11 @@ def validate(value: Any, tp: Any) -> Any:
         except Exception as exc:  # a check in __post_init__, for example
             raise ValueError(f"{tp.__name__}(...) failed: {type(exc).__name__}: {shorten(str(exc))}") from exc
 
+    if is_enum(tp):
+        values = [m.value for m in _members(tp)]
+        match = [m for m in _members(tp) if _kind(m.value) == _kind(value) and m.value == value]
+        _expect(bool(match), value, f"one of {values}")
+        return match[0]
     origin, args = typing.get_origin(tp), typing.get_args(tp)
     if origin is Literal:
         # Compared by kind too, or true would match Literal[1] (True == 1 in Python).
@@ -297,6 +306,32 @@ def _kind(value: Any) -> str:
     if isinstance(value, str):  # a str Enum member too: Literal[Color.RED] is "red" in JSON
         return "string"
     return type(value).__name__
+
+
+def is_enum(tp: Any) -> bool:
+    """An Enum class whose members are the answers. Not a Flag: its combinations aren't members."""
+    return isinstance(tp, type) and issubclass(tp, enum.Enum) and not issubclass(tp, enum.Flag)
+
+
+def _members(tp: type[enum.Enum]) -> list[enum.Enum]:
+    """The members, without aliases. Their values must be what JSON can carry exactly."""
+    members = list(tp)
+    for m in members:
+        exact = isinstance(m.value, (str, int, bool)) or isinstance(m.value, float) and math.isfinite(m.value)
+        if not exact:
+            raise ThuncError(
+                f"Unsupported return type: {tp.__name__}, whose member {m.name} has the value {m.value!r}. "
+                "An Enum's values must be strings, numbers or booleans."
+            )
+    if not members:
+        raise ThuncError(f"Unsupported return type: {tp.__name__} has no members")
+    return members
+
+
+def _member(m: enum.Enum) -> str:
+    """A member as the model sees it: its value, with its name where the value doesn't say it (3 (HIGH))."""
+    shown = json.dumps(m.value, ensure_ascii=False)
+    return shown if str(m.value).lower() == m.name.lower() else f"{shown} ({m.name})"
 
 
 def _is_dataclass(tp: Any) -> bool:
@@ -378,6 +413,8 @@ def json_schema(tp: Any, _seen: frozenset[type] = frozenset()) -> dict[str, Any]
             "properties": {name: json_schema(hint, _seen | {tp}) for name, hint, _ in fields},
             "required": [name for name, _, required in fields if required],
         }
+    if is_enum(tp):
+        return {"enum": [m.value for m in _members(tp)]}
     origin, args = typing.get_origin(tp), typing.get_args(tp)
     if origin is Literal:
         return {"enum": [a.value if isinstance(a, enum.Enum) else a for a in args]}

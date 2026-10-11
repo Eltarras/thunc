@@ -33,7 +33,7 @@ from collections.abc import Callable, Iterator
 from typing import Any, Literal, TypeVar, cast, get_args, get_origin
 
 from .errors import ThuncError, TransientError, transient_claude_error, transient_status
-from .schema import describe
+from .schema import describe, is_enum
 
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
 DEFAULT_OPENAI_MODEL = "gpt-5.5"
@@ -518,15 +518,15 @@ def _jev_question(returns: Any) -> tuple[str, tuple[Any, ...]]:
     integer literals (levels in ascending order). Jev can't write text, so nothing else."""
     if returns is bool:
         return "noul", ()
-    if get_origin(returns) is Literal:
-        options = get_args(returns)
+    if is_enum(returns) or get_origin(returns) is Literal:
+        options = tuple(m.value for m in returns) if is_enum(returns) else get_args(returns)
         if all(isinstance(option, str) for option in options) and len(options) <= _JEV_MAX_CHOICES:
             return "choice", options
         if all(isinstance(option, int) and not isinstance(option, bool) for option in options):
             return "score", tuple(sorted(options))
     raise ThuncError(
-        f"The jev backend answers bool, Literal of strings (up to {_JEV_MAX_CHOICES}) or Literal of "
-        f"integers, not {describe(returns)}."
+        f"The jev backend answers bool, Literal or Enum of strings (up to {_JEV_MAX_CHOICES}) or Literal or "
+        f"Enum of integers, not {describe(returns)}."
     )
 
 

@@ -2,6 +2,7 @@
 
 import dataclasses
 import datetime
+import enum
 import json
 import subprocess
 from typing import Literal
@@ -71,6 +72,23 @@ def test_string_literal_is_a_choice_question(monkeypatch):
     assert question["criteria"] == {"bug": "bug", "billing": "billing", "other": "other"}
 
 
+def test_an_enum_of_strings_is_a_choice_and_of_integers_a_score(monkeypatch):
+    class Route(enum.Enum):
+        BUG = "bug"
+        BILLING = "billing"
+
+    class Urgency(enum.IntEnum):
+        HIGH = 5
+        LOW = 1
+
+    calls = stub_jev(monkeypatch, chose("billing", {"bug": 0.3, "billing": 0.7}))
+    assert thunc.call("Route this ticket.", {"ticket": "charged twice"}, returns=Route) is Route.BILLING
+    assert calls[0]["request"]["questions"]["answer"]["criteria"] == {"bug": "bug", "billing": "billing"}
+    calls = stub_jev(monkeypatch, scored([0.2, 0.8]))
+    assert thunc.call("How urgent is this?", {"ticket": "site down"}, returns=Urgency) is Urgency.HIGH
+    assert calls[0]["request"]["questions"]["answer"]["criteria"] == ["1", "5"]
+
+
 def test_integer_literal_is_a_score_question_with_levels_in_order(monkeypatch):
     calls = stub_jev(monkeypatch, scored([0.1, 0.6, 0.3]))
     value = thunc.call("How urgent is this?", {"ticket": "site down"}, returns=Literal[5, 1, 3])
@@ -115,7 +133,7 @@ class Verdict:
 )
 def test_types_jev_cannot_answer_fail_before_any_request(monkeypatch, returns):
     calls = stub_jev(monkeypatch, {"noul": 0.9})
-    with pytest.raises(thunc.ThuncError, match="The jev backend answers bool, Literal of strings"):
+    with pytest.raises(thunc.ThuncError, match="The jev backend answers bool, Literal or Enum of strings"):
         thunc.call("Anything?", returns=returns)
     assert calls == []
 
