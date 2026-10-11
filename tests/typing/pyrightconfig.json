@@ -1,0 +1,5 @@
+{
+  "typeCheckingMode": "standard",
+  "failOnWarnings": false,
+  "reportAssertTypeFailure": "error"
+}
