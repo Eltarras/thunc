@@ -32,8 +32,10 @@ type; if it doesn't fit, the model is asked again, and after that `thunc.ThuncEr
 dependencies, Python 3.10+.
 
 It also runs [agents](#agents): typed functions that can read, edit and test your code before they
-answer. New in 0.4: [record and replay](#recording-and-replaying) runs your tests and CI with no
-model, `Enum` return types, and `thunc.acall` / `thunc.amap` for async code. `thunc watch` shows a
+answer. New in 0.5: [thunc.testing](#testing-with-a-fake-model-thunctesting), a fake model and
+pytest fixtures for your tests, `thunc.register_backend` for your own backends, and Ollama. In 0.4:
+[record and replay](#recording-and-replaying) runs your tests and CI with no model, `Enum` return
+types, and `thunc.acall` / `thunc.amap` for async code. `thunc watch` shows a
 program's calls and agent runs live in the terminal (see **Watching** below), and
 [thunc write](#thunc-write), an experiment, lets a function write its own body as plain Python on its
 first call.
@@ -63,7 +65,7 @@ With an API key set, thunc picks that backend on its own, so `THUNC_BACKEND` isn
 `thunc.configure(backend=...)` does the same. Durable agents on Temporal add
 `pip install "thunc[temporal]"`.
 
-> **Beta (v0.4).** The API may still change. Bug reports and feedback are welcome in
+> **Beta (v0.5).** The API may still change. Bug reports and feedback are welcome in
 > [issues](https://github.com/Eltarras/thunc/issues).
 
 **More examples.** Clone the repo and run them from its root, with no install, through your
