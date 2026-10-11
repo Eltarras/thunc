@@ -39,6 +39,7 @@ SKIPPED_DIRS = frozenset(
     {".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv", ".thunc_cache", ".thunc_agents"}
 )
 MAX_RESULT = 20_000  # characters of one tool result sent back to the model
+READ_LIMIT = 400  # lines read gives when the model asks for no limit
 MAX_LIST = 300  # entries
 MAX_MATCHES = 100
 MAX_SEARCH_FILE = 1_000_000  # bytes; bigger files are skipped by search
@@ -149,7 +150,8 @@ class Workdir:
             entries.append(f"(left out because git ignores them: {shown}; list one by name to see inside)")
         return "\n".join(entries) or "(empty folder)"
 
-    def read(self, path: str, offset: int = 1, limit: int = 400) -> str:
+    def read(self, path: str, offset: int = 1, limit: int | None = None) -> str:
+        limit = READ_LIMIT if limit is None else limit
         full = self.path(path)
         if not os.path.isfile(full):
             raise ToolError(f"{path!r} is not a file" + ("; it is a folder, use list" if os.path.isdir(full) else ""))

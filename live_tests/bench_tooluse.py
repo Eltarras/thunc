@@ -1029,7 +1029,18 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--out", default=None)
     parser.add_argument("--report", default=None, help="print the tables from a results file and exit")
+    parser.add_argument(
+        "--read-limit",
+        type=int,
+        default=None,
+        help="lines thunc's read gives by default (400); the cap on one tool result grows to fit",
+    )
     args = parser.parse_args()
+    if args.read_limit:
+        from thunc import tools
+
+        tools.READ_LIMIT = args.read_limit
+        tools.MAX_RESULT = max(tools.MAX_RESULT, args.read_limit * 60)  # ~60 characters a numbered line
     if args.report:
         with open(args.report, encoding="utf-8") as f:
             report(json.load(f))
@@ -1050,6 +1061,8 @@ def main() -> None:
     print(f"{len(jobs)} runs, model {args.model}, workdirs in {base}", flush=True)
     results = thunc.map(lambda j: one(*j, args.model, args.max_steps, base), jobs, workers=args.workers)
     data = {"model": args.model, "runs": args.runs, "max_steps": args.max_steps, "results": results}
+    if args.read_limit:
+        data["read_limit"] = args.read_limit
     out = args.out or os.path.join(base, "results.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1, default=str)
