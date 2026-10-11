@@ -24,7 +24,9 @@ def test_pyright_infers_the_documented_types():
     if pyright is None:
         pytest.skip("basedpyright is not installed")
     result = subprocess.run(
-        [pyright, "--level", "error", "--pythonpath", sys.executable, CHECKED],
+        # Its own settings (tests/typing/pyrightconfig.json): standard rules, and only errors fail, so a
+        # newer basedpyright's stricter defaults can't fail it. A wrong assert_type is an error.
+        [pyright, "--project", os.path.join(HERE, "typing"), "--pythonpath", sys.executable, CHECKED],
         cwd=ROOT,
         capture_output=True,
         text=True,
