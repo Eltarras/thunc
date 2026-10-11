@@ -54,7 +54,7 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.3.2 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.4.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -62,7 +62,7 @@
   <h1>Getting started with the Jev backend</h1>
   <p class="lede">Jev is TypeSafe's judgment model. It doesn't write text; it answers yes/no, label and rating questions with calibrated probabilities, in about 0.3 seconds. Use it for the functions that only decide something.</p>
 </header>
-<div class="chips" style="margin-top:24px"><span>~0.3 s per call</span><span>bool · Literal[...] only</span><span>needs the jev CLI</span></div>
+<div class="chips" style="margin-top:24px"><span>~0.3 s per call</span><span>bool · Literal[...] · Enum only</span><span>needs the jev CLI</span></div>
 
 <h2 id="setup">Set it up</h2>
 <ol class="steps">
@@ -171,7 +171,7 @@ python3 -m examples.jev_with_claude  # Jev decides, Claude Code writes the repli
 <tr><td class="wrap"><code>`jev` was not found on PATH.</code></td><td>Install the CLI (step 3). If you used the install script, add <code>~/.local/bin</code> to your <code>PATH</code>.</td></tr>
 <tr><td class="wrap"><code>Refusing to load formula model-clis/packages/jev from untrusted tap</code></td><td>Run <code>brew trust --formula model-clis/packages/jev</code>, then <code>brew install jev</code> again.</td></tr>
 <tr><td class="wrap"><code>jev exited 1: Error: API rejected the credentials</code></td><td>Run <code>jev login</code> again. If <code>JEV_API_KEY</code> is set, it wins over the login, so check or unset it.</td></tr>
-<tr><td class="wrap"><code>The jev backend answers bool, Literal of strings ...</code></td><td>The function's return type isn't one Jev can answer. Use <code>Literal[...]</code>, or give that function another backend.</td></tr>
+<tr><td class="wrap"><code>The jev backend answers bool, Literal or Enum of strings ...</code></td><td>The function's return type isn't one Jev can answer. Use <code>Literal[...]</code> or an <code>Enum</code>, or give that function another backend.</td></tr>
 <tr><td class="wrap"><code>Unknown backend 'jev'</code></td><td>Your thunc is older than 0.1.3: <code>pip install --upgrade thunc</code>.</td></tr>
 </tbody></table></div>
 <nav class="pager" aria-label="Pages"><a class="prev" href="temporal.html"><span>Previous</span>Durable agents</a><a class="next" href="claude-code-skill.html"><span>Next</span>Claude Code skill</a></nav>

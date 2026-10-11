@@ -3,28 +3,56 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
-## Unreleased
+## 0.4.0 (beta)
 
-**Record and replay, for tests and CI.** With `configure(recordings="tests/recordings")` (or
-`THUNC_RECORDINGS`), every call and agent run is answered from that folder and no model is asked: a
-call that wasn't recorded raises `ThuncError` instead of spending money or waiting on a login.
-`THUNC_RECORD=1` asks the model and saves every answer there; `THUNC_RECORD=missing` saves only the
-answers it lacks. A program with no recordings folder behaves as in 0.3.2.
+**Functions complete, and testable without a model.** Return an `Enum`; get the precise type of
+`thunc.call(..., returns=Literal[...])` from your type checker; await calls with `thunc.acall` and
+`thunc.amap`; and record a test suite's answers once, then replay them in CI with no model, backend
+or API key. A deprecation mechanism is in place for the API changes ahead of 1.0. A program that
+uses none of these behaves as in 0.3.2.
 
 ### Added
 
-- **Record and replay** ([#8](https://github.com/Eltarras/thunc/issues/8)). A call is matched on its
-  function, system prompt and request; the backend and model are saved with the answer but not
-  matched, so replaying needs no backend or API key. A recorded answer is checked against the return
-  type and `ensure=` before it's used, and failed calls are never recorded. Agent runs replay the
-  model's replies in order while their tools run for real; a run that goes differently runs out of
-  replies and fails. While replaying, any request that would still reach a model (a durable run)
-  fails instead. Recordings use the cache's format, so `thunc cache list --cache-dir` and
-  `thunc cache clear --cache-dir` work on them.
-- The trace has a `"replayed"` field, and the `call.end` and `agent.start` events have `replayed`.
-  The dashboard shows replayed calls as replayed from the next thunc-watch release; thunc-watch 0.1.0
-  shows them as cached.
+- **Enum return types** ([#6](https://github.com/Eltarras/thunc/issues/6)). A function returning an
+  `Enum` class gets its member, matched on its value like a `Literal` option. The prompt lists the
+  values, with the name where the value doesn't say what it means (`3 (HIGH)`); a name sent in place
+  of a value is asked again, not guessed. An enum's values must be strings, numbers or booleans, and
+  `Flag` enums aren't supported. On `jev`, an enum of strings is a choice and one of integers a score.
+- **The async API.** `await thunc.acall(...)` is `thunc.call` to await, and
+  `await thunc.amap(func, items, workers=8)` runs up to `workers` calls at once in input order, for
+  `async def` and plain functions. Calls run in worker threads, so the event loop stays free.
+- **Record and replay** ([#8](https://github.com/Eltarras/thunc/issues/8),
+  [#74](https://github.com/Eltarras/thunc/pull/74)). With `configure(recordings="tests/recordings")`
+  (or `THUNC_RECORDINGS`), every call and agent run is answered from that folder and no model is
+  asked: one that wasn't recorded raises `ThuncError` instead of spending money or waiting on a
+  login. `THUNC_RECORD=1` asks the model and saves every answer there; `THUNC_RECORD=missing` saves
+  only the ones it lacks. A call is matched on its function, system prompt and request; the backend
+  and model are saved with the answer but not matched, so replaying needs no backend or API key. A
+  recorded answer is checked against the return type and `ensure=` before it's used, and failed
+  calls are never recorded. Agent runs replay the model's replies in order while their tools run
+  for real; a run that goes differently runs out of replies and fails. While replaying, any request
+  that would still reach a model (a durable run) fails instead. Recordings use the cache's format,
+  so `thunc cache list --cache-dir` and `thunc cache clear --cache-dir` work on them. The trace has
+  a `"replayed"` field, and the `call.end` and `agent.start` events have `replayed`; `thunc watch`
+  shows replayed calls as replayed from the next thunc-watch release (0.1.0 shows them as cached).
+- **`thunc.ThuncDeprecationWarning`**, and the policy for deprecations before 1.0: a part of the API
+  that's going away keeps working for at least two minor releases and warns where it's used, naming
+  the release that removes it. The warning is shown by default, once per place. Nothing is
+  deprecated yet.
 - Benchmarks: `record.*`, the cost of a replayed and a recorded call and agent run.
+
+### Changed
+
+- **`returns=` is typed as a type form** ([#10](https://github.com/Eltarras/thunc/issues/10)), so
+  `thunc.call(..., returns=Literal["a", "b"])` is a `Literal["a", "b"]` to a type checker that
+  supports TypeForm (PEP 747; current mypy and Pyright), not `Any`, and the same goes for unions,
+  `list[Item]` and `agent.call`. `TypeForm` is imported for type checkers only: thunc still has no
+  dependencies at run time.
+
+### Fixed
+
+- **`thunc.map` over an `async def` function returns its values**, not coroutines that were never
+  awaited: each call runs to completion in its worker thread.
 
 ## 0.3.2 (beta)
 

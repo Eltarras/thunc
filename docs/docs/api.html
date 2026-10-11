@@ -54,7 +54,7 @@
     <a href="api.html" class="active" aria-current="page">API reference</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.3.2 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.4.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -68,6 +68,8 @@
 <tbody>
 <tr><td><a href="functions.html#function"><code>@thunc.function</code></a></td><td>Turns a signature and docstring into an AI-backed function. Options: <code>instructions=</code>, <code>system=</code>, <code>ensure=</code>, <code>retries=2</code>, <code>backend=</code>, <code>model=</code>, <code>cache=False</code>, <code>write=False</code> (experimental, <a href="write.html">thunc write</a>: the function writes its own body). The body must be empty (<code>...</code>); real code raises <code>TypeError</code>. <code>async def</code> works.</td></tr>
 <tr><td><a href="functions.html#call"><code>thunc.call</code></a></td><td>One prompt. Inputs are sent separately from the instructions. <code>name=</code> groups its cached answers.</td></tr>
+<tr><td><a href="functions.html#async"><code>thunc.acall</code></a></td><td><code>thunc.call</code>, to await.</td></tr>
+<tr><td><a href="functions.html#async"><code>thunc.amap</code></a></td><td><code>thunc.map</code>, to await: up to <code>workers</code> calls at once, in input order. Takes <code>async def</code> and plain functions.</td></tr>
 <tr><td><a href="functions.html#map"><code>thunc.map</code></a></td><td>Runs calls in parallel, keeping the input order.</td></tr>
 <tr><td><a href="#configure"><code>thunc.configure</code></a></td><td>Process-wide settings.</td></tr>
 <tr><td><a href="caching.html#clearing"><code>thunc.clear_cache</code></a></td><td>Deletes saved answers: all of them, one function's, or those older than an age. Returns how many.</td></tr>
@@ -88,6 +90,10 @@ thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, ba
            model=None, system=None, cache=False, name=None)
 
 thunc.map(func, items, *, workers=8)
+
+await thunc.acall(...)  # the arguments of thunc.call
+
+await thunc.amap(func, items, *, workers=8)
 
 thunc.clear_cache(function=None, *, older_than=None)  # function or name; timedelta or seconds
 
@@ -134,6 +140,9 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 <dt>TypeError</dt><dd>Raised when a function is declared with code in its body, or with no docstring and no <code>instructions=</code>.</dd>
 </dl>
 
+<h2 id="deprecations">Deprecations</h2>
+<p>Part of the API that's going away keeps working for at least two minor releases, and warns with <code>thunc.ThuncDeprecationWarning</code> where you use it, naming the release that removes it and what to use instead. The warning is shown by default, once per place in your code; turn it off with <code>warnings.filterwarnings("ignore", category=thunc.ThuncDeprecationWarning)</code>, or make it an error in your tests with <code>-W error::thunc.ThuncDeprecationWarning</code>. The <a href="changelog.html">changelog</a> lists deprecations and removals in each release. Experimental features (<a href="write.html">thunc write</a>) can change without one.</p>
+
 <h2 id="cli">Command line</h2>
 <div class="codeblock"><pre><code class="sh">thunc run --profile app.py --limit 20             # run a script, then print where the time went
 thunc run --profile -m myapp.triage               # a module, as with python -m
@@ -146,7 +155,6 @@ thunc cache clear --older-than 30d --dry-run       # what would go, without dele
 
 <h2 id="limitations">Limitations</h2>
 <ul>
-<li><strong><code>Literal</code> results from <code>thunc.call</code> are typed as <code>Any</code>.</strong> <code>@thunc.function</code> has no such gap.</li>
 <li><strong>Docstrings disappear under <code>python -OO</code>.</strong> Use <code>instructions=</code> there.</li>
 </ul>
 <nav class="pager" aria-label="Pages"><a class="prev" href="claude-code-skill.html"><span>Previous</span>Claude Code skill</a><a class="next" href="changelog.html"><span>Next</span>Changelog</a></nav>

@@ -153,7 +153,7 @@ no reliable way to tell them from a real one. Only an empty reply is retried.
 
 **Open: behavior that might change.**
 
-- `thunc.map` loses every result when one item fails, and returns coroutines for `async` functions.
+- `thunc.map` and `thunc.amap` lose every result when one item fails.
 - Backend errors (timeouts, connection failures) are never retried by `thunc.call`; only bad
   replies are. Local agent runs retry a step that failed with a `TransientError` twice, and durable
   runs retry transient provider failures.

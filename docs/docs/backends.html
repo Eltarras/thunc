@@ -54,7 +54,7 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.3.2 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.4.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -102,7 +102,7 @@ thunc.call("Summarise this.", {"text": doc}, backend="openai", model="gpt-5.5") 
 <p><code>codex</code> also ignores <code>~/.codex/config.toml</code> (your MCP servers, plugins, <code>notify</code> command and model settings); your login still works.</p>
 
 <h3 id="jev">Jev</h3>
-<p>Jev doesn't write text. It answers <code>bool</code>, <code>Literal</code> of strings (up to 255) and <code>Literal</code> of integers (as ordered levels) in about 0.3 seconds, and any other return type raises <code>ThuncError</code> before a request is sent. It's only used when you choose it: <code>backend="jev"</code> or <code>THUNC_BACKEND=jev</code>. The key comes from <code>jev login</code> or <code>JEV_API_KEY</code>, never <code>configure(api_key=...)</code>, so Jev can be used for some functions alongside another backend's key.</p>
+<p>Jev doesn't write text. It answers <code>bool</code>, <code>Literal</code> or <code>Enum</code> of strings (up to 255) and <code>Literal</code> or <code>Enum</code> of integers (as ordered levels) in about 0.3 seconds, and any other return type raises <code>ThuncError</code> before a request is sent. It's only used when you choose it: <code>backend="jev"</code> or <code>THUNC_BACKEND=jev</code>. The key comes from <code>jev login</code> or <code>JEV_API_KEY</code>, never <code>configure(api_key=...)</code>, so Jev can be used for some functions alongside another backend's key.</p>
 <p>Setup, options and troubleshooting are in the <a href="jev.html">Jev guide</a>.</p>
 
 <h2 id="local">Local models</h2>
