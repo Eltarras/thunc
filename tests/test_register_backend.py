@@ -1,5 +1,6 @@
 """The public backend interface: thunc.register_backend for text and typed backends."""
 
+import importlib
 import json
 from typing import Literal
 
@@ -72,7 +73,7 @@ def test_a_typed_backend_gets_the_question_apart():
         thunc.Agent("a", workdir=".", backend="judge").call("x")
 
 
-def test_errors_a_backend_raises_reach_the_caller_and_transient_ones_are_retried_by_agents(tmp_path):
+def test_errors_a_backend_raises_reach_the_caller_and_transient_ones_are_retried_by_agents(tmp_path, monkeypatch):
     replies = iter([thunc.TransientError("rate limited"), json.dumps({"tool": "finish", "args": {"value": 2}})])
 
     def flaky(text, *, system, model, api_key, timeout):
@@ -82,13 +83,8 @@ def test_errors_a_backend_raises_reach_the_caller_and_transient_ones_are_retried
         return reply
 
     thunc.register_backend("flaky", flaky)
-    from thunc import agent as agent_module
-
-    agent_module.RETRY_DELAY = 0
-    try:
-        assert thunc.Agent("f", workdir=tmp_path, backend="flaky").call("x", returns=int) == 2
-    finally:
-        agent_module.RETRY_DELAY = 2.0
+    monkeypatch.setattr(importlib.import_module("thunc.agent"), "RETRY_DELAY", 0)  # not the @thunc.agent function
+    assert thunc.Agent("f", workdir=tmp_path, backend="flaky").call("x", returns=int) == 2
 
     def down(text, **kwargs):
         raise thunc.ThuncError("the server is down")

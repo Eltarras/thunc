@@ -49,7 +49,7 @@ from .permissions import Permissions
 from .prompts import AGENT_CONTRACT, AGENT_PERSONA, method
 from .runs import AgentError, Run
 from .schema import describe, json_schema, resolve_strings, shorten, validate
-from .store import Session, Store, slug
+from .store import RECORD_FORMAT, Session, Store, slug
 
 if TYPE_CHECKING:  # for type checkers only: thunc has no dependencies at run time
     from typing_extensions import TypeForm  # returns=Literal[...] is typed as the Literal, not Any
@@ -451,6 +451,7 @@ class Agent:
             try:
                 session.write(
                     "start",
+                    format=RECORD_FORMAT,
                     task=task,
                     instructions=instructions,
                     inputs=inputs,
