@@ -170,7 +170,12 @@ original `start` request to fetch the journal's retained result.
 
 Use explicit task versions and retain old registrations/workers until their runs
 drain. Fingerprints detect changed prompts, schemas, models and nonsecret config;
-they do not make incompatible code replay-safe. Bump versions when changing
+they do not make incompatible code replay-safe. Upgrading thunc doesn't change the
+fingerprint of a task registered the same way (from 0.6 on; it hasn't since 0.3.2
+either): a new option joins the fingerprint only when it's set, and a release that
+must change fingerprints says so in the changelog a release ahead
+(`tests/temporal/test_fingerprints.py` pins them; see the API docs' "Durable task
+fingerprints"). Bump versions when changing
 validators or tool semantics. Use versioned task queues for incompatible worker
 releases, while the original coordinator worker remains available. Workflow type
 names and state format are versioned separately. Always replay saved histories

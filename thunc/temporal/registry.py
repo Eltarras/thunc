@@ -36,6 +36,9 @@ class Definition:
     store_folder: str | None
     endpoint: str | None
     retry_safe: frozenset[str] = field(default_factory=frozenset)  # custom tools that may run again after a crash
+    # What the fingerprint is the digest of. Pinned by tests/temporal/test_fingerprints.py: upgrading
+    # thunc must not change it for a task registered the same way (docs/docs/api.html#fingerprints).
+    fingerprinted: dict[str, Any] = field(default_factory=dict)
 
     def inputs(self, values: dict[str, Any]) -> dict[str, Any]:
         bound = self.spec.sig.bind(**values)
@@ -129,7 +132,7 @@ class Registry:
             tool.name: {"description": tool.description, "schema": tool.schema, "retry_safe": tool.name in retry_safe}
             for tool in (agent.custom.values() if agent else ())
         }
-        fingerprint = digest(
+        fingerprinted = plain(
             {
                 **({"tools": tools} if tools else {}),
                 "instructions": spec.instructions,
@@ -142,6 +145,7 @@ class Registry:
                 else {k: v for k, v in options.items() if k != "ensure"},
             }
         )
+        fingerprint = digest(fingerprinted)
         self.definitions[name, version] = Definition(
             name,
             version,
@@ -154,6 +158,7 @@ class Registry:
             Store(agent.name).folder if agent else None,
             endpoint,
             retry_safe,
+            fingerprinted,
         )
 
     def get(self, request: dict[str, Any]) -> Definition:
