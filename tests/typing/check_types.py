@@ -61,3 +61,19 @@ def check_agent(agent: thunc.Agent) -> None:
     assert_type(agent.call("x"), str)
     assert_type(agent.call("x", returns=Literal["yes", "no"]), Literal["yes", "no"])
     assert_type(agent.call("x", returns=list[str]), list[str])
+
+
+def local(text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str:
+    return "ok"
+
+
+def check_backends_and_testing() -> None:
+    from thunc import testing
+
+    thunc.register_backend("local", local, default_model="small")
+    backend: thunc.TextBackend = local
+    with testing.fake_model({"urgency": 4}) as model:
+        assert_type(model, testing.FakeModel)
+        assert_type(model.calls, list[testing.Request])
+    assert_type(testing.act("read", path="a.py"), str)
+    del backend
