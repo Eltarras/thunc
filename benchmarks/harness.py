@@ -70,7 +70,14 @@ def bench(name: str) -> Callable[[Setup], Setup]:
 def isolated(tmp: str) -> Iterator[None]:
     """thunc's settings, environment and backends as they were, after the benchmark changes them."""
     settings, env, registered = dict(config._settings), dict(os.environ), dict(backends.BACKENDS)
-    for var in ("THUNC_BACKEND", "THUNC_TRACE", "THUNC_CACHE_DIR", "THUNC_AGENTS_DIR"):
+    for var in (
+        "THUNC_BACKEND",
+        "THUNC_TRACE",
+        "THUNC_CACHE_DIR",
+        "THUNC_AGENTS_DIR",
+        "THUNC_RECORDINGS",
+        "THUNC_RECORD",
+    ):
         os.environ.pop(var, None)
     config._settings.update(config.DEFAULTS)
     config.configure(cache_dir=os.path.join(tmp, "cache"), agents_dir=os.path.join(tmp, "agents"))

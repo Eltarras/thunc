@@ -3,6 +3,29 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
+## Unreleased
+
+**Record and replay, for tests and CI.** With `configure(recordings="tests/recordings")` (or
+`THUNC_RECORDINGS`), every call and agent run is answered from that folder and no model is asked: a
+call that wasn't recorded raises `ThuncError` instead of spending money or waiting on a login.
+`THUNC_RECORD=1` asks the model and saves every answer there; `THUNC_RECORD=missing` saves only the
+answers it lacks. A program with no recordings folder behaves as in 0.3.2.
+
+### Added
+
+- **Record and replay** ([#8](https://github.com/Eltarras/thunc/issues/8)). A call is matched on its
+  function, system prompt and request; the backend and model are saved with the answer but not
+  matched, so replaying needs no backend or API key. A recorded answer is checked against the return
+  type and `ensure=` before it's used, and failed calls are never recorded. Agent runs replay the
+  model's replies in order while their tools run for real; a run that goes differently runs out of
+  replies and fails. While replaying, any request that would still reach a model (a durable run)
+  fails instead. Recordings use the cache's format, so `thunc cache list --cache-dir` and
+  `thunc cache clear --cache-dir` work on them.
+- The trace has a `"replayed"` field, and the `call.end` and `agent.start` events have `replayed`.
+  The dashboard shows replayed calls as replayed from the next thunc-watch release; thunc-watch 0.1.0
+  shows them as cached.
+- Benchmarks: `record.*`, the cost of a replayed and a recorded call and agent run.
+
 ## 0.3.2 (beta)
 
 **Steadier agent runs on the Claude API, and a trace that can't be written no longer costs the

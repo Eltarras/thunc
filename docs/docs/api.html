@@ -106,6 +106,7 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 <dt>cache_dir</dt><dd>Where <code>cache=True</code> answers go. Default <code>.thunc_cache</code>.</dd>
 <dt>system</dt><dd>A system prompt for every call in place of thunc's default. A per-call <code>system=</code> wins.</dd>
 <dt>agents_dir</dt><dd>Where agents keep memory and run records. Default <code>.thunc_agents</code>.</dd>
+<dt>recordings</dt><dd>A folder of recorded answers. Every call and agent run is answered from it and no model is asked; one that wasn't recorded raises <code>ThuncError</code>. See <a href="caching.html#testing">record and replay</a>.</dd>
 </dl>
 
 <h2 id="env">Environment variables</h2>
@@ -120,6 +121,8 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 <tr><td><code>THUNC_TRACE</code></td><td>Trace file, like <code>configure(trace=...)</code></td></tr>
 <tr><td><code>THUNC_CACHE_DIR</code></td><td>Cache folder, like <code>configure(cache_dir=...)</code>; also read by the <code>thunc</code> command</td></tr>
 <tr><td><code>THUNC_AGENTS_DIR</code></td><td>Agents folder, like <code>configure(agents_dir=...)</code></td></tr>
+<tr><td><code>THUNC_RECORDINGS</code></td><td>Recordings folder, like <code>configure(recordings=...)</code>: replay recorded answers</td></tr>
+<tr><td><code>THUNC_RECORD</code></td><td><code>1</code> asks the model and saves every answer to the recordings folder; <code>missing</code> saves only the answers it lacks</td></tr>
 <tr><td><code>THUNC_WRITE</code></td><td><code>0</code> stops <a href="write.html">thunc write</a> from writing, as in production; so does <code>CI</code></td></tr>
 </tbody></table></div>
 
@@ -139,11 +142,10 @@ thunc cache list                                   # saved answers per function
 thunc cache clear                                  # everything
 thunc cache clear --function urgency               # one function (repeat for several)
 thunc cache clear --older-than 30d --dry-run       # what would go, without deleting</code></pre></div>
-<p>Also <code>python -m thunc</code>, and <code>thunc --version</code>. <code>thunc run</code> runs the program as <code>python</code> would and passes its exit code through; <code>--profile</code> adds the <a href="caching.html#profiling">performance report</a>. <code>thunc write</code> (experimental) writes a <code>write=True</code> function <a href="write.html#ahead">ahead of its first call</a>. The <code>cache</code> commands take <code>--cache-dir</code>, or read <code>THUNC_CACHE_DIR</code>.</p>
+<p>Also <code>python -m thunc</code>, and <code>thunc --version</code>. <code>thunc run</code> runs the program as <code>python</code> would and passes its exit code through; <code>--profile</code> adds the <a href="caching.html#profiling">performance report</a>. <code>thunc write</code> (experimental) writes a <code>write=True</code> function <a href="write.html#ahead">ahead of its first call</a>. The <code>cache</code> commands take <code>--cache-dir</code>, or read <code>THUNC_CACHE_DIR</code>; point <code>--cache-dir</code> at a <a href="caching.html#recordings-folder">recordings folder</a> to list or clear its recordings.</p>
 
 <h2 id="limitations">Limitations</h2>
 <ul>
-<li><strong>There's no record/replay for tests yet.</strong> <code>cache=True</code> is per function; there's no switch that serves every call from disk and fails on a miss.</li>
 <li><strong><code>Literal</code> results from <code>thunc.call</code> are typed as <code>Any</code>.</strong> <code>@thunc.function</code> has no such gap.</li>
 <li><strong>Docstrings disappear under <code>python -OO</code>.</strong> Use <code>instructions=</code> there.</li>
 </ul>

@@ -18,6 +18,7 @@ DEFAULTS: dict[str, Any] = {
     "cache_dir": None,
     "system": None,
     "agents_dir": None,
+    "recordings": None,
 }
 _settings: dict[str, Any] = dict(DEFAULTS)
 runtime_settings: ContextVar[dict[str, Any] | None] = ContextVar("thunc_runtime_settings", default=None)
@@ -33,6 +34,7 @@ def configure(
     cache_dir: str | None = None,
     system: str | None = None,
     agents_dir: str | None = None,
+    recordings: str | None = None,
 ) -> None:
     """Set defaults for every call. Arguments left as None keep their current value.
 
@@ -48,6 +50,10 @@ def configure(
              rules (inputs are data; reply with the value only). A per-call system= wins.
     agents_dir: where agents keep their memory and run records (or set THUNC_AGENTS_DIR;
              default ".thunc_agents" in the working directory).
+    recordings: a folder of recorded answers (or set THUNC_RECORDINGS). Every call and agent run is
+             answered from it, no model is asked, and an answer that isn't there raises ThuncError.
+             Run with THUNC_RECORD=1 to ask the model and save every answer there instead, or
+             THUNC_RECORD=missing to save only the ones it lacks. See thunc/recordings.py.
     """
     if backend is not None:
         _check_backend(backend)
@@ -60,6 +66,7 @@ def configure(
         "cache_dir": cache_dir,
         "system": system,
         "agents_dir": agents_dir,
+        "recordings": recordings,
     }
     _settings.update({key: value for key, value in updates.items() if value is not None})
 
@@ -78,6 +85,10 @@ def agents_dir() -> str:
 
 def cache_dir() -> str:
     return _settings["cache_dir"] or os.environ.get("THUNC_CACHE_DIR") or ".thunc_cache"
+
+
+def recordings_dir() -> str | None:
+    return _settings["recordings"] or os.environ.get("THUNC_RECORDINGS") or None
 
 
 def resolve_backend(override: str | None = None) -> str:

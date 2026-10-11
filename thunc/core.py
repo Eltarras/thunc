@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar, overload
 
-from . import events
+from . import events, recordings
 from .backends import BACKENDS, DEFAULT_MODELS, TYPED_BACKENDS
 from .cache import get as cache_get
 from .cache import put as cache_put
@@ -133,25 +133,47 @@ def _call(
     system = system_prompt(custom)
     request = _build_prompt(instructions, inputs, returns)
     text, answers, started = request, [], time.monotonic()
-    result: dict[str, Any] = {"value": None, "error": None, "cached": False}
+    # cached: answered without asking the model, from the cache or the recordings (replayed)
+    result: dict[str, Any] = {"value": None, "error": None, "cached": False, "replayed": False}
     typed = False
     backend_name: str | None = None
     waits: list[float] = []  # seconds spent on each request to the model
     call_id = events.next_id() if events.enabled() else 0
-    try:
-        backend_name = resolve_backend(backend)
-        typed = backend_name in TYPED_BACKENDS
-        if typed:  # a typed backend's model is fixed; a configured model is meant for the other backends
-            model = DEFAULT_MODELS[backend_name]
+
+    def started_event() -> None:
         if call_id:
             events.emit(
                 "call.start",
                 id=call_id,
                 function=name,
                 backend=backend_name,
-                model=model or setting("model") or DEFAULT_MODELS.get(backend_name),
+                model=model or setting("model") or DEFAULT_MODELS.get(backend_name or ""),
                 inputs={key: events.preview(value) for key, value in inputs.items()},
             )
+
+    try:
+        record = recordings.mode()
+        recording = recordings.call_key(system, request, name) if record else None
+        if recording is not None and record != "all":
+            what = f"{name}()" if name else f"the call {shorten(instructions.strip(), 60)!r}"
+            replay = _replayed(recording, returns, ensure, strict=record == "replay", what=what)
+            if replay is not None:  # the backend and model it was recorded with, for the trace and events
+                (backend_name, model), value = replay
+                backend = backend_name
+                started_event()
+                result.update(value=value, cached=True, replayed=True)
+                return value
+        backend_name = resolve_backend(backend)
+        typed = backend_name in TYPED_BACKENDS
+        if typed:  # a typed backend's model is fixed; a configured model is meant for the other backends
+            model = DEFAULT_MODELS[backend_name]
+        started_event()
+
+        def recorded(answer: str) -> None:
+            if recording is not None and backend_name is not None:
+                used = model or setting("model") or DEFAULT_MODELS.get(backend_name)
+                recordings.save_answer(recording, name, module, backend_name, used, request, answer)
+
         where = _cache_identity(request, system, backend, model, name, module) if cache else None
         if where is not None:
             saved = cache_get(where["key"])
@@ -161,6 +183,7 @@ def _call(
                 except ValueError:
                     pass  # the return type or the ensure check changed since it was saved: ask again
                 else:
+                    recorded(saved)
                     result.update(value=value, cached=True)
                     return value
         # A typed backend's answer is always valid for the type, and asking again after ensure=
@@ -169,7 +192,7 @@ def _call(
             answer = (
                 timed(waits, _ask_typed, instructions, inputs, returns, custom, backend)
                 if typed
-                else timed(waits, _send, text, system, backend, model)
+                else timed(waits, _ask, text, system, backend, model)  # replaying never gets here
             )
             answers.append(answer)
             waited = round(waits[-1], 3)
@@ -199,6 +222,7 @@ def _call(
                 )
             if where is not None:
                 cache_put(where, answer)
+            recorded(answer)
             result.update(value=value, error=None)
             return value
         raise ThuncError(
@@ -215,6 +239,7 @@ def _call(
                 id=call_id,
                 ok=failed is None,
                 cached=result["cached"],
+                replayed=result["replayed"],
                 attempts=len(answers),
                 seconds=round(time.monotonic() - started, 3),
                 value=events.preview(result["value"]) if failed is None else None,
@@ -254,6 +279,26 @@ def _check(answer: str, returns: Any, ensure: Callable[[Any], bool] | None) -> A
     return _ensured(parse(answer, returns), ensure)
 
 
+def _replayed(
+    key: str, returns: Any, ensure: Callable[[Any], bool] | None, *, strict: bool, what: str
+) -> tuple[tuple[str | None, str | None], Any] | None:
+    """The recorded answer's (backend, model) and value, or None if there's none to use. Replaying
+    (strict), a missing or no longer valid answer raises: no model may be asked instead."""
+    entry = recordings.answer(key)
+    if entry is None:
+        if strict:
+            raise recordings.missing(what)
+        return None
+    try:
+        value = _check(entry["answer"], returns, ensure)
+    except ValueError as problem:
+        if strict:
+            raise recordings.stale(what, problem) from problem
+        return None  # recording the missing answers: this one is asked again, and saved
+    backend, model = entry.get("backend"), entry.get("model")
+    return (backend if isinstance(backend, str) else None, model if isinstance(model, str) else None), value
+
+
 def _ensured(value: Any, ensure: Callable[[Any], bool] | None) -> Any:
     """The value, if it passes the program's ensure= check. Raises ValueError otherwise."""
     if ensure is None:
@@ -277,6 +322,21 @@ def _send(
     effort: str | None = None,
     until: Callable[[str], bool] | None = None,
 ) -> str:
+    """One request to a text backend, for agents and durable runs. Refused while replaying."""
+    recordings.check_live("A request to the model")
+    return _ask(text, system, backend, model, timeout, effort, until)
+
+
+def _ask(
+    text: str,
+    system: str,
+    backend: str | None,
+    model: str | None,
+    timeout: float | None = None,
+    effort: str | None = None,
+    until: Callable[[str], bool] | None = None,
+) -> str:
+    """_send without the replay check, for _call: it has answered from the recordings already."""
     name = resolve_backend(backend)
     agents_only: dict[str, Any] = {}  # options only agents use, sent only when set: a backend may lack them
     if effort:
@@ -390,7 +450,8 @@ def _trace(
         "returns": getattr(returns, "__name__", None) or repr(returns),
         "answers": answers,  # raw model replies, one per attempt
         "attempts": len(answers),
-        "cached": result["cached"],  # answered from the cache, without asking the model
+        "cached": result["cached"],  # answered without asking the model: from the cache, or replayed
+        "replayed": result.get("replayed", False),  # answered from the recordings
         "ok": result["error"] is None,
         "value": result["value"],
         "error": None if result["error"] is None else str(result["error"]) or type(result["error"]).__name__,

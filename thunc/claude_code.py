@@ -39,6 +39,7 @@ from typing import Any
 
 from .errors import ThuncError
 from .native import NUDGE, Call, Reply, Tool, _calls_text
+from .recordings import check_live
 from .relay import Relay, StartupError
 
 PREFIX = "mcp__thunc__"  # how Claude Code names the relay's tools
@@ -191,6 +192,7 @@ class ClaudeCodeConversation:
         self._say(self.request)
 
     def _popen(self, args: list[str]) -> subprocess.Popen[str]:
+        check_live("Starting Claude Code")
         return subprocess.Popen(
             args,
             cwd=self.workdir,

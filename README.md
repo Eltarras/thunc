@@ -98,7 +98,7 @@ Anything from users, files or the web goes in the inputs:
 | `@thunc.function` | Turns a signature + docstring into an AI-backed function. Options: `instructions=`, `system=`, `ensure=`, `retries=`, `backend=`, `model=`, `cache=`, `write=` (experimental: see [thunc write](#thunc-write)). The body must be empty (`...`); real code raises `TypeError`. `async def` works |
 | `thunc.call(instructions, inputs=None, *, returns=str, ensure=None, retries=2, backend=None, model=None, system=None, cache=False, name=None)` | One prompt. Inputs are sent separately from the instructions. `name=` groups its cached answers |
 | `thunc.map(func, items, *, workers=8)` | Runs calls in parallel, keeping the input order. Each call takes 4–8s, so this is the main speed lever |
-| `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=, system=, agents_dir=)` | Process-wide settings. `trace="calls.jsonl"` logs every call |
+| `thunc.configure(backend=, api_key=, model=, timeout=, trace=, cache_dir=, system=, agents_dir=, recordings=)` | Process-wide settings. `trace="calls.jsonl"` logs every call; `recordings="tests/recordings"` replays recorded answers (see [Recording and replaying](#recording-and-replaying)) |
 | `thunc.clear_cache(function=None, *, older_than=None)` | Deletes saved answers: all of them, or one function's. Returns how many |
 | `thunc.cache_info()` | What's in the cache, one group per function |
 | `thunc.ThuncError` | Raised when no valid answer arrives after the retries |
@@ -162,6 +162,54 @@ cache key, so renaming a function starts its cache fresh. Ages count from when t
 Clearing deletes only cache entries, never other files in the folder, and it's safe while another
 process is using the cache. The `thunc` command (also `python -m thunc`) reads `THUNC_CACHE_DIR`,
 or takes `--cache-dir`; it can't see a `configure(cache_dir=...)` in your code.
+
+### Recording and replaying
+
+For tests and CI: record the answers once, commit them, and replay them with no model, backend or
+API key. Point thunc at a folder, then run once with `THUNC_RECORD=1` to fill it:
+
+```python
+# conftest.py
+import thunc
+
+thunc.configure(recordings="tests/recordings")  # or set THUNC_RECORDINGS=tests/recordings
+```
+
+```bash
+THUNC_RECORD=1 pytest              # ask the model, and save every answer in tests/recordings
+pytest                             # replay: no model is asked, and a call that wasn't recorded fails
+THUNC_RECORD=missing pytest        # replay what's there; ask for, and save, only what's missing
+```
+
+With a recordings folder set, every `thunc.call`, `@thunc.function` and agent run is answered from
+it. A call that isn't there raises `ThuncError` saying how to record it, instead of reaching a model,
+so CI never spends money or waits on a login. `THUNC_RECORD=1` asks the model and saves (or
+replaces) every answer; `THUNC_RECORD=missing` keeps the answers the folder has and asks only for the
+rest. `THUNC_RECORD` without a folder is an error, not a silent no-op.
+
+- **What's matched:** a call's function name, system prompt and request (instructions, inputs and
+  return type), so changing any of those needs a new recording. The backend and model are saved with
+  each answer but not matched: CI needs no backend, and a recording made on one model replays under
+  another. Re-record after changing models.
+- **Checked again:** a recorded answer is parsed into the return type and run through `ensure=` before
+  it's used. One that no longer fits fails with a message saying to record it again. Failed calls
+  are never recorded, only the answer that passed.
+- **Agents:** a run is matched on its agent, task, request, tools and `system=`, and the model's
+  replies are replayed in order. The tools run for real, so files are written and commands run as
+  when it was recorded: give the test a fresh copy of its workspace. A run whose tools go differently
+  can run out of replies, which fails it with a message saying to record it again. Memory and
+  followed files aren't matched. Durable runs on Temporal aren't recorded; while replaying, they
+  fail instead of reaching a model.
+- **One answer per prompt:** the same call twice gets the same recorded answer.
+- **The cache:** replaying never reads or writes it; recording saves a cache hit's answer too.
+- **Seeing it:** the trace marks replayed calls with `"replayed": true` (and `"cached": true`: no
+  model was asked), and `thunc watch` shows them as replayed (from the next thunc-watch release).
+
+Recordings use the cache's format, one JSON file per call or run, holding the full prompt in plain
+text, so they're easy to review in a diff. `thunc cache list --cache-dir tests/recordings` lists them
+per function, and `thunc cache clear --cache-dir tests/recordings --function urgency` deletes one
+function's. Answers no test asks for any more stay until you delete them; to prune, delete the
+folder and record again.
 
 **Backends:**
 - `anthropic` is the Claude API: `configure(api_key=...)` or `ANTHROPIC_API_KEY`, plus
@@ -546,6 +594,7 @@ thunc/
   events.py      THUNC_EVENTS: the live events thunc watch reads
   core.py        thunc.call, thunc.map, tracing
   cache.py       the answer cache: saving, listing, clearing
+  recordings.py  record and replay: THUNC_RECORDINGS and THUNC_RECORD, for calls and agent runs
   schema.py      return types: describe, parse, validate
   config.py      settings and backend selection
   backends.py    anthropic, openai, claude-code, codex, jev
@@ -554,15 +603,13 @@ thunc/
 watch/           thunc watch, the dashboard: a Rust binary, published as thunc-watch
 tests/           offline: a fake backend, never a real model
 live_tests/      against a real model: hello, a yes/no decision, labels and ratings, messy text to a
-                 dict, agents, thunc write; also the agent prompt eval (eval_prompts.py) and the tool-use
-                 benchmark (bench_tooluse.py)
+                 dict, agents, thunc write, record and replay; also the agent prompt eval
+                 (eval_prompts.py) and the tool-use benchmark (bench_tooluse.py)
 examples/
 ```
 
 ## Limitations
 
-- **There's no record/replay for tests yet.** `cache=True` is per function; there's no switch
-  that serves every call from disk and fails on a miss.
 - **`Literal` results from `thunc.call` are typed as `Any`.** `@thunc.function` has no such gap.
 - **Docstrings disappear under `python -OO`.** Use `instructions=` there.
 

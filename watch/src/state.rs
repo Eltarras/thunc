@@ -21,6 +21,7 @@ pub struct Attempt {
 pub struct CallEnd {
     pub ok: bool,
     pub cached: bool,
+    pub replayed: bool,
     pub attempts: u32,
     pub seconds: f64,
     pub value: Option<String>,
@@ -317,9 +318,11 @@ impl State {
                     );
                 }
             }
-            Ev::CallEnd { key, t, ok, cached, attempts, seconds, value, error } => {
+            Ev::CallEnd { key, t, ok, cached, replayed, attempts, seconds, value, error } => {
                 let c = self.call(&key, t);
-                c.end = Some(CallEnd { ok, cached, attempts, seconds, value: value.clone(), error: error.clone() });
+                let end =
+                    CallEnd { ok, cached, replayed, attempts, seconds, value: value.clone(), error: error.clone() };
+                c.end = Some(end);
                 let (function, model) = (c.function.clone(), c.model_seconds());
                 let s = self.stats(&function);
                 s.calls += 1;

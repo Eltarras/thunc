@@ -17,6 +17,7 @@ from . import (  # noqa: F401
     bench_backends,
     bench_cache,
     bench_calls,
+    bench_recordings,
     bench_schema,
     bench_startup,
     bench_tools,

@@ -60,7 +60,7 @@
 <header>
   <div class="eyebrow">Guide</div>
   <h1>Caching, tracing and profiling</h1>
-  <p class="lede">Save answers on disk so the model is asked once per input, clear them from Python or the command line, record every call to a file, and see where a program's time goes.</p>
+  <p class="lede">Save answers on disk so the model is asked once per input, clear them from Python or the command line, record every call to a file, see where a program's time goes, and replay recorded answers in tests.</p>
 </header>
 <h2 id="cache">Caching answers: cache=True</h2>
 <p><code>cache=True</code> saves each answer on disk and reuses it when the same inputs come again, so the model is asked once.</p>
@@ -115,8 +115,26 @@ Slowest:       urgency took 309ms</code></pre></div>
 <p>Without <code>--profile</code>, <code>thunc run</code> just runs the program and records nothing. The program's exit code is passed through.</p>
 <p>To watch the same numbers while the program runs, with each call and agent step as it happens, use <a href="watch.html"><code>thunc watch</code></a>.</p>
 
-<h2 id="testing">Testing code that calls a model</h2>
-<p>There's no record/replay switch for tests yet: <code>cache=True</code> is per function, and nothing serves every call from disk and fails on a miss. thunc's own offline tests use a fake backend instead of a real model.</p>
+<h2 id="testing">Testing code that calls a model: record and replay</h2>
+<p>Record the answers once, commit them, and replay them in tests and CI with no model, backend or API key. Point thunc at a folder:</p>
+<div class="codeblock"><div class="label">conftest.py</div><pre><code class="py">import thunc
+
+thunc.configure(recordings="tests/recordings")   # or set THUNC_RECORDINGS=tests/recordings</code></pre></div>
+<p>Then fill it once, and replay from then on:</p>
+<div class="codeblock"><pre><code class="sh">THUNC_RECORD=1 pytest              # ask the model, and save every answer in tests/recordings
+pytest                             # replay: no model is asked, and a call that wasn't recorded fails
+THUNC_RECORD=missing pytest        # replay what's there; ask for, and save, only what's missing</code></pre></div>
+<p>With a recordings folder set, every <code>thunc.call</code>, <code>@thunc.function</code> and agent run is answered from it. A call that isn't there raises <code>ThuncError</code> saying how to record it, instead of reaching a model, so CI never spends money or waits on a login. <code>THUNC_RECORD=1</code> asks the model and saves (or replaces) every answer; <code>THUNC_RECORD=missing</code> keeps the answers the folder has and asks only for the rest. <code>THUNC_RECORD</code> without a folder is an error, not a silent no-op.</p>
+
+<h3 id="matching">What's matched</h3>
+<p>A call's function name, system prompt and request (instructions, inputs and return type), so changing any of them needs a new recording. The backend and model are saved with each answer but not matched: CI needs no backend, and a recording made on one model replays under another, so re-record after changing models. The same call twice gets the same recorded answer.</p>
+<p>A recorded answer is parsed into the return type and run through <code>ensure=</code> before it's used; one that no longer fits fails with a message saying to record it again. Failed calls are never recorded, only the answer that passed. Replaying never reads or writes the cache, and recording saves a cache hit's answer too.</p>
+
+<h3 id="replaying-agents">Agent runs</h3>
+<p>A run is matched on its agent, task, request, tools and <code>system=</code>, and the model's replies are replayed in order. The tools run for real, so files are written and commands run as when it was recorded: give each test a fresh copy of its workspace. A run whose tools go differently can run out of replies, which fails it with a message saying to record it again. Memory and followed files aren't matched. <a href="temporal.html">Durable runs</a> aren't recorded; while replaying, they fail instead of reaching a model.</p>
+
+<h3 id="recordings-folder">The recordings folder</h3>
+<p>Recordings use the cache's format, one JSON file per call or run, holding the full prompt in plain text, so they're easy to review in a diff. <code>thunc cache list --cache-dir tests/recordings</code> lists them per function, and <code>thunc cache clear --cache-dir tests/recordings --function urgency</code> deletes one function's. Answers no test asks for any more stay until you delete them: to prune, delete the folder and record again. The <a href="#tracing">trace</a> marks replayed calls with <code>"replayed": true</code> (and <code>"cached": true</code>: no model was asked), and <a href="watch.html"><code>thunc watch</code></a> shows them as replayed (from the next thunc-watch release).</p>
 <nav class="pager" aria-label="Pages"><a class="prev" href="backends.html"><span>Previous</span>Backends</a><a class="next" href="agents.html"><span>Next</span>Agents</a></nav>
 <p class="edit"><a href="https://github.com/Eltarras/thunc/blob/main/docs/docs/caching.html">Edit this page on GitHub</a></p>
 </main>
