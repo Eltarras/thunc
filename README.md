@@ -380,7 +380,7 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
 ## thunc write
 
-> **Experimental, new in 0.3.** Its behavior, options and the code it writes may change, or it may be removed, in a later
+> **Experimental, new in 0.3, and staying so through 1.0.** Its behavior, options and the code it writes may change, or it may be removed, in a later
 > release without a deprecation period. thunc write edits your source files, while you develop, as a diff to review.
 
 Functions that write themselves. With `write=True`, a function writes its own body on its first call:

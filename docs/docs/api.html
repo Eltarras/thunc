@@ -185,6 +185,13 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 <li><code>tests/temporal/test_fingerprints.py</code> pins the fingerprints of a set of task definitions, so a change to one fails the tests.</li>
 </ul>
 
+<h2 id="stability">What's stable</h2>
+<p>From 0.6, the agent API is frozen: <code>thunc.Agent</code> and its methods, <code>@thunc.agent</code>, <code>thunc.Run</code>, <code>thunc.AgentError</code>, and the run record. Together with the rest of <code>thunc.__all__</code> and <code>thunc.testing</code>, it's listed signature by signature in <code>tests/api.txt</code>, and a test fails on any change to it. Additions are made freely; a removal or a change goes through a deprecation (below). Two things stay outside that promise:</p>
+<ul>
+<li><strong><a href="write.html">thunc write</a></strong> (<code>write=True</code> and the <code>thunc write</code> command) stays experimental through 1.0: it may change, or be removed, without a deprecation period.</li>
+<li><strong>The <a href="watch.html">thunc watch</a> dashboard's screens and keys</strong> may change as feedback comes in; the <a href="#events">events</a> it reads are a versioned format.</li>
+</ul>
+
 <h2 id="deprecations">Deprecations</h2>
 <p>Part of the API that's going away keeps working for at least two minor releases, and warns with <code>thunc.ThuncDeprecationWarning</code> where you use it, naming the release that removes it and what to use instead. The warning is shown by default, once per place in your code; turn it off with <code>warnings.filterwarnings("ignore", category=thunc.ThuncDeprecationWarning)</code>, or make it an error in your tests with <code>-W error::thunc.ThuncDeprecationWarning</code>. The <a href="changelog.html">changelog</a> lists deprecations and removals in each release. Experimental features (<a href="write.html">thunc write</a>) can change without one.</p>
 

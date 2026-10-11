@@ -83,6 +83,15 @@ A change to the events in `thunc/events.py` is a change to what the dashboard re
   [Temporal guide](examples/temporal/README.md) when you change durable runs.
 - **One change per PR**, with a description of what it does and how you tested it.
 
+## The public API is frozen
+
+`tests/api.txt` lists every public signature: everything in `thunc.__all__` (the agent API included,
+frozen from 0.6), `thunc.testing`, and the dataclasses an agent run returns. `tests/test_api.py`
+fails when the API differs from it. An addition is fine: regenerate the file with
+`THUNC_UPDATE_API=1 .venv/bin/pytest tests/test_api.py` and commit it with the change. A removal, a
+renamed or retyped parameter, or a changed default goes through a deprecation first (below). thunc
+write (`write=True`) stays experimental through 1.0, outside this promise.
+
 ## Deprecations
 
 Before 1.0 the API can still change, but not under anyone's feet. A public name, argument or behavior

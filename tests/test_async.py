@@ -138,3 +138,18 @@ def test_async_function_returning_a_literal(fake):
 
     fake.replies = ["bug"]
     assert asyncio.run(label("crash")) == "bug"
+
+
+def test_agent_acall_runs_the_agent_and_keeps_the_loop_free(fake, tmp_path):
+    import json as _json
+
+    (tmp_path / "config.py").write_text("TIMEOUT = 30\n")
+    agent = thunc.Agent("async-agent", workdir=tmp_path, protocol="text")
+    fake.replies = [
+        _json.dumps({"tool": "read", "args": {"path": "config.py"}}),
+        _json.dumps({"tool": "finish", "args": {"value": 30}}),
+    ]
+    assert asyncio.run(agent.acall("Find the timeout.", returns=int)) == 30
+    with pytest.raises(thunc.AgentError):
+        fake.replies = ["not json"] * 50
+        asyncio.run(thunc.Agent("short", workdir=tmp_path, protocol="text", max_steps=2).acall("x"))
