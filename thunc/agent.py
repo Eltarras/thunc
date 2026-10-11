@@ -38,7 +38,7 @@ import warnings
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from typing import Any, ParamSpec, TypeVar, overload
 
-from . import claude_code, codex, events, native, profiling, relay, tools
+from . import claude_code, codex, events, native, profiling, recordings, relay, tools
 from .backends import TYPED_BACKENDS
 from .config import _check_backend, resolve_backend, setting
 from .core import _plain, _render, _trace
@@ -406,7 +406,13 @@ class Agent:
         returns: Any,
         ensure: Callable[[Any], bool] | None,
     ) -> Run[Any]:
-        backend = resolve_backend(self.backend)
+        request = _request(instructions, inputs, returns)
+        record = recordings.mode()
+        recording = recordings.run_key(self.name, task, self.system, request, self.tools()) if record else None
+        replay = recordings.run(recording) if recording is not None and record != "all" else None
+        if replay is None and record == "replay":
+            raise recordings.missing(f"{name}()")
+        backend = (replay.backend or "") if replay is not None else resolve_backend(self.backend)
         if backend in TYPED_BACKENDS:
             raise ThuncError(
                 f"Agent {self.name!r}: the {backend} backend answers typed questions and cannot run agents "
@@ -424,8 +430,8 @@ class Agent:
             changed_from = store.save_settings(self._settings())
             memory = store.memory()  # once: a note saved during this run reaches the next one
             followed = self._read_followed()  # once too, like memory
-            native_calls = self._native()
-            mcp = not native_calls and self._mcp()
+            native_calls = replay is None and self._native()
+            mcp = replay is None and not native_calls and self._mcp()
             fixed, memory_text = self._fixed_prompt(followed, native_calls or mcp), _memory_section(memory)
             system = fixed + memory_text
             session = store.session(task)
@@ -439,15 +445,13 @@ class Agent:
                     returns=getattr(returns, "__name__", None) or repr(returns),
                     memory_characters=len(memory),
                     followed={path: hashlib.sha256(text.encode()).hexdigest()[:16] for path, text in followed},
-                    protocol="native" if native_calls else "mcp" if mcp else "text",
+                    protocol="replay" if replay else "native" if native_calls else "mcp" if mcp else "text",
                     **({"settings_changed_from": changed_from} if changed_from else {}),
                 )
-                request = _request(instructions, inputs, returns)
 
                 def text_protocol() -> native.Conversation:
                     return self._conversation(False, self._fixed_prompt(followed, False), memory_text, request, returns)
 
-                backend = resolve_backend(self.backend)
                 cli = "Claude Code" if backend == "claude-code" else "Codex"
 
                 def switched(reason: str) -> None:
@@ -460,7 +464,9 @@ class Agent:
                         4,
                     )
 
-                if mcp and self.protocol is None and backend in relay.unavailable:
+                if replay is not None:
+                    conversation = replay
+                elif mcp and self.protocol is None and backend in relay.unavailable:
                     session.write("fallback", protocol="text", reason=relay.unavailable[backend])
                     conversation = text_protocol()  # a run in this process already found native calls unavailable
                 elif mcp:
@@ -487,10 +493,17 @@ class Agent:
                         conversation = relay.WithFallback(backend, through, text_protocol, switched)
                 else:
                     conversation = self._conversation(native_calls, fixed, memory_text, request, returns)
+                recorder = None
+                if recording is not None and replay is None:
+                    conversation = recorder = recordings.Recorder(conversation)
                 names = [path for path, _ in followed]
-                return self._loop(
+                run = self._loop(
                     name, task, store, session, conversation, system, names, instructions, inputs, returns, ensure
                 )
+                if recording is not None and recorder is not None:  # only a run that succeeded is recorded
+                    model = self.model or setting("model")
+                    recordings.save_run(recording, name, backend, model, request, recorder.replies)
+                return run
             finally:
                 close = getattr(conversation, "close", None)
                 if close is not None:
@@ -519,7 +532,9 @@ class Agent:
         offered = self.tools()
         known = {*KNOWN, *self.custom}
         answers: list[str] = []
-        result: dict[str, Any] = {"value": None, "error": None, "cached": False}
+        replay = conversation if isinstance(conversation, recordings.Replay) else None
+        backend, model = (replay.backend, replay.model) if replay is not None else (self.backend, self.model)
+        result: dict[str, Any] = {"value": None, "error": None, "cached": False, "replayed": replay is not None}
         state = AgentState()
         step = 0
         waits: list[float] = []  # seconds spent on each model reply
@@ -533,6 +548,7 @@ class Agent:
                 task=task,
                 returns=getattr(returns, "__name__", None) or repr(returns),
                 session=os.path.abspath(session.path),
+                replayed=replay is not None,
                 inputs={key: events.preview(value) for key, value in inputs.items()},
             )
 
@@ -642,13 +658,13 @@ class Agent:
             _emit_failed(run_id, answers, started, workdir, str(exc) or type(exc).__name__)
             raise
         finally:
-            _trace(instructions, inputs, returns, answers, result, started, system, self.backend, self.model, name)
+            _trace(instructions, inputs, returns, answers, result, started, system, backend, model, name)
             if (profiler := profiling.active()) is not None:
                 profiler.add(
                     profiling.AgentRecord(
                         function=name,
-                        backend=resolve_backend(self.backend),
-                        model=self.model,
+                        backend=backend if replay is not None else resolve_backend(self.backend),
+                        model=model,
                         start=started,
                         end=time.monotonic(),
                         model_seconds=sum(waits),

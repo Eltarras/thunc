@@ -31,6 +31,8 @@ def clean_settings(monkeypatch, tmp_path):
         "THUNC_TRACE",
         "THUNC_CACHE_DIR",
         "THUNC_AGENTS_DIR",
+        "THUNC_RECORDINGS",
+        "THUNC_RECORD",
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
     ):

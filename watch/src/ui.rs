@@ -839,7 +839,10 @@ fn calls(app: &App, w: usize, h: usize) -> Out {
         let (sym, sc, result) = match &c.end {
             None => (spin(app), C::Accent, "waiting".to_string()),
             Some(e) if !e.ok => ("✗".into(), C::Err, e.error.clone().unwrap_or_default()),
-            Some(e) if e.cached => ("◆".into(), C::Blue, format!("cached → {}", e.value.clone().unwrap_or_default())),
+            Some(e) if e.cached => {
+                let from = if e.replayed { "replayed" } else { "cached" };
+                ("◆".into(), C::Blue, format!("{from} → {}", e.value.clone().unwrap_or_default()))
+            }
             Some(e) => (
                 "✓".into(),
                 if c.retried() { C::Warn } else { C::Ok },
@@ -877,6 +880,7 @@ fn calls(app: &App, w: usize, h: usize) -> Out {
     let (status, sc) = match &c.end {
         None => ("waiting".to_string(), C::Accent),
         Some(e) if !e.ok => ("raised ThuncError".into(), C::Err),
+        Some(e) if e.replayed => ("answered from the recordings".into(), C::Blue),
         Some(e) if e.cached => ("answered from the cache".into(), C::Blue),
         Some(_) => ("ok".into(), C::Ok),
     };

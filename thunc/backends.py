@@ -63,7 +63,9 @@ def sdk_client(factory: Callable[..., C], env_prefix: str, api_key: str | None, 
     to any of them gets a new client. And per process, as a connection can't be shared across fork.
     The timeout is applied per request with with_options(), which keeps the same connections."""
     from .config import setting
+    from .recordings import check_live
 
+    check_live("A request to the API")
     options = setting("sdk_options") or {}
     environment = tuple(sorted((k, v) for k, v in os.environ.items() if k.startswith(env_prefix)))
     key = (factory, os.getpid(), api_key, repr(sorted(options.items())), environment)

@@ -31,6 +31,7 @@ pub enum Ev {
         t: f64,
         ok: bool,
         cached: bool,
+        replayed: bool, // answered from thunc's recordings (cached is true too)
         attempts: u32,
         seconds: f64,
         value: Option<String>,
@@ -166,6 +167,7 @@ pub fn parse_event_line(line: &str) -> Option<Ev> {
             t,
             ok: flag(&v, "ok"),
             cached: flag(&v, "cached"),
+            replayed: flag(&v, "replayed"),
             attempts: count(&v, "attempts"),
             seconds: num(&v, "seconds"),
             value: text(&v, "value"),

@@ -23,6 +23,7 @@ in, with little else running: differences under about 10% are usually noise.
 | `map.*` | `thunc.map` over a model with 20 ms of latency, against the ideal time |
 | `parse.*`, `describe.*` | turning replies into values, and return types into prompt text |
 | `cache.*` | `thunc cache list` and `clear --function` over 5,000 entries |
+| `record.*` | record and replay: a replayed call (compare `call.cache_hit`), a call while recording every answer (compare `call.str`), and a 10-step agent run replayed and recorded (compare `agent.text_10_steps`). `call.str` is also what checking for a recordings folder costs a call when there's none |
 | `tools.*` | the agent's list, read, search and run on a 2,000-file repository |
 | `agent.*` | whole text-protocol runs; `sent_per_run` is the prompt text sent to the model per run |
 | `backend.*` | the anthropic backend against a local stand-in for the Claude API; `connections` is how many TCP connections the requests opened. The `_handshake60ms` variants add 60 ms per new connection to stand in for TCP and TLS setup, which localhost doesn't have |

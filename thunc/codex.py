@@ -38,6 +38,7 @@ from typing import Any
 from .backends import _CODEX_LOCKDOWN, _CODEX_QUIET, _codex_problem
 from .errors import ThuncError
 from .native import NUDGE, Call, Reply, Tool, _calls_text
+from .recordings import check_live
 from .relay import Relay, StartupError
 
 TURN_ERRORS = 2  # turns that may fail before the run does
@@ -205,6 +206,7 @@ class CodexConversation:
         return args
 
     def _popen(self, args: list[str]) -> subprocess.Popen[str]:
+        check_live("Starting Codex")
         return subprocess.Popen(
             args,
             cwd=self.workdir,

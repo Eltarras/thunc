@@ -58,20 +58,26 @@ def cache_info() -> list[CacheGroup]:
 
 def get(key: str) -> str | None:
     """The saved answer, or None if there's none (a missing or unreadable entry is a miss)."""
-    try:
-        with open(os.path.join(cache_dir(), f"{key}.json"), encoding="utf-8") as f:
-            answer = json.load(f)["answer"]
-    except (OSError, ValueError, KeyError, TypeError, RecursionError):
-        return None
+    answer = (read(cache_dir(), key) or {}).get("answer")
     return answer if isinstance(answer, str) else None
 
 
 def put(where: dict[str, Any], answer: str) -> None:
-    """One JSON file per call. Written to a temporary file and renamed into place, so concurrent
-    calls (thunc.map) never see half an entry. A cache that can't be written warns, not fails:
-    the answer is valid and already paid for."""
+    """One JSON file per call. A cache that can't be written warns, not fails: the answer is valid
+    and already paid for."""
     folder = cache_dir()
-    entry = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **where, "answer": answer}
+    try:
+        write(folder, where["key"], {**where, "answer": answer})
+    except OSError as exc:
+        # stacklevel: put <- _call <- thunc.call or the @thunc.function wrapper <- the user's code
+        warnings.warn(f"thunc could not save to the cache in {folder!r}: {exc}", RuntimeWarning, stacklevel=4)
+
+
+def write(folder: str, key: str, entry: dict[str, Any]) -> None:
+    """Save an entry as `<key>.json` in `folder`, with the time it was saved. Written to a temporary
+    file and renamed into place, so concurrent calls (thunc.map) never see half an entry. The cache
+    and recordings (recordings.py) share this format, so `thunc cache` works on both."""
+    entry = {"time": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **entry}
     tmp = None
     try:
         os.makedirs(folder, exist_ok=True)
@@ -79,12 +85,22 @@ def put(where: dict[str, Any], answer: str) -> None:
         # backslashreplace: a lone surrogate (half an emoji, "\ud83d") is written as the JSON escape it came from.
         with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as f:
             json.dump(entry, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, os.path.join(folder, f"{where['key']}.json"))
-    except OSError as exc:
+        os.replace(tmp, os.path.join(folder, f"{key}.json"))
+    except OSError:
         if tmp is not None and os.path.exists(tmp):
             os.unlink(tmp)
-        # stacklevel: put <- _call <- thunc.call or the @thunc.function wrapper <- the user's code
-        warnings.warn(f"thunc could not save to the cache in {folder!r}: {exc}", RuntimeWarning, stacklevel=4)
+        raise
+
+
+def read(folder: str, key: str) -> dict[str, Any] | None:
+    """The entry saved as `<key>.json` in `folder`, or None if there's none (a missing or unreadable
+    entry is a miss)."""
+    try:
+        with open(os.path.join(folder, f"{key}.json"), encoding="utf-8") as f:
+            entry = json.load(f)
+    except (OSError, ValueError, RecursionError):
+        return None
+    return entry if isinstance(entry, dict) else None
 
 
 @dataclasses.dataclass(frozen=True)

@@ -29,8 +29,9 @@ pub fn line(ev: &Ev, state: &State) -> Option<String> {
                 problem.as_deref().unwrap_or("invalid")
             )
         }
-        Ev::CallEnd { key, ok: true, cached: true, value, .. } => {
-            format!("call   {}  → {}  (cached)", call_name(key), value.as_deref().unwrap_or(""))
+        Ev::CallEnd { key, ok: true, cached: true, replayed, value, .. } => {
+            let from = if *replayed { "replayed" } else { "cached" };
+            format!("call   {}  → {}  ({from})", call_name(key), value.as_deref().unwrap_or(""))
         }
         Ev::CallEnd { key, ok: true, seconds, attempts, value, .. } => {
             let tries = if *attempts > 1 { format!(", {attempts} attempts") } else { String::new() };
@@ -77,5 +78,23 @@ mod tests {
         assert_eq!(seen.len(), 2);
         assert!(seen[0].ends_with("retry  urgency  attempt 1 rejected after 2.0s: not an int"));
         assert!(seen[1].ends_with("call   urgency  → 4  (3.0s, 2 attempts)"));
+    }
+
+    #[test]
+    fn a_replayed_call_says_so_and_a_cached_one_says_cached() {
+        let mut s = State::new(0.0);
+        let mut seen = Vec::new();
+        for l in [
+            r#"{"v":1,"event":"call.start","t":10,"pid":1,"id":1,"function":"urgency"}"#,
+            r#"{"v":1,"event":"call.end","t":10,"pid":1,"id":1,"ok":true,"cached":true,"replayed":true,"attempts":0,"seconds":0,"value":"4"}"#,
+            r#"{"v":1,"event":"call.start","t":11,"pid":1,"id":2,"function":"urgency"}"#,
+            r#"{"v":1,"event":"call.end","t":11,"pid":1,"id":2,"ok":true,"cached":true,"attempts":0,"seconds":0,"value":"2"}"#,
+        ] {
+            let e = parse_event_line(l).unwrap();
+            s.apply(e.clone());
+            seen.extend(line(&e, &s));
+        }
+        assert!(seen[0].ends_with("call   urgency  → 4  (replayed)"), "{seen:?}");
+        assert!(seen[1].ends_with("call   urgency  → 2  (cached)"), "{seen:?}");
     }
 }

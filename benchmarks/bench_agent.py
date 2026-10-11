@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 import thunc
 
@@ -13,7 +14,9 @@ from .fakes import Backend, use
 from .harness import bench
 
 
-def _agent_run(ctx, steps: int, per_reply: int = 1):
+def setup_run(ctx, steps: int, per_reply: int = 1) -> tuple[Any, Backend, int]:
+    """A repo, a model that takes `steps` actions (`per_reply` to a reply) then finishes, and the task.
+    Returns the task, the model, and the replies a run takes."""
     repo = os.path.join(ctx.tmp, "repo")
     os.makedirs(repo)
     make_repo(repo, *((2, 5) if ctx.smoke else (10, 20)))
@@ -38,7 +41,11 @@ def _agent_run(ctx, steps: int, per_reply: int = 1):
         """Find the request timeout this app uses, in seconds."""
         ...
 
-    replies = -(-(steps - 1) // per_reply) + 1  # the actions, then finish
+    return timeout, backend, -(-(steps - 1) // per_reply) + 1  # the actions, then finish
+
+
+def _agent_run(ctx, steps: int, per_reply: int = 1):
+    timeout, backend, replies = setup_run(ctx, steps, per_reply)
     yield timeout
     runs = max(backend.requests // replies, 1)
     ctx.notes.update(actions=steps, replies=replies, sent_per_run=f"{backend.bytes_sent // runs // 1000} kB")
