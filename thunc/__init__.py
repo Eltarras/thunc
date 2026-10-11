@@ -19,6 +19,7 @@ from .cache import CacheGroup, cache_info, clear_cache
 from .config import configure
 from .core import acall, amap, call, map
 from .decorator import function
+from .deprecation import ThuncDeprecationWarning
 from .errors import ThuncError
 from .runs import AgentError, Run
 
@@ -28,6 +29,7 @@ __all__ = [
     "acall",
     "amap",
     "CacheGroup",
+    "ThuncDeprecationWarning",
     "ThuncError",
     "cache_info",
     "call",
