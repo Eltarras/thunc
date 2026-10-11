@@ -16,7 +16,8 @@ promise. thunc write stays experimental through 1.0. A program written for 0.5 r
 - **A format number in an agent run's record**: `"format": 1` on its `start` line. Within one
   format, the record and the `THUNC_EVENTS` stream only gain events and fields; a change an old
   reader would misread gets a new number. The API docs list every line and field, and a test checks
-  them. `thunc watch` skips a record in a format it doesn't know.
+  them. `thunc watch` skips a record in a format it doesn't know, from the next thunc-watch
+  release.
 - **A compatibility promise for durable task fingerprints**: upgrading thunc doesn't change the
   fingerprint of a task registered the same way. A test pins the fingerprints of four task shapes;
   they're the same as 0.3.2's.

@@ -87,7 +87,7 @@
 <h3>Added</h3>
 <ul>
 <li><strong><code>agent.acall</code></strong>, <code>agent.call</code> to await.</li>
-<li><strong>A format number in an agent run's record</strong> (<code>"format": 1</code> on its <code>start</code> line). The record and the <code>THUNC_EVENTS</code> stream only gain events and fields within a format; the API docs list them all, and a test checks them. <code>thunc watch</code> skips a record in a format it doesn't know.</li>
+<li><strong>A format number in an agent run's record</strong> (<code>"format": 1</code> on its <code>start</code> line). The record and the <code>THUNC_EVENTS</code> stream only gain events and fields within a format; the API docs list them all, and a test checks them. <code>thunc watch</code> skips a record in a format it doesn't know, from the next thunc-watch release.</li>
 <li><strong>Durable task fingerprints don't change with thunc</strong>: a test pins them, and they're the same as 0.3.2's.</li>
 <li><code>tests/api.txt</code>: every public signature, and a test that fails when the API differs from it.</li>
 <li>The tool-use benchmark's <code>--read-limit</code>: reading the whole file on <code>deep_fix</code> halves the turns and doubles the cost, so <code>read</code> keeps its 400 lines.</li>
