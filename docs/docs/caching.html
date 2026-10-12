@@ -54,7 +54,7 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.4.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.5.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -114,6 +114,28 @@ Concurrency:   calls overlapped 2.2x on average (thunc.map or threads)
 Slowest:       urgency took 309ms</code></pre></div>
 <p>Without <code>--profile</code>, <code>thunc run</code> just runs the program and records nothing. The program's exit code is passed through.</p>
 <p>To watch the same numbers while the program runs, with each call and agent step as it happens, use <a href="watch.html"><code>thunc watch</code></a>.</p>
+
+<h2 id="fake">Testing with a fake model: thunc.testing</h2>
+<p>For unit tests of your own code, where the answer is part of the test: a scripted model answers every call and agent run, whatever its <code>backend=</code>, with no network and nothing to record.</p>
+<div class="codeblock"><pre><code class="py">from thunc import testing
+
+
+def test_triage():
+    with testing.fake_model({"urgency": 4, "category": "bug"}) as model:
+        assert triage("I was charged twice") == ("bug", 4)
+    assert model.calls[0].inputs == {"ticket": "I was charged twice"}
+
+
+def test_triage_with_pytest(thunc_model):  # the same, as a fixture that comes with thunc
+    thunc_model.reply({"urgency": 4, "category": "bug"})
+    assert triage("I was charged twice") == ("bug", 4)</code></pre></div>
+<ul>
+<li><strong>Replies</strong> are given by function name (<code>"urgency"</code>, <code>"Triage.urgency"</code>, a task's <code>"repo.fix"</code>, or a <code>thunc.call</code>'s <code>name=</code>), in order (<code>fake_model(["4", "bug"])</code>), or by a function of the request. A string is the model's text as it is, so <code>"high"</code> for an <code>int</code> makes the call retry as a real one would; anything else is sent as JSON, so <code>4</code>, <code>Priority.HIGH</code> or a dataclass work as written. Running out of replies fails the test with what was asked.</li>
+<li><strong>Requests</strong> are kept in <code>model.calls</code>: each one's function, inputs, return type, the prompt and system prompt sent, and <code>n</code> (1 for a call's first request, 2 for its retry or next step).</li>
+<li><strong>Agents</strong> run on the text protocol, so their replies are tool calls: <code>[testing.act("read", path="config.py"), testing.finish(60)]</code>. The tools run for real.</li>
+<li><strong><code>testing.isolated()</code></strong> (or the <code>thunc_isolated</code> fixture) puts thunc's settings and <code>THUNC_*</code> variables back after a block. The fake model leaves the recordings alone while it's active.</li>
+</ul>
+<p>Use the fake model when the test decides the answer, and recordings, below, when the answer should be a real model's.</p>
 
 <h2 id="testing">Testing code that calls a model: record and replay</h2>
 <p>Record the answers once, commit them, and replay them in tests and CI with no model, backend or API key. Point thunc at a folder:</p>

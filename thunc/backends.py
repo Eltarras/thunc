@@ -30,7 +30,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
-from typing import Any, Literal, TypeVar, cast, get_args, get_origin
+from typing import Any, Literal, Protocol, TypeVar, cast, get_args, get_origin
 
 from .errors import ThuncError, TransientError, transient_claude_error, transient_status
 from .schema import describe, is_enum
@@ -555,3 +555,112 @@ BACKENDS: dict[str, Callable[..., str]] = {
 TYPED_BACKENDS: dict[str, Callable[..., str]] = {
     "jev": jev,
 }
+
+BUILTIN = frozenset([*BACKENDS, *TYPED_BACKENDS])
+_TEXT_ARGS = ("system", "model", "api_key", "timeout")  # the keywords every text backend is called with
+_TYPED_ARGS = ("system", "timeout")
+
+
+class TextBackend(Protocol):
+    """A backend that writes the answer as text. thunc parses it, retries, caches and traces it.
+
+    Called with the prompt text, the system prompt, the model (None: the backend's default), the
+    configured api_key (or None) and a timeout in seconds. Agents may also pass `effort` (one of
+    "low", "medium", "high", "xhigh", "max"); a backend that doesn't take it isn't sent it."""
+
+    def __call__(self, text: str, *, system: str, model: str | None, api_key: str | None, timeout: float) -> str: ...
+
+
+class TypedBackend(Protocol):
+    """A backend that answers a typed question instead of writing text, as `jev` does: it gets the
+    instructions, the inputs and the return type apart, and returns the answer as JSON text."""
+
+    def __call__(
+        self, instructions: str, inputs: dict[str, Any], returns: Any, *, system: str | None, timeout: float
+    ) -> str: ...
+
+
+def register_backend(
+    name: str,
+    backend: TextBackend | TypedBackend | Callable[..., str],
+    *,
+    typed: bool = False,
+    default_model: str | None = None,
+    replace: bool = False,
+) -> None:
+    """Make `backend` usable as backend=name, configure(backend=name) and THUNC_BACKEND=name.
+
+        def local(text, *, system, model, api_key, timeout):
+            return my_client.complete(system=system, prompt=text, model=model or "small", timeout=timeout)
+
+        thunc.register_backend("local", local)
+
+    A text backend gets (text, *, system, model, api_key, timeout) and returns the answer as text; see
+    TextBackend. With typed=True it gets (instructions, inputs, returns, *, system, timeout) and returns
+    JSON text; see TypedBackend. Raise ThuncError when there's no answer, and thunc.TransientError when
+    asking again may help (a timeout, a rate limit): agent runs retry those steps. `default_model`
+    names the model used when none is configured, for the trace and the cache key. Agents run on a
+    text backend through the JSON text protocol. A name that's taken (a built-in one, or one
+    registered before) needs replace=True; a built-in backend can't be replaced.
+    """
+    if not isinstance(name, str) or not name.strip() or name != name.strip():
+        raise ValueError(
+            f"register_backend: a backend's name is a non-empty string without spaces around it, not {name!r}"
+        )
+    if name in BUILTIN:
+        raise ValueError(f"register_backend: {name!r} is a built-in backend and can't be replaced")
+    if not replace and (name in BACKENDS or name in TYPED_BACKENDS):
+        raise ValueError(f"register_backend: {name!r} is registered already; pass replace=True to replace it")
+    if not callable(backend):
+        raise TypeError(f"register_backend: the backend must be callable, not {type(backend).__name__}")
+    accepts = _accepted(name, backend, 3 if typed else 1, _TYPED_ARGS if typed else _TEXT_ARGS)
+    unregister_backend(name)
+    if typed:
+        TYPED_BACKENDS[name] = backend
+    else:
+        BACKENDS[name] = backend if accepts is None else _passing(backend, accepts)
+    if default_model is not None:
+        DEFAULT_MODELS[name] = default_model
+
+
+def unregister_backend(name: str) -> None:
+    """Remove a backend registered with register_backend. Built-in backends stay; an unknown name is a no-op."""
+    if name in BUILTIN:
+        raise ValueError(f"unregister_backend: {name!r} is a built-in backend")
+    BACKENDS.pop(name, None)
+    TYPED_BACKENDS.pop(name, None)
+    DEFAULT_MODELS.pop(name, None)
+
+
+def _accepted(
+    name: str, backend: Callable[..., Any], positional: int, required: tuple[str, ...]
+) -> frozenset[str] | None:
+    """The keyword arguments `backend` takes, or None if it takes any (**kwargs). Raises TypeError at
+    registration, not at the first call, when it can't take what thunc always passes."""
+    import inspect
+
+    try:
+        params = inspect.signature(backend).parameters.values()
+    except (TypeError, ValueError):  # a builtin without a signature: trust it
+        return None
+    if any(p.kind is p.VAR_KEYWORD for p in params):
+        keywords = None
+    else:
+        keywords = frozenset(p.name for p in params if p.kind in (p.KEYWORD_ONLY, p.POSITIONAL_OR_KEYWORD))
+        missing = [arg for arg in required if arg not in keywords]
+        if missing:
+            raise TypeError(f"register_backend: {name!r} must take the keyword arguments {', '.join(missing)}")
+    takes = sum(p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in params)
+    if takes < positional and not any(p.kind is p.VAR_POSITIONAL for p in params):
+        raise TypeError(f"register_backend: {name!r} must take {positional} positional argument(s)")
+    return keywords
+
+
+def _passing(backend: Callable[..., str], accepts: frozenset[str]) -> Callable[..., str]:
+    """The backend, sent only the keyword arguments it takes: agents' options (effort) are left out."""
+
+    def call(text: str, **options: Any) -> str:
+        return backend(text, **{key: value for key, value in options.items() if key in accepts})
+
+    call.__wrapped__ = backend  # type: ignore[attr-defined]
+    return call

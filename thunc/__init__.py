@@ -15,12 +15,13 @@ thunc.call(f"Translate into {language}.", {"text": note})
 
 from . import prompts
 from .agent import Agent, agent
+from .backends import TextBackend, TypedBackend, register_backend, unregister_backend
 from .cache import CacheGroup, cache_info, clear_cache
 from .config import configure
 from .core import acall, amap, call, map
 from .decorator import function
 from .deprecation import ThuncDeprecationWarning
-from .errors import ThuncError
+from .errors import ThuncError, TransientError
 from .runs import AgentError, Run
 
 __all__ = [
@@ -30,7 +31,10 @@ __all__ = [
     "amap",
     "CacheGroup",
     "ThuncDeprecationWarning",
+    "TextBackend",
     "ThuncError",
+    "TransientError",
+    "TypedBackend",
     "cache_info",
     "call",
     "clear_cache",
@@ -38,7 +42,9 @@ __all__ = [
     "function",
     "map",
     "prompts",
+    "register_backend",
+    "unregister_backend",
     "Run",
     "agent",
 ]
-__version__ = "0.4.0"
+__version__ = "0.5.0"

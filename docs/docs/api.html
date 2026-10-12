@@ -54,7 +54,7 @@
     <a href="api.html" class="active" aria-current="page">API reference</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.4.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.5.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -70,6 +70,8 @@
 <tr><td><a href="functions.html#call"><code>thunc.call</code></a></td><td>One prompt. Inputs are sent separately from the instructions. <code>name=</code> groups its cached answers.</td></tr>
 <tr><td><a href="functions.html#async"><code>thunc.acall</code></a></td><td><code>thunc.call</code>, to await.</td></tr>
 <tr><td><a href="functions.html#async"><code>thunc.amap</code></a></td><td><code>thunc.map</code>, to await: up to <code>workers</code> calls at once, in input order. Takes <code>async def</code> and plain functions.</td></tr>
+<tr><td><a href="backends.html#custom"><code>thunc.register_backend</code></a></td><td>Adds your own backend: a function from the prompt to the answer's text, or with <code>typed=True</code> a typed one. <code>thunc.unregister_backend</code> removes it.</td></tr>
+<tr><td><a href="caching.html#fake"><code>thunc.testing</code></a></td><td>A fake model for your tests (<code>fake_model</code>, <code>act</code>, <code>finish</code>, <code>isolated</code>), and the <code>thunc_model</code> and <code>thunc_isolated</code> pytest fixtures.</td></tr>
 <tr><td><a href="functions.html#map"><code>thunc.map</code></a></td><td>Runs calls in parallel, keeping the input order.</td></tr>
 <tr><td><a href="#configure"><code>thunc.configure</code></a></td><td>Process-wide settings.</td></tr>
 <tr><td><a href="caching.html#clearing"><code>thunc.clear_cache</code></a></td><td>Deletes saved answers: all of them, one function's, or those older than an age. Returns how many.</td></tr>
@@ -94,6 +96,10 @@ thunc.map(func, items, *, workers=8)
 await thunc.acall(...)  # the arguments of thunc.call
 
 await thunc.amap(func, items, *, workers=8)
+
+thunc.register_backend(name, backend, *, typed=False, default_model=None, replace=False)
+
+thunc.testing.fake_model(replies=None)  # a context manager giving a FakeModel
 
 thunc.clear_cache(function=None, *, older_than=None)  # function or name; timedelta or seconds
 
@@ -136,7 +142,7 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 <dl>
 <dt>thunc.ThuncError</dt><dd>No valid answer arrived after the retries, the backend failed, or nothing is configured. Also raised when a function is declared with an unsupported return type.</dd>
 <dt>thunc.AgentError</dt><dd>A <code>ThuncError</code> from an agent run that hit <code>max_steps</code>, never gave a valid value, or lost its backend. <code>.run</code> is the record up to that point.</dd>
-<dt>thunc.errors.TransientError</dt><dd>A <code>ThuncError</code> that asking again may fix: a timeout, a lost connection, a rate limit, a server error, or a CLI call that ended in an error. An agent run retries the step twice before failing; <code>thunc.call</code> and <code>@thunc.function</code> don't retry it.</dd>
+<dt>thunc.TransientError</dt><dd>A <code>ThuncError</code> that asking again may fix: a timeout, a lost connection, a rate limit, a server error, or a CLI call that ended in an error. An agent run retries the step twice before failing; <code>thunc.call</code> and <code>@thunc.function</code> don't retry it.</dd>
 <dt>TypeError</dt><dd>Raised when a function is declared with code in its body, or with no docstring and no <code>instructions=</code>.</dd>
 </dl>
 

@@ -3,6 +3,38 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
+## 0.5.0 (beta)
+
+**Testable and extensible.** `thunc.testing` gives your tests a scripted fake model and pytest
+fixtures, `thunc.register_backend` plugs in a backend of your own, and the docs cover Ollama. With
+record and replay (0.4), code that uses thunc can be tested with no model at all. A program that
+uses none of these behaves as in 0.4.0.
+
+### Added
+
+- **`thunc.testing`**: `fake_model()` answers every call and agent run with scripted replies,
+  whatever `backend=` they name, and leaves the recordings alone. Replies go by function name, in
+  order, or come from a function of the request; a string is the model's text as it is (so a bad
+  one makes the call retry), anything else is sent as JSON (`4`, `Priority.HIGH`, a dataclass).
+  Every request is kept, with its function, inputs, return type, prompt and attempt. `act()` and
+  `finish()` script an agent's tool calls, and `isolated()` puts thunc's settings back after a
+  block. The `thunc_model` and `thunc_isolated` pytest fixtures come with thunc, through a `pytest11`
+  entry point.
+- **`thunc.register_backend(name, fn)`**: your own backend, usable as `backend=name`,
+  `configure(backend=name)` and `THUNC_BACKEND=name`. A text backend gets
+  `(text, *, system, model, api_key, timeout)` and returns the answer's text; with `typed=True` it
+  answers typed questions as `jev` does. Its signature is checked when it's registered, and an
+  agent's `effort=` is only passed to one that takes it. `thunc.TextBackend` and
+  `thunc.TypedBackend` are the two shapes, for type hints; `thunc.unregister_backend` removes one.
+- `thunc.TransientError` at the top level, for a backend's errors worth asking again.
+- **Ollama**: the docs say how to use Ollama 0.13.3 and later through the `openai` backend and its
+  OpenAI-compatible Responses API, and `live_tests/test_ollama.py` checks a model end to end.
+
+### Fixed
+
+- A typed backend without a default model failed every call with a `KeyError`. Only `jev`, which
+  has one, could hit that path before `register_backend`.
+
 ## 0.4.0 (beta)
 
 **Functions complete, and testable without a model.** Return an `Enum`; get the precise type of

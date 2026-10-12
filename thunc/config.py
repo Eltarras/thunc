@@ -22,6 +22,9 @@ DEFAULTS: dict[str, Any] = {
 }
 _settings: dict[str, Any] = dict(DEFAULTS)
 runtime_settings: ContextVar[dict[str, Any] | None] = ContextVar("thunc_runtime_settings", default=None)
+# thunc.testing.fake_model(): every call goes to this backend, whatever backend= it names, and the
+# recordings are left alone. Process-wide (not a ContextVar), so thunc.map's threads see it too.
+forced_backend: str | None = None
 
 
 def configure(
@@ -93,6 +96,8 @@ def recordings_dir() -> str | None:
 
 def resolve_backend(override: str | None = None) -> str:
     """The backend for a call: the per-call override, configure(), THUNC_BACKEND, or the API whose key exists."""
+    if forced_backend is not None:
+        return forced_backend
     name = override or _settings["backend"] or os.environ.get("THUNC_BACKEND")
     if name:
         _check_backend(name)

@@ -1,6 +1,6 @@
 [project]
 name = "thunc"
-version = "0.4.0"
+version = "0.5.0"
 description = "think + function: call an LLM like a typed Python function."
 readme = "README.md"
 license = "MIT"
@@ -20,6 +20,9 @@ classifiers = [
 
 [project.scripts]
 thunc = "thunc.__main__:main"
+
+[project.entry-points.pytest11]
+thunc = "thunc.pytest_plugin"  # the thunc_model and thunc_isolated fixtures (thunc/testing.py)
 
 [project.urls]
 Homepage = "https://eltarras.github.io/thunc/"

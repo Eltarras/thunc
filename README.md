@@ -32,8 +32,10 @@ type; if it doesn't fit, the model is asked again, and after that `thunc.ThuncEr
 dependencies, Python 3.10+.
 
 It also runs [agents](#agents): typed functions that can read, edit and test your code before they
-answer. New in 0.4: [record and replay](#recording-and-replaying) runs your tests and CI with no
-model, `Enum` return types, and `thunc.acall` / `thunc.amap` for async code. `thunc watch` shows a
+answer. New in 0.5: [thunc.testing](#testing-with-a-fake-model-thunctesting), a fake model and
+pytest fixtures for your tests, `thunc.register_backend` for your own backends, and Ollama. In 0.4:
+[record and replay](#recording-and-replaying) runs your tests and CI with no model, `Enum` return
+types, and `thunc.acall` / `thunc.amap` for async code. `thunc watch` shows a
 program's calls and agent runs live in the terminal (see **Watching** below), and
 [thunc write](#thunc-write), an experiment, lets a function write its own body as plain Python on its
 first call.
@@ -63,7 +65,7 @@ With an API key set, thunc picks that backend on its own, so `THUNC_BACKEND` isn
 `thunc.configure(backend=...)` does the same. Durable agents on Temporal add
 `pip install "thunc[temporal]"`.
 
-> **Beta (v0.4).** The API may still change. Bug reports and feedback are welcome in
+> **Beta (v0.5).** The API may still change. Bug reports and feedback are welcome in
 > [issues](https://github.com/Eltarras/thunc/issues).
 
 **More examples.** Clone the repo and run them from its root, with no install, through your
@@ -105,6 +107,8 @@ Anything from users, files or the web goes in the inputs:
 | `thunc.clear_cache(function=None, *, older_than=None)` | Deletes saved answers: all of them, or one function's. Returns how many |
 | `thunc.cache_info()` | What's in the cache, one group per function |
 | `thunc.ThuncError` | Raised when no valid answer arrives after the retries |
+| `thunc.register_backend(name, fn, *, typed=False, default_model=None, replace=False)` | Adds your own backend, usable as `backend=name` (see **Your own backend** below) |
+| `thunc.testing` | A fake model and pytest fixtures for your tests (see [thunc.testing](#testing-with-a-fake-model-thunctesting)) |
 | `thunc.ThuncDeprecationWarning` | Warned where you use a deprecated part of the API, naming the release that removes it (see [CONTRIBUTING](CONTRIBUTING.md#deprecations) for the policy) |
 
 **Return types:** `str`, `bool`, `int`, `float`, `Literal[...]`, `Enum` classes (their members come
@@ -175,6 +179,41 @@ cache key, so renaming a function starts its cache fresh. Ages count from when t
 Clearing deletes only cache entries, never other files in the folder, and it's safe while another
 process is using the cache. The `thunc` command (also `python -m thunc`) reads `THUNC_CACHE_DIR`,
 or takes `--cache-dir`; it can't see a `configure(cache_dir=...)` in your code.
+
+### Testing with a fake model: thunc.testing
+
+For unit tests of your own code, where the answer is part of the test: a scripted model answers
+every call and agent run, whatever its `backend=`, with no network and nothing to record.
+
+```python
+from thunc import testing
+
+
+def test_triage():
+    with testing.fake_model({"urgency": 4, "category": "bug"}) as model:
+        assert triage("I was charged twice") == ("bug", 4)
+    assert model.calls[0].inputs == {"ticket": "I was charged twice"}
+
+
+def test_triage_with_pytest(thunc_model):  # the same, as a fixture that comes with thunc
+    thunc_model.reply({"urgency": 4, "category": "bug"})
+    assert triage("I was charged twice") == ("bug", 4)
+```
+
+- **Replies** are given by function name (`"urgency"`, `"Triage.urgency"`, a task's `"repo.fix"`,
+  or a `thunc.call`'s `name=`), in order (`fake_model(["4", "bug"])`), or by a function of the
+  request. A string is the model's text as it is, so `"high"` for an `int` makes the call retry as a
+  real one would; anything else is sent as JSON, so `4`, `Priority.HIGH` or a dataclass work as
+  written. Running out of replies fails the test with what was asked.
+- **Requests** are kept in `model.calls`: each one's function, inputs, return type, the prompt and
+  system prompt sent, and `n` (1 for the first request of a call, 2 for its retry or next step).
+- **Agents** run on the text protocol, so their replies are tool calls:
+  `[testing.act("read", path="config.py"), testing.finish(60)]`. The tools run for real.
+- **`testing.isolated()`** (or the `thunc_isolated` fixture) puts thunc's settings and `THUNC_*`
+  variables back after a block. The fake model also leaves the recordings alone while it's active.
+
+Use the fake model when the test decides the answer, and [recordings](#recording-and-replaying)
+when the answer should be a real model's.
 
 ### Recording and replaying
 
@@ -256,8 +295,42 @@ has been tested with [LM Studio](https://lmstudio.ai) running `openai/gpt-oss-20
 thunc.configure(backend="openai", model="openai/gpt-oss-20b")
 ```
 
-Small models need the retry more often, for example when they explain the answer instead of
-giving it alone.
+[Ollama](https://ollama.com) 0.13.3 and later serve the same OpenAI Responses API at `/v1`:
+
+```bash
+ollama pull qwen3:8b
+export OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_API_KEY=ollama  # any non-empty key works
+```
+
+```python
+thunc.configure(backend="openai", model="qwen3:8b")
+```
+
+`live_tests/test_ollama.py` checks a model end to end (text, typed answers, and an agent on both
+protocols): `OLLAMA_MODEL=qwen3:8b THUNC_BACKEND=openai pytest live_tests/test_ollama.py`, with the
+two variables above set. Small models need the retry more often, for example when they explain
+the answer instead of giving it alone. For agents on a server without function calling, use
+`protocol="text"`.
+
+**Your own backend:** any function that takes the prompt and returns the answer as text can be a
+backend, for a provider or a server thunc doesn't have built in:
+
+```python
+def local(text, *, system, model, api_key, timeout):
+    return my_client.complete(system=system, prompt=text, model=model or "small", timeout=timeout)
+
+
+thunc.register_backend("local", local, default_model="small")
+thunc.configure(backend="local")  # or backend="local" on a function, or THUNC_BACKEND=local
+```
+
+Its signature is checked when it's registered. Raise `ThuncError` when there's no answer, and
+`thunc.TransientError` when asking again may help (a timeout, a rate limit): agent runs retry those
+steps. Agents run on it through the JSON text protocol, and an agent's `effort=` is passed only to
+a backend that takes `effort`. With `typed=True` it answers typed questions like `jev`:
+`(instructions, inputs, returns, *, system, timeout)`, returning JSON text. `thunc.TextBackend` and
+`thunc.TypedBackend` are the two shapes, for type hints. Built-in names can't be replaced, and a
+durable run's worker must register the backend too.
 
 The backend can also be set with `THUNC_BACKEND`. With none set, `ANTHROPIC_API_KEY` (or a
 `configure(api_key=...)` alone) selects `anthropic`, and otherwise `OPENAI_API_KEY` selects `openai`.
@@ -607,6 +680,7 @@ thunc/
   events.py      THUNC_EVENTS: the live events thunc watch reads
   core.py        thunc.call, thunc.acall, thunc.map, thunc.amap, tracing
   deprecation.py ThuncDeprecationWarning, and @deprecated / @renamed_parameter
+  testing.py     thunc.testing: the fake model, act / finish, isolated(); pytest_plugin.py, its fixtures
   cache.py       the answer cache: saving, listing, clearing
   recordings.py  record and replay: THUNC_RECORDINGS and THUNC_RECORD, for calls and agent runs
   schema.py      return types: describe, parse, validate

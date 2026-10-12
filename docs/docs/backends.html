@@ -54,7 +54,7 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.4.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.5.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -110,7 +110,31 @@ thunc.call("Summarise this.", {"text": doc}, backend="openai", model="gpt-5.5") 
 <div class="codeblock"><pre><code class="sh">export OPENAI_BASE_URL=http://localhost:1234/v1
 export OPENAI_API_KEY=lm-studio  # any non-empty key works</code></pre></div>
 <div class="codeblock"><pre><code class="py">thunc.configure(backend="openai", model="openai/gpt-oss-20b")</code></pre></div>
+<h3 id="ollama">Ollama</h3>
+<p><a href="https://ollama.com">Ollama</a> 0.13.3 and later serve the same OpenAI Responses API at <code>/v1</code>:</p>
+<div class="codeblock"><pre><code class="sh">ollama pull qwen3:8b
+export OPENAI_BASE_URL=http://localhost:11434/v1
+export OPENAI_API_KEY=ollama  # any non-empty key works</code></pre></div>
+<div class="codeblock"><pre><code class="py">thunc.configure(backend="openai", model="qwen3:8b")</code></pre></div>
+<p><code>live_tests/test_ollama.py</code> in the repository checks a model end to end: text, typed answers, and an agent on both protocols. Run it with <code>OLLAMA_MODEL=qwen3:8b THUNC_BACKEND=openai pytest live_tests/test_ollama.py</code> and the two variables above.</p>
 <p>Small models need the retry more often, for example when they explain the answer instead of giving it alone. For <a href="agents.html">agents</a> on a server without function calling, use <code>protocol="text"</code>.</p>
+
+<h2 id="custom">Your own backend</h2>
+<p>Any function that takes the prompt and returns the answer as text can be a backend, for a provider or a server thunc doesn't have built in:</p>
+<div class="codeblock"><pre><code class="py">def local(text, *, system, model, api_key, timeout):
+    return my_client.complete(system=system, prompt=text, model=model or "small", timeout=timeout)
+
+
+thunc.register_backend("local", local, default_model="small")
+thunc.configure(backend="local")  # or backend="local" on a function, or THUNC_BACKEND=local</code></pre></div>
+<ul>
+<li>Its signature is checked when it's registered, not at its first call.</li>
+<li>Raise <code>thunc.ThuncError</code> when there's no answer, and <code>thunc.TransientError</code> when asking again may help (a timeout, a rate limit): agent runs retry those steps.</li>
+<li>Agents run on it through the JSON text protocol. An agent's <code>effort=</code> is passed only to a backend that takes an <code>effort</code> argument.</li>
+<li>With <code>typed=True</code> it answers typed questions, as <a href="jev.html">Jev</a> does: <code>(instructions, inputs, returns, *, system, timeout)</code>, returning the answer as JSON text.</li>
+<li><code>thunc.TextBackend</code> and <code>thunc.TypedBackend</code> are the two shapes, for type hints. <code>default_model=</code> names the model in the trace and the cache key when none is configured.</li>
+<li>Built-in names can't be replaced, and registering a name twice needs <code>replace=True</code>. A <a href="temporal.html">durable run</a>'s worker must register the backend too.</li>
+</ul>
 
 <h2 id="settings">Other settings</h2>
 <p><code>thunc.configure(timeout=...)</code> sets the request timeout in seconds. Every <code>configure</code> argument left out keeps its current value, so you can call it more than once. The full list is in the <a href="api.html#configure">API reference</a>.</p>

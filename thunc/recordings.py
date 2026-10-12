@@ -31,6 +31,7 @@ import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from . import config
 from .cache import read, write
 from .config import recordings_dir
 from .errors import ThuncError
@@ -50,6 +51,8 @@ def mode() -> str | None:
     """None without a recordings folder. With one: "replay" (answer from it, never ask a model),
     "all" (THUNC_RECORD=1: ask, and save every answer) or "missing" (THUNC_RECORD=missing: replay
     what's there, ask for and save the rest)."""
+    if config.forced_backend is not None:  # a fake model (thunc.testing) answers instead
+        return None
     value = os.environ.get("THUNC_RECORD", "")
     if value:
         value = value.strip().lower()
