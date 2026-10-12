@@ -3,23 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Eight days of thunc · thunc blog</title>
-<meta name="description" content="How thunc went from an empty repository to its twelfth release in eight days: what was built each day, what the benchmarks showed, what went wrong, and what changed because of it.">
+<title>Ten days of thunc · thunc blog</title>
+<meta name="description" content="How thunc went from an empty repository to 0.5.0 in ten days: what was built each day, what the benchmarks showed, what went wrong, and what changed because of it.">
 <link rel="canonical" href="https://eltarras.github.io/thunc/blog/">
-<meta property="og:title" content="Eight days of thunc">
-<meta property="og:description" content="From first commit to 0.3.2: typed LLM calls, agents, durable runs, a tool-use benchmark, a terminal dashboard and functions that write themselves.">
+<meta property="og:title" content="Ten days of thunc">
+<meta property="og:description" content="From first commit to 0.5.0: typed LLM calls, agents, durable runs, a tool-use benchmark, a terminal dashboard, functions that write themselves, and code you can test without a model.">
 <meta property="og:image" content="https://eltarras.github.io/thunc/og.png">
 <meta property="og:url" content="https://eltarras.github.io/thunc/blog/">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="thunc">
 <meta property="article:published_time" content="2026-10-10">
+<meta property="article:modified_time" content="2026-10-12">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "BlogPosting",
-  "headline": "Eight days of thunc",
-  "description": "How thunc went from an empty repository to its twelfth release in eight days.",
+  "headline": "Ten days of thunc",
+  "description": "How thunc went from an empty repository to 0.5.0 in ten days.",
   "datePublished": "2026-10-10",
+  "dateModified": "2026-10-12",
   "url": "https://eltarras.github.io/thunc/blog/",
   "image": "https://eltarras.github.io/thunc/og.png",
   "author": { "@type": "Person", "name": "Hussein Eltarras" }
@@ -52,16 +54,16 @@
 <main class="post">
 <header>
   <div class="eyebrow accent">Blog · Development log</div>
-  <h1>Eight days of thunc</h1>
-  <p class="lede">thunc went from an empty repository on 3 October 2026 to its twelfth release on 10 October. This is the whole story so far: what was built each day, what the benchmarks showed, what went wrong, and what changed because of it.</p>
-  <p class="byline">Hussein Eltarras · 10 October 2026</p>
+  <h1>Ten days of thunc</h1>
+  <p class="lede">thunc went from an empty repository on 3 October 2026 to 0.5.0 on 12 October. This is the whole story so far: what was built each day, what the benchmarks showed, what went wrong, and what changed because of it.</p>
+  <p class="byline">Hussein Eltarras · 10 October 2026 · updated 12 October with 0.4.0 and 0.5.0</p>
 </header>
 
 <div class="stats">
-  <div><b>8</b><span>days</span></div>
-  <div><b>12</b><span>thunc releases, plus thunc-watch</span></div>
-  <div><b>61</b><span>pull requests</span></div>
-  <div><b>61 → 765</b><span>offline tests</span></div>
+  <div><b>10</b><span>days</span></div>
+  <div><b>13</b><span>thunc releases, plus thunc-watch</span></div>
+  <div><b>67</b><span>pull requests</span></div>
+  <div><b>61 → 866</b><span>offline tests</span></div>
 </div>
 
 <h2 id="timeline">The releases</h2>
@@ -78,6 +80,8 @@
   <li><time datetime="2026-10-07">7 Oct</time><b>0.3.0</b> <code>thunc watch</code>, and thunc write as an experiment</li>
   <li><time datetime="2026-10-07">7 Oct</time><b>0.3.1</b> The changes that missed 0.3.0's package</li>
   <li><time datetime="2026-10-10">10 Oct</time><b>0.3.2</b> A stability pass</li>
+  <li><time datetime="2026-10-11">11 Oct</time><b>0.4.0</b> Enum returns, the async API and record and replay</li>
+  <li><time datetime="2026-10-12">12 Oct</time><b>0.5.0</b> <code>thunc.testing</code> and your own backends</li>
 </ol>
 <p class="muted">Each release has its full notes in the <a href="../docs/changelog.html">changelog</a>. This post is the story around them.</p>
 
@@ -209,18 +213,55 @@ thunc: wrote durations.py lines 5-27 in 14s (answer 4s, draft 11s, test calls 9s
 </tbody></table></div>
 <p>The second was a trace file that couldn't be written, in a missing folder for example. The error replaced the call's outcome: a successful call lost its answer, already paid for, and a failed one hid its own error. Now thunc warns once per path and the call's result stands.</p>
 
+<div class="eyebrow accent day">10 October · a Claude Code skill</div>
+<h2 id="skill">Handing work to a cheaper model</h2>
+<p>The benchmark had shown a thunc agent on Sonnet doing the same work as Claude Code for much less. That raised a practical question: could Claude Code itself hand work to one? The answer is <code>thunc-offload</code>, a skill you can download from the site. It tells Claude Code to give long, self-contained jobs with a checkable outcome (a wide refactor, a debugging hunt, a feature with tests) to a thunc agent on Sonnet, then read the diff and run the tests itself; to run batch work, like classifying hundreds of log lines, as typed functions with <code>thunc.map</code>, so it stays out of the conversation; and to do small tasks itself, because a handoff costs three or four turns of its own.</p>
+<p>The first number was 78%: in the tool-use benchmark's Opus 5.5 rerun, a thunc agent cost $0.039 a task against $0.174 for Claude Code, both passing 24 of 24. But that compares the agent with Claude Code, each working alone. Handing off still costs the main session its turns to explain the job and check the result, so a second test counted both. Claude Code on Opus 5.5 built a multi-module feature from a spec, graded by 24 hidden tests, three runs per setup:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Setup</th><th>Cost per run</th><th>Hidden tests</th></tr></thead>
+<tbody>
+<tr><td>Claude Code alone</td><td>$0.52</td><td>72/72</td></tr>
+<tr><td>Handing off to a thunc agent on Sonnet</td><td>$0.41 ($0.30 main session + $0.11 agent)</td><td>72/72</td></tr>
+</tbody></table></div>
+<p>That's 21% cheaper overall at the same pass rate, and every handoff run cost less than every run of Claude Code alone. On small three-file fixes it broke even. The page now leads with 21%, and keeps 78% labelled as the agent's own saving. The test also caught a bug in the skill: it told Claude Code to start long agent runs in the background, which in headless <code>claude -p</code> ends the turn and cuts the agent off. Two runs passed 6 and 0 of 24 hidden tests that way. One more finding: in every test, Claude Code didn't hand off unless asked, so the page tells you to ask. See <a href="../docs/claude-code-skill.html">Claude Code skill</a>.</p>
+
+<div class="eyebrow accent day">11 October · 0.4.0</div>
+<h2 id="functions-complete">Functions complete, and tests without a model</h2>
+<p>0.4 went back to the issue tracker and closed three of the five open feature requests. A function can return an <code>Enum</code> and gets the member back (<a href="https://github.com/Eltarras/thunc/issues/6">#6</a>). Values are matched like a <code>Literal</code>'s options; the prompt lists them, with the name beside a value that doesn't say what it means (<code>3 (HIGH)</code>); and a name sent in place of a value is asked again, not guessed. <code>thunc.call(..., returns=Literal["a", "b"])</code> is now a <code>Literal["a", "b"]</code> to your type checker instead of <code>Any</code> (<a href="https://github.com/Eltarras/thunc/issues/10">#10</a>), through PEP 747's <code>TypeForm</code>, imported for type checkers only, so thunc still has no dependencies at run time. A test runs mypy and basedpyright over every public signature, and fails both when <code>TypeForm</code> is swapped back. And <code>thunc.acall</code> and <code>thunc.amap</code> are the async API, with calls run in worker threads so the event loop stays free.</p>
+<p>The biggest piece was record and replay (<a href="https://github.com/Eltarras/thunc/issues/8">#8</a>). Code that calls a model is hard to test: a real model is slow, costs money, needs a login in CI and doesn't answer the same way twice. Now you record a test suite's answers once, commit them, and replay them from then on:</p>
+<div class="codeblock"><pre><code class="sh">THUNC_RECORD=1 pytest          # ask the model, and save every answer in tests/recordings
+pytest                         # replay: no model is asked, and a call that wasn't recorded fails
+THUNC_RECORD=missing pytest    # replay what's there; ask for, and save, only what's missing</code></pre></div>
+<p>A call is matched on its function, system prompt and request; the backend and model are saved but not matched, so CI needs neither a backend nor an API key. A replayed answer is still checked against the return type and <code>ensure=</code>. Agent runs replay the model's replies in order while their tools run for real, so a run that goes differently runs out of replies and fails rather than passing by accident. While replaying, nothing at all reaches a model: every place thunc would start a request or a CLI checks first, so a durable run, which isn't recorded, fails loudly instead of spending money. Replaying a call takes about 37 µs, the same as a cache hit, because recordings use the cache's format.</p>
+<p>0.4 also put a deprecation policy in place before anything needs it. A part of the API that's going away keeps working for at least two minor releases and warns where it's used, naming the release that removes it, and a test fails once a deprecation's removal release arrives. Nothing is deprecated yet; it's there for the changes ahead of 1.0.</p>
+
+<div class="eyebrow accent day">12 October · 0.5.0</div>
+<h2 id="testable">Testable and extensible</h2>
+<p>Recordings suit tests where the answer should be a real model's. For unit tests where the test decides the answer, 0.5.0 adds <code>thunc.testing</code>: a scripted model that answers every call and agent run, whatever <code>backend=</code> they name, and keeps every request for the test to check.</p>
+<div class="codeblock"><pre><code class="py">from thunc import testing
+
+
+# triage() is your code; it calls two thunc functions, urgency() and category()
+def test_triage():
+    with testing.fake_model({"urgency": 4, "category": "bug"}) as model:
+        assert triage("I was charged twice") == ("bug", 4)
+    assert model.calls[0].inputs == {"ticket": "I was charged twice"}</code></pre></div>
+<p>Replies go by function name, in order, or come from a function of the request. A string is sent as the model's raw text, so a bad one makes the call retry as a real one would; anything else is sent as JSON, so <code>4</code>, <code>Priority.HIGH</code> or a dataclass work as written. <code>act()</code> and <code>finish()</code> script an agent's tool calls. The <code>thunc_model</code> and <code>thunc_isolated</code> pytest fixtures come with thunc. The test for them runs a separate pytest, so it proves the fixtures load the way they will for you, and it was checked by breaking the fixture's cleanup on purpose and watching it fail.</p>
+<p>The same release opened thunc to backends it doesn't ship. <code>thunc.register_backend(name, fn)</code> takes a function that turns a prompt into text, or, with <code>typed=True</code>, one that answers typed questions as Jev does, and makes it usable anywhere a built-in backend name is. Its signature is checked when it's registered, not at its first call. Writing the tests for it turned up a bug that no built-in backend could reach: a typed backend without a default model failed every call with a <code>KeyError</code>. The docs now also cover Ollama, which serves the same Responses API as the <code>openai</code> backend, with a live test in <code>live_tests/test_ollama.py</code>. That test hasn't been run for this release yet, and the release notes say so.</p>
+
 <h2 id="learned">What we learned</h2>
 <ul>
-<li><strong>Measure the harness, not only the model.</strong> The biggest improvement in these eight days, 12 of 24 to 24 of 24, didn't come from a better model. It came from a benchmark that held the model fixed and asked what thunc was doing wrong.</li>
+<li><strong>Measure the harness, not only the model.</strong> The biggest improvement in these ten days, 12 of 24 to 24 of 24, didn't come from a better model. It came from a benchmark that held the model fixed and asked what thunc was doing wrong.</li>
 <li><strong>Every change comes with a number.</strong> Each release note says what was measured and how: runs passed, seconds and dollars per task, runs that survive an error rate. It keeps claims honest and shows which ideas didn't pay off.</li>
 <li><strong>Attack your own code, then simplify it.</strong> Adversarial rounds found real bugs, and then found bugs in the fixes. Removing the clever rules did more than patching them again.</li>
 <li><strong>Releasing is code too.</strong> Two releases went out from the wrong commit. Both times the fix was a written-down order of steps, not more care.</li>
-<li><strong>Keep the core small.</strong> Temporal and the dashboard are real dependencies, so they're an extra and a separate package. <code>pip install thunc</code> still installs nothing else.</li>
+<li><strong>Count the whole cost.</strong> The skill's first number, 78%, was true but compared the wrong things. Counting the session that hands off the work and checks it gave 21%, which is the number you'd actually see.</li>
+<li><strong>Keep the core small.</strong> Temporal and the dashboard are real dependencies, so they're an extra and a separate package, and the precise types for <code>returns=</code> are imported for type checkers only. <code>pip install thunc</code> still installs nothing else.</li>
 <li><strong>Say which idea you're building.</strong> One day's work went to the wrong feature because the plan didn't say plainly what it would and wouldn't deliver.</li>
 </ul>
 
 <h2 id="next">What's next</h2>
-<p>thunc is in beta, and the 0.3 line is about using it on real programs. The open candidates are on the <a href="https://github.com/Eltarras/thunc/issues">issue tracker</a>: Enum and Pydantic return types (<a href="https://github.com/Eltarras/thunc/issues/6">#6</a>, <a href="https://github.com/Eltarras/thunc/issues/7">#7</a>), record and replay for tests (<a href="https://github.com/Eltarras/thunc/issues/8">#8</a>), a precise type for <code>thunc.call(returns=...)</code> (<a href="https://github.com/Eltarras/thunc/issues/10">#10</a>) and more examples (<a href="https://github.com/Eltarras/thunc/issues/11">#11</a>). Whether thunc write leaves its experimental label depends on how it holds up in your code. If you try it, <a href="https://github.com/Eltarras/thunc/discussions">tell us how it went</a>.</p>
+<p>thunc is in beta, and with 0.4 and 0.5 the road to 1.0 has started: the deprecation policy is in place for the API changes that come with it. Two of the original feature requests are still open on the <a href="https://github.com/Eltarras/thunc/issues">issue tracker</a>: Pydantic models as return types (<a href="https://github.com/Eltarras/thunc/issues/7">#7</a>), which a contributor has taken on, and more examples (<a href="https://github.com/Eltarras/thunc/issues/11">#11</a>). The next thunc-watch release will show replayed calls as replayed rather than cached. If you run thunc on Ollama, results from <code>live_tests/test_ollama.py</code> are welcome in an issue. And whether thunc write leaves its experimental label depends on how it holds up in your code. If you try it, <a href="https://github.com/Eltarras/thunc/discussions">tell us how it went</a>.</p>
 
 <div class="cta-inline">
   <div class="install"><span>pip install thunc</span><button type="button" data-copy="pip install thunc">Copy</button></div>
