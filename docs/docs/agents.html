@@ -85,7 +85,9 @@ def changelog(since_tag: str) -&gt; list[str]:
     ...
 
 
-repo.call(f"Where is {setting} set?", returns=str)</code></pre></div>
+repo.call(f"Where is {setting} set?", returns=str)
+await repo.acall(f"Where is {setting} set?", returns=str)  # the same, in async code</code></pre></div>
+<p>From 0.6 the agent API is <a href="api.html#stability">frozen</a>: it changes only through deprecations, announced at least two minor releases ahead.</p>
 
 <h2 id="run">How a run works</h2>
 <p>Each call is one run. The model takes one step at a time (list a folder, search, read or edit a file) and ends by calling <code>finish</code> with a value of the return type, which is checked like any thunc result.</p>
@@ -164,6 +166,7 @@ run.files_changed  # ["src/mathutil.py"]  (by write, edit and commands)
 run.commands       # [Command("python3 tests/test_mathutil.py", exit_code=0, seconds=0.04)]
 run.denied         # [Denial("run", "git commit -am fix", "running ... is denied by '!run:git'")]
 run.notes, run.followed, run.steps, run.seconds, run.session</code></pre></div>
+<p>The run's record, <code>run.session</code>, is a JSON line per step in a <a href="api.html#run-record">versioned format</a> that other programs can read.</p>
 <p><strong>Failures are loud.</strong> A run that hits <code>max_steps</code>, never gives a valid value, or loses its backend raises <code>thunc.AgentError</code> (a <code>ThuncError</code>), whose <code>.run</code> is the record up to that point. A step that fails for a reason asking again may fix (a timeout, a lost connection, a rate limit, a server error, a CLI call that ended in an error) is retried twice first, and each retry is in the run's record. On the Claude API, a reply cut off at <code>max_tokens</code> doesn't end the run: its tool calls get an error result saying so (twice in a row does).</p>
 
 <h2 id="options">All options</h2>
