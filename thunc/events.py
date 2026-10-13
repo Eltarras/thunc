@@ -7,12 +7,17 @@ thunc-watch sets THUNC_EVENTS itself when it runs a program. Every line has "v" 
 
     call.start     id, function, backend, model, inputs (name -> preview)
     call.attempt   id, n, seconds, ok, problem (why the reply was rejected), reply (preview)
-    call.end       id, ok, cached, attempts, seconds, value (preview), error
-    agent.start    id, agent, task, returns, session (path of the run's record), inputs
+    call.end       id, ok, cached, replayed, attempts, seconds, value (preview), error
+    agent.start    id, agent, task, returns, session (path of the run's record), replayed, inputs
     agent.reply    id, n, seconds (waiting on the model)
     agent.tool     id, n, tool, target: a tool call starting (a command can take minutes)
     agent.step     id, n, tool, target, result (preview), seconds, denied
     agent.end      id, ok, steps, seconds, files_changed, value (preview), error
+
+Within one format, events and fields are only added, never removed or given another meaning, and
+a reader (thunc-watch) ignores events and fields it doesn't know and lines with a "v" it doesn't.
+A change that an old reader would misread gets a new "v", and watch/src/event.rs learns it in the
+same change.
 
 Inputs, replies and values are cut to a short preview. THUNC_EVENTS_CAPTURE=1 sends them whole,
 which the dashboard shows on the call screen; they may contain personal data, as they do in a trace.

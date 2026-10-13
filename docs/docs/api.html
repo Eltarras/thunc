@@ -54,7 +54,7 @@
     <a href="api.html" class="active" aria-current="page">API reference</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.5.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.6.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -145,6 +145,52 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 <dt>thunc.TransientError</dt><dd>A <code>ThuncError</code> that asking again may fix: a timeout, a lost connection, a rate limit, a server error, or a CLI call that ended in an error. An agent run retries the step twice before failing; <code>thunc.call</code> and <code>@thunc.function</code> don't retry it.</dd>
 <dt>TypeError</dt><dd>Raised when a function is declared with code in its body, or with no docstring and no <code>instructions=</code>.</dd>
 </dl>
+
+<h2 id="formats">Formats other programs read</h2>
+<p>Three files are meant to be read by other programs: an agent run's record, the <code>THUNC_EVENTS</code> stream that <a href="watch.html"><code>thunc watch</code></a> reads, and a durable task's fingerprint. Each has a format number. Within one number, events and fields are only added, never removed or given another meaning, so a reader should ignore what it doesn't know. A change that an old reader would misread gets a new number, and the <a href="changelog.html">changelog</a> says so.</p>
+
+<h3 id="run-record">An agent run's record</h3>
+<p>One JSON line per event in <code>.thunc_agents/&lt;agent&gt;/sessions/</code>, each with <code>time</code> and <code>event</code>. The first line, <code>start</code>, has <code>"format": 1</code>.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Event</th><th>Fields</th></tr></thead>
+<tbody>
+<tr><td><code>start</code></td><td><code>format</code>, <code>task</code>, <code>instructions</code>, <code>inputs</code>, <code>returns</code>, <code>memory_characters</code>, <code>followed</code> (path to hash), <code>protocol</code> (<code>native</code>, <code>mcp</code>, <code>text</code> or <code>replay</code>), and <code>settings_changed_from</code> when <code>agent.json</code> changed</td></tr>
+<tr><td><code>fallback</code></td><td><code>protocol</code>, <code>reason</code>: native calls couldn't start, so the run went on the text protocol</td></tr>
+<tr><td><code>retry</code></td><td><code>attempt</code>, <code>error</code>: a model reply that failed for a reason worth asking again</td></tr>
+<tr><td><code>step</code></td><td><code>n</code> and <code>result</code>; with <code>tool</code>, <code>args</code> and <code>denied</code> (only when true) for a tool call, or <code>reply</code> for a reply with no usable call</td></tr>
+<tr><td><code>finish</code></td><td><code>n</code>, <code>value</code>, <code>files_changed</code></td></tr>
+<tr><td><code>error</code></td><td><code>error</code>, <code>files_changed</code>: the run failed</td></tr>
+</tbody></table></div>
+
+<h3 id="events">The THUNC_EVENTS stream</h3>
+<p>One JSON line per event, each with <code>"v": 1</code>, <code>event</code>, <code>t</code> (Unix time) and <code>pid</code>. Inputs, replies and values are short previews unless <code>THUNC_EVENTS_CAPTURE=1</code>.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Event</th><th>Fields</th></tr></thead>
+<tbody>
+<tr><td><code>call.start</code></td><td><code>id</code>, <code>function</code>, <code>backend</code>, <code>model</code>, <code>inputs</code></td></tr>
+<tr><td><code>call.attempt</code></td><td><code>id</code>, <code>n</code>, <code>seconds</code>, <code>ok</code>, <code>reply</code>, and <code>problem</code> when the reply was rejected</td></tr>
+<tr><td><code>call.end</code></td><td><code>id</code>, <code>ok</code>, <code>cached</code>, <code>replayed</code>, <code>attempts</code>, <code>seconds</code>, <code>value</code>, <code>error</code></td></tr>
+<tr><td><code>agent.start</code></td><td><code>id</code>, <code>agent</code>, <code>task</code>, <code>returns</code>, <code>session</code> (the run's record), <code>replayed</code>, <code>inputs</code></td></tr>
+<tr><td><code>agent.reply</code></td><td><code>id</code>, <code>n</code>, <code>seconds</code> waiting on the model</td></tr>
+<tr><td><code>agent.tool</code></td><td><code>id</code>, <code>n</code>, <code>tool</code>, <code>target</code>: a tool call starting</td></tr>
+<tr><td><code>agent.step</code></td><td><code>id</code>, <code>n</code>, <code>tool</code>, <code>target</code>, <code>result</code>, <code>seconds</code>, <code>denied</code></td></tr>
+<tr><td><code>agent.end</code></td><td><code>id</code>, <code>ok</code>, <code>steps</code>, <code>seconds</code>, <code>files_changed</code>, <code>value</code>, <code>error</code></td></tr>
+</tbody></table></div>
+
+<h3 id="fingerprints">Durable task fingerprints</h3>
+<p>A <a href="temporal.html">durable task</a>'s fingerprint is a hash of what it was registered with: its instructions, the JSON Schema of its return type, the backend, the model, the API endpoint, the agent's settings (permissions aside) and its tools. A worker refuses to continue a run whose fingerprint differs, so a changed task needs a new version.</p>
+<ul>
+<li><strong>Upgrading thunc doesn't change a fingerprint.</strong> A task registered the same way gets the same fingerprint on every 0.x release from 0.6 on, and the same holds through 1.x. A new option only joins the fingerprint when it's set, so tasks that don't use it keep theirs.</li>
+<li><strong>If a release must change fingerprints</strong>, for example to fix one that missed something a run depends on, the changelog says so under <strong>Behavior changes</strong>, a release ahead where possible: let runs on the old fingerprints finish before upgrading the workers.</li>
+<li><code>tests/temporal/test_fingerprints.py</code> pins the fingerprints of a set of task definitions, so a change to one fails the tests.</li>
+</ul>
+
+<h2 id="stability">What's stable</h2>
+<p>From 0.6, the agent API is frozen: <code>thunc.Agent</code> and its methods, <code>@thunc.agent</code>, <code>thunc.Run</code>, <code>thunc.AgentError</code>, and the run record. Together with the rest of <code>thunc.__all__</code> and <code>thunc.testing</code>, it's listed signature by signature in <code>tests/api.txt</code>, and a test fails on any change to it. Additions are made freely; a removal or a change goes through a deprecation (below). Two things stay outside that promise:</p>
+<ul>
+<li><strong><a href="write.html">thunc write</a></strong> (<code>write=True</code> and the <code>thunc write</code> command) stays experimental through 1.0: it may change, or be removed, without a deprecation period.</li>
+<li><strong>The <a href="watch.html">thunc watch</a> dashboard's screens and keys</strong> may change as feedback comes in; the <a href="#events">events</a> it reads are a versioned format.</li>
+</ul>
 
 <h2 id="deprecations">Deprecations</h2>
 <p>Part of the API that's going away keeps working for at least two minor releases, and warns with <code>thunc.ThuncDeprecationWarning</code> where you use it, naming the release that removes it and what to use instead. The warning is shown by default, once per place in your code; turn it off with <code>warnings.filterwarnings("ignore", category=thunc.ThuncDeprecationWarning)</code>, or make it an error in your tests with <code>-W error::thunc.ThuncDeprecationWarning</code>. The <a href="changelog.html">changelog</a> lists deprecations and removals in each release. Experimental features (<a href="write.html">thunc write</a>) can change without one.</p>

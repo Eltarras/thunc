@@ -83,6 +83,15 @@ A change to the events in `thunc/events.py` is a change to what the dashboard re
   [Temporal guide](examples/temporal/README.md) when you change durable runs.
 - **One change per PR**, with a description of what it does and how you tested it.
 
+## The public API is frozen
+
+`tests/api.txt` lists every public signature: everything in `thunc.__all__` (the agent API included,
+frozen from 0.6), `thunc.testing`, and the dataclasses an agent run returns. `tests/test_api.py`
+fails when the API differs from it. An addition is fine: regenerate the file with
+`THUNC_UPDATE_API=1 .venv/bin/pytest tests/test_api.py` and commit it with the change. A removal, a
+renamed or retyped parameter, or a changed default goes through a deprecation first (below). thunc
+write (`write=True`) stays experimental through 1.0, outside this promise.
+
 ## Deprecations
 
 Before 1.0 the API can still change, but not under anyone's feet. A public name, argument or behavior
@@ -196,9 +205,10 @@ no reliable way to tell them from a real one. Only an empty reply is retried.
 - Tokens aren't reported for native runs on Codex: `codex exec --json` reports usage at the end of
   a turn, and a run ends inside one when the model calls `finish`.
 - Durable runs on `codex` use the JSON text protocol, not native calls.
-- On a fix in a long file (`deep_fix` in the tool-use benchmark), native calls take about twice
-  Claude Code's steps (8 against 4.3), reading around the file in pages. A larger `read` limit is
-  the next thing to measure.
+- On a fix in a long file (`deep_fix` in the tool-use benchmark), native calls take 8 steps against
+  Claude Code's 5, reading around the file in pages. Measured: a default `read` of the whole file
+  halves the steps but doubles the cost, and 1,000 lines changes nothing, so 400 stays (see the
+  [benchmark report](live_tests/bench_tooluse_report.md)).
 - Durable runs on Claude Code save the whole session file at each checkpoint, so a long run's saved
   state grows with every reply, and counts toward the 16 MiB limit. A CLI that dies leaves Claude
   Code's own `~/.claude/sessions/<pid>.json` behind.

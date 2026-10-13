@@ -57,6 +57,11 @@ def check_sync() -> None:
     assert_type(urgency("x"), int)
 
 
+async def check_agent_async(agent: thunc.Agent) -> None:
+    assert_type(await agent.acall("x"), str)
+    assert_type(await agent.acall("x", returns=Literal["yes", "no"]), Literal["yes", "no"])
+
+
 def check_agent(agent: thunc.Agent) -> None:
     assert_type(agent.call("x"), str)
     assert_type(agent.call("x", returns=Literal["yes", "no"]), Literal["yes", "no"])

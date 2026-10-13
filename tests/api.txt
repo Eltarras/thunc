@@ -1,0 +1,76 @@
+# thunc
+def thunc.acall(instructions: str, inputs: Mapping[str, Any] | None = None, *, returns: Any = str, retries: int = 2, ensure: Callable[[Any], bool] | None = None, backend: str | None = None, model: str | None = None, system: str | None = None, cache: bool = False, name: str | None = None) -> Any
+class thunc.Agent(name: str, *, workdir: str | os.PathLike[str], system: str | None = None, permissions: Iterable[str] = (), env: Mapping[str, str] | None = None, command_timeout: float = 120.0, follow: bool | Sequence[str] = False, protocol: Literal["native", "text"] | None = None, tools: Sequence[Callable[..., Any]] = (), timeout: float | None = None, max_steps: int = 40, retries: int = 2, backend: str | None = None, model: str | None = None, effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None) -> None
+    def acall(self, instructions: str, inputs: Mapping[str, Any] | None = None, *, returns: Any = str, ensure: Callable[[Any], bool] | None = None) -> Any
+    def call(self, instructions: str, inputs: Mapping[str, Any] | None = None, *, returns: Any = str, ensure: Callable[[Any], bool] | None = None) -> Any
+    property folder
+    property memory
+    def run(self, task: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Run[Any]
+    def system_prompt(self, memory: str | None = None) -> str
+    def task(self, func: Callable[..., Any] | None = None, /, *, instructions: str | None = None, ensure: Callable[[Any], bool] | None = None) -> Any
+    def tools(self) -> list[str]
+def thunc.agent(name: str, /, *, workdir: str | os.PathLike[str], instructions: str | None = None, ensure: Callable[[Any], bool] | None = None, **options: Any) -> Callable[[Callable[P, R]], Callable[P, R]]
+class thunc.AgentError(message: str, run: Run[None]) -> None
+def thunc.amap(func: Callable[[A], Any], items: Iterable[A], *, workers: int = 8) -> list[Any]
+def thunc.cache_info() -> list[CacheGroup]
+class thunc.CacheGroup(function: str | None, module: str | None, entries: int, size: int, newest: dt.datetime, readable: bool = True) -> None
+    field function: str | None
+    field module: str | None
+    field entries: int
+    field size: int
+    field newest: dt.datetime
+    field readable: bool
+def thunc.call(instructions: str, inputs: Mapping[str, Any] | None = None, *, returns: Any = str, retries: int = 2, ensure: Callable[[Any], bool] | None = None, backend: str | None = None, model: str | None = None, system: str | None = None, cache: bool = False, name: str | None = None) -> Any
+def thunc.clear_cache(function: Callable[..., Any] | str | None = None, *, older_than: float | dt.timedelta | None = None) -> int
+def thunc.configure(backend: str | None = None, *, api_key: str | None = None, model: str | None = None, timeout: float | None = None, trace: str | None = None, cache_dir: str | None = None, system: str | None = None, agents_dir: str | None = None, recordings: str | None = None) -> None
+def thunc.function(func: Callable[..., Any] | None = None, /, *, instructions: str | None = None, retries: int = 2, ensure: Callable[[Any], bool] | None = None, backend: str | None = None, model: str | None = None, system: str | None = None, cache: bool = False, write: bool = False) -> Any
+def thunc.map(func: Callable[[A], Any], items: Iterable[A], *, workers: int = 8) -> list[Any]
+thunc.prompts: module
+def thunc.register_backend(name: str, backend: TextBackend | TypedBackend | Callable[..., str], *, typed: bool = False, default_model: str | None = None, replace: bool = False) -> None
+class thunc.Run(task: str, value: T, steps: int, seconds: float, session: str, files_changed: list[str] = <factory>, commands: list[Command] = <factory>, denied: list[Denial] = <factory>, notes: list[str] = <factory>, followed: list[str] = <factory>, error: str | None = None) -> None
+    field task: str
+    field value: T
+    field steps: int
+    field seconds: float
+    field session: str
+    field files_changed: list[str]
+    field commands: list[Command]
+    field denied: list[Denial]
+    field notes: list[str]
+    field followed: list[str]
+    field error: str | None
+class thunc.TextBackend(*args, **kwargs)
+class thunc.ThuncDeprecationWarning(...)
+class thunc.ThuncError(...)
+class thunc.TransientError(...)
+class thunc.TypedBackend(*args, **kwargs)
+def thunc.unregister_backend(name: str) -> None
+
+# thunc.testing
+def thunc.testing.act(tool: str, **args: Any) -> str
+def thunc.testing.as_text(reply: Any) -> str
+def thunc.testing.fake_model(replies: Replies | None = None) -> Iterator[FakeModel]
+class thunc.testing.FakeModel(replies: Replies | None = None) -> None
+    def reply(self, *replies: Any, function: str | None = None) -> FakeModel
+    def requests_for(self, function: str) -> list[Request]
+def thunc.testing.finish(value: Any) -> str
+def thunc.testing.isolated() -> Iterator[None]
+class thunc.testing.Request(function: str | None, instructions: str, inputs: dict[str, Any], returns: Any, prompt: str, system: str, agent: bool, n: int) -> None
+    field function: str | None
+    field instructions: str
+    field inputs: dict[str, Any]
+    field returns: Any
+    field prompt: str
+    field system: str
+    field agent: bool
+    field n: int
+
+# thunc.runs
+class thunc.runs.Command(command: str, exit_code: int | None, seconds: float) -> None
+    field command: str
+    field exit_code: int | None
+    field seconds: float
+class thunc.runs.Denial(tool: str, target: str, reason: str) -> None
+    field tool: str
+    field target: str
+    field reason: str

@@ -8,6 +8,23 @@
 
 The folder is under configure(agents_dir=...), THUNC_AGENTS_DIR or ./.thunc_agents. Nothing is
 written until the agent's first run.
+
+A run's record is one JSON line per event, each with "time" and "event". The first line, start,
+has "format" (RECORD_FORMAT). The lines:
+
+    start      format, task, instructions, inputs, returns, memory_characters, followed (path ->
+               hash), protocol ("native", "mcp", "text" or "replay"), settings_changed_from (only
+               when agent.json changed)
+    fallback   protocol, reason: native calls couldn't start, so the run went on the text protocol
+    retry      attempt, error: a model reply that failed for a reason worth asking again
+    step       n, then tool, args, result (cut to 4,000 characters) and denied (only when true)
+               for a tool call; or reply and result ("error: ...") for a reply with no usable call
+    finish     n, value, files_changed
+    error      error, files_changed: the run failed
+
+Within one format, events and fields are only added, never removed or given another meaning, and
+a reader ignores what it doesn't know. A change that a reader of the old format would misread gets
+a new format number. The same rule holds for the THUNC_EVENTS stream (events.py).
 """
 
 from __future__ import annotations
@@ -30,6 +47,7 @@ from .errors import ThuncError
 MEMORY_LIMIT = 25_000  # characters of memory.md put in the prompt; the newest notes are kept
 NOTE_LIMIT = 500  # characters in one note
 WAIT_WARNING_SECONDS = 5.0  # a run that waits this long for another run of its agent says so
+RECORD_FORMAT = 1  # of a run's record, on its start line; see the module docs for when it changes
 
 
 def slug(name: str) -> str:

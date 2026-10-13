@@ -246,6 +246,7 @@ pub struct SessionReader {
     steps: u32,
     pub ended: bool,
     pub started: bool,
+    skipped: bool, // a record in a format this dashboard doesn't know: shown as nothing
 }
 
 impl SessionReader {
@@ -258,10 +259,14 @@ impl SessionReader {
             steps: 0,
             ended: false,
             started: false,
+            skipped: false,
         }
     }
 
     pub fn line(&mut self, line: &str) -> Vec<Ev> {
+        if self.skipped {
+            return vec![];
+        }
         let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
             return vec![];
         };
@@ -273,6 +278,12 @@ impl SessionReader {
         self.prev_t = Some(t);
         let key = self.key.clone();
         match event {
+            "start" if v.get("format").and_then(Value::as_u64).unwrap_or(1) != 1 => {
+                // A newer thunc's record: its lines may not mean what this dashboard thinks.
+                self.skipped = true;
+                self.ended = true;
+                vec![]
+            }
             "start" => {
                 self.started = true;
                 vec![Ev::AgentStart {
@@ -418,5 +429,18 @@ mod tests {
             matches!(&end[..], [Ev::AgentStep { tool, .. }, Ev::AgentEnd { ok: true, steps: 3, .. }] if tool == "finish")
         );
         assert!(r.ended);
+    }
+
+    #[test]
+    fn a_session_record_in_a_newer_format_is_skipped() {
+        let mut r = SessionReader::new("repo-guide", "/x/s.jsonl");
+        let start = r.line(r#"{"time": "2026-10-05T14:02:11+0000", "event": "start", "format": 2, "task": "t"}"#);
+        assert!(start.is_empty() && r.ended);
+        let step =
+            r.line(r#"{"time": "2026-10-05T14:02:14+0000", "event": "step", "n": 1, "tool": "run", "result": "x"}"#);
+        assert!(step.is_empty());
+        let mut known = SessionReader::new("repo-guide", "/x/s.jsonl");
+        let start = known.line(r#"{"time": "2026-10-05T14:02:11+0000", "event": "start", "format": 1, "task": "t"}"#);
+        assert!(matches!(&start[..], [Ev::AgentStart { .. }]));
     }
 }

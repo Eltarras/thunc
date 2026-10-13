@@ -11,6 +11,30 @@ findings follow the reruns below; findings 1, 2, 5 and 6 are now fixed, and find
 
 Reproduce with `python -m live_tests.bench_tooluse` (see its docstring).
 
+## Read limit on `deep_fix`, 11 October 2026
+
+The open item from the 0.2.3 rerun: does a larger `read` limit cut `deep_fix`'s turns? `--harness thunc
+--tasks deep_fix --runs 3 --model claude-opus-5-5 --read-limit N`, where `--read-limit` sets the lines
+`read` gives when the model asks for no limit (and raises the cap on one tool result to fit).
+
+| Default read | Passed | Turns | Seconds | $ per run |
+|---|---|---|---|---|
+| 400 lines (the default) | 3/3 | 8.0 | 17 | 0.092 |
+| 1,000 lines | 3/3 | 8.0 | 17 | 0.127 |
+| 2,500 lines (the whole 2,000-line file) | 3/3 | 4.0 | 11 | 0.181 |
+
+- **Only reading the whole file cuts the turns.** At 1,000 lines the model still searches for the
+  function and reads around it, the same 8 turns, at 38% more cost; at 2,500 it fixes the bug from
+  the first read, in half the turns and a third less time.
+- **It doubles the cost.** The whole file stays in the context for every later turn.
+- **400 stays the default.** thunc's edge on these tasks is cost (78% below Claude Code's on Opus),
+  and a run that wants the whole file can ask for it: `read` takes a `limit`.
+
+Still open, and not fixable from thunc's side of `codex exec --json`, which has no event marking a
+model reply and reports tokens only when a turn ends: steps on native Codex runs count calls, and a
+native Codex run reports no tokens. Fixing either needs a source Codex documents for both, such as a
+per-reply event in `--json`; its session files have them, but in no documented format.
+
 ## Opus 5.5 rerun, 10 October 2026
 
 `--harness thunc,claude-code --runs 3 --model claude-opus-5-5`, run from the `0.3/self-writing-functions`

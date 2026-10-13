@@ -27,6 +27,7 @@ note saved with remember is on disk at once and reaches the model in the next ru
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import inspect
@@ -36,7 +37,7 @@ import time
 import typing
 import warnings
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar, overload
 
 from . import claude_code, codex, config, events, native, profiling, recordings, relay, tools
 from .backends import TYPED_BACKENDS
@@ -49,7 +50,7 @@ from .permissions import Permissions
 from .prompts import AGENT_CONTRACT, AGENT_PERSONA, method
 from .runs import AgentError, Run
 from .schema import describe, json_schema, resolve_strings, shorten, validate
-from .store import Session, Store, slug
+from .store import RECORD_FORMAT, Session, Store, slug
 
 if TYPE_CHECKING:  # for type checkers only: thunc has no dependencies at run time
     from typing_extensions import TypeForm  # returns=Literal[...] is typed as the Literal, not Any
@@ -103,14 +104,14 @@ class Agent:
         env: Mapping[str, str] | None = None,
         command_timeout: float = 120.0,
         follow: bool | Sequence[str] = False,
-        protocol: str | None = None,
+        protocol: Literal["native", "text"] | None = None,
         tools: Sequence[Callable[..., Any]] = (),
         timeout: float | None = None,
         max_steps: int = 40,
         retries: int = 2,
         backend: str | None = None,
         model: str | None = None,
-        effort: str | None = None,
+        effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None,
     ) -> None:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("An agent needs a name: thunc.Agent('my-agent', workdir=...)")
@@ -277,6 +278,52 @@ class Agent:
             raise ValueError("agent.call needs instructions: a string saying what to do")
         describe(returns)  # an unsupported type fails here, before the run
         return self._run(f"{self.name}.call", "call", instructions, dict(inputs or {}), returns, ensure).value
+
+    @overload
+    async def acall(
+        self,
+        instructions: str,
+        inputs: Mapping[str, Any] | None = None,
+        *,
+        ensure: Callable[[str], bool] | None = None,
+    ) -> str: ...
+    @overload
+    async def acall(
+        self,
+        instructions: str,
+        inputs: Mapping[str, Any] | None = None,
+        *,
+        returns: type[T],
+        ensure: Callable[[T], bool] | None = None,
+    ) -> T: ...
+    @overload
+    async def acall(
+        self,
+        instructions: str,
+        inputs: Mapping[str, Any] | None = None,
+        *,
+        returns: TypeForm[T],
+        ensure: Callable[[T], bool] | None = None,
+    ) -> T: ...
+    @overload
+    async def acall(
+        self,
+        instructions: str,
+        inputs: Mapping[str, Any] | None = None,
+        *,
+        returns: Any,
+        ensure: Callable[[Any], bool] | None = None,
+    ) -> Any: ...
+    async def acall(
+        self,
+        instructions: str,
+        inputs: Mapping[str, Any] | None = None,
+        *,
+        returns: Any = str,
+        ensure: Callable[[Any], bool] | None = None,
+    ) -> Any:
+        """agent.call, to await. The run goes on in a worker thread, so the event loop stays free."""
+        return await asyncio.to_thread(self.call, instructions, inputs, returns=returns, ensure=ensure)
 
     def system_prompt(self, memory: str | None = None) -> str:
         """The system prompt a run sends now: the fixed part (with any followed files), then the memory.
@@ -451,6 +498,7 @@ class Agent:
             try:
                 session.write(
                     "start",
+                    format=RECORD_FORMAT,
                     task=task,
                     instructions=instructions,
                     inputs=inputs,

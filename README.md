@@ -32,7 +32,8 @@ type; if it doesn't fit, the model is asked again, and after that `thunc.ThuncEr
 dependencies, Python 3.10+.
 
 It also runs [agents](#agents): typed functions that can read, edit and test your code before they
-answer. New in 0.5: [thunc.testing](#testing-with-a-fake-model-thunctesting), a fake model and
+answer. New in 0.6: the agent API is frozen, and the run record, the events and durable fingerprints
+have a compatibility promise. In 0.5: [thunc.testing](#testing-with-a-fake-model-thunctesting), a fake model and
 pytest fixtures for your tests, `thunc.register_backend` for your own backends, and Ollama. In 0.4:
 [record and replay](#recording-and-replaying) runs your tests and CI with no model, `Enum` return
 types, and `thunc.acall` / `thunc.amap` for async code. `thunc watch` shows a
@@ -65,7 +66,7 @@ With an API key set, thunc picks that backend on its own, so `THUNC_BACKEND` isn
 `thunc.configure(backend=...)` does the same. Durable agents on Temporal add
 `pip install "thunc[temporal]"`.
 
-> **Beta (v0.5).** The API may still change. Bug reports and feedback are welcome in
+> **Beta (v0.6).** The API may still change. Bug reports and feedback are welcome in
 > [issues](https://github.com/Eltarras/thunc/issues).
 
 **More examples.** Clone the repo and run them from its root, with no install, through your
@@ -380,7 +381,7 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
 ## thunc write
 
-> **Experimental, new in 0.3.** Its behavior, options and the code it writes may change, or it may be removed, in a later
+> **Experimental, new in 0.3, and staying so through 1.0.** Its behavior, options and the code it writes may change, or it may be removed, in a later
 > release without a deprecation period. thunc write edits your source files, while you develop, as a diff to review.
 
 Functions that write themselves. With `write=True`, a function writes its own body on its first call:
