@@ -226,18 +226,37 @@ def minutes(duration: str) -&gt; int:
 </section>
 
 <section class="band">
+  <div class="wrap grid2" style="align-items:start">
+    <div>
+      <div class="eyebrow accent">Testing · new in 0.4 and 0.5</div>
+      <h2 style="margin-top:8px">Tests that need no model.</h2>
+      <p class="muted" style="margin-top:12px;font-size:17px">Record your test suite's answers once and replay them in CI, with no model, backend or API key: a call that wasn't recorded fails instead of spending money. Or script the answers yourself with a fake model, and check what each call sent.</p>
+      <a class="btn" href="docs/caching.html#fake">Read the testing guide</a>
+    </div>
+    <div>
+      <div class="codeblock"><div class="label">conftest.py</div><pre><code class="py">thunc.configure(recordings="tests/recordings")</code></pre></div>
+      <div class="codeblock"><div class="label">record once, replay in CI</div><pre><code class="sh">THUNC_RECORD=1 pytest   # ask the model, save the answers
+pytest                  # replay: no model is asked</code></pre></div>
+      <div class="codeblock"><div class="label">or script the model</div><pre><code class="py">def test_triage(thunc_model):  # a fixture from thunc
+    thunc_model.reply({"urgency": 4, "category": "bug"})
+    assert triage("I was charged twice") == ("bug", 4)</code></pre></div>
+    </div>
+  </div>
+</section>
+
+<section class="band">
   <div class="wrap">
     <div class="head">
       <div class="eyebrow accent">Backends</div>
       <h2 style="margin-top:8px">Runs on what you already have.</h2>
-      <p>Choose per program, per function or per call. Mix them: a fast judgment model for decisions, a frontier model for writing.</p>
+      <p>Choose per program, per function or per call. Mix them: a fast judgment model for decisions, a frontier model for writing. Anything else is a function away: <a href="docs/backends.html#custom"><code>thunc.register_backend</code></a>.</p>
     </div>
     <div class="backends">
       <div><b>Claude Code</b><code>backend="claude-code"</code><p>Your local login. No API key, no SDK.</p></div>
       <div><b>Codex</b><code>backend="codex"</code><p>Your local login. No API key, no SDK.</p></div>
       <div><b>Claude API</b><code>thunc[anthropic]</code><p>Native tool calls and prompt caching for agents.</p></div>
       <div><b>OpenAI API</b><code>thunc[openai]</code><p>The Responses API, with native tool calls.</p></div>
-      <div><b>Local models</b><code>OPENAI_BASE_URL</code><p>Tested with LM Studio and gpt-oss-20b.</p></div>
+      <div><b>Local models</b><code>OPENAI_BASE_URL</code><p>Tested with LM Studio and gpt-oss-20b. Ollama 0.13.3+ works the same way.</p></div>
       <div><b>Jev</b><code>backend="jev"</code><p>Yes/no, labels and ratings in about 0.3 s.</p></div>
     </div>
   </div>
@@ -248,13 +267,15 @@ def minutes(duration: str) -&gt; int:
     <div>
       <div class="eyebrow accent">Or just pass a string</div>
       <h2 style="margin-top:8px">Prompts built in code.</h2>
-      <p class="muted" style="margin-top:12px;font-size:17px">When the prompt comes from a variable, a config file or a loop, call <code>thunc.call</code> with it. You still get typed, checked results, and <code>thunc.map</code> runs many at once.</p>
+      <p class="muted" style="margin-top:12px;font-size:17px">When the prompt comes from a variable, a config file or a loop, call <code>thunc.call</code> with it. You still get typed, checked results, and <code>thunc.map</code> runs many at once. In async code, await <code>thunc.acall</code> and <code>thunc.amap</code>.</p>
     </div>
     <div class="codeblock"><pre><code class="py">text = thunc.call(f"Translate into {lang}.", {"note": note})
 
 score = thunc.call(rubric, {"answer": answer}, returns=int)
 
-scores = thunc.map(urgency, tickets, workers=8)</code></pre></div>
+scores = thunc.map(urgency, tickets, workers=8)
+
+labels = await thunc.amap(category, tickets)</code></pre></div>
   </div>
 </section>
 
@@ -264,7 +285,7 @@ scores = thunc.map(urgency, tickets, workers=8)</code></pre></div>
       <div style="max-width:620px">
         <div class="eyebrow accent">Optional · new in 0.2.1</div>
         <h3 style="font:600 22px/1.3 var(--display);margin:6px 0 6px">Durable agents with Temporal</h3>
-        <p class="muted" style="margin:0">Recorded model turns, recoverable tool effects, reconnectable runs and explicit resolution of uncertain commands. Local calls keep their dependency-free runtime.</p>
+        <p class="muted" style="margin:0">Recorded model turns, recoverable tool effects, reconnectable runs and explicit resolution of uncertain commands. Upgrading thunc leaves runs in flight alone: a task's fingerprint doesn't change. Local calls keep their dependency-free runtime.</p>
       </div>
       <a class="btn" href="docs/temporal.html">Temporal guide</a>
     </div>

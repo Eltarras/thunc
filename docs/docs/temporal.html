@@ -134,6 +134,7 @@ await handle.resolve(
 <li>Agent permissions are not an OS sandbox. Local agent execution refuses durable-owned workspaces.</li>
 <li>Submissions and final results have a 256 KiB inline budget; immutable state snapshots have a 16 MiB ceiling. Represent larger final results with application-managed artifact references. Tombstones and artifacts are retained; there is no automatic garbage collection.</li>
 <li>Version task definitions and deployment queues, keep compatible workers until their runs drain, and replay saved histories before changing orchestration.</li>
+<li>Upgrading thunc doesn't change the fingerprint of a task registered the same way, so runs in flight survive it; a release that must change fingerprints says so a release ahead. See <a href="api.html#fingerprints">durable task fingerprints</a>.</li>
 <li>A configured Temporal DataConverter or PayloadCodec protects service payloads as configured; local SQLite and artifacts need their own encrypted storage and filesystem permissions.</li>
 </ul>
 
