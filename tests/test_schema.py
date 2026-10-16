@@ -1,11 +1,14 @@
 """Return types: parsing model text into checked values."""
 
+import copy
+import json
 import time
 from dataclasses import InitVar, dataclass, field
 from enum import Enum, IntEnum
-from typing import Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 import pytest
+from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field, RootModel, create_model
 
 import thunc
 from thunc.schema import describe, json_schema, parse
@@ -15,6 +18,72 @@ from thunc.schema import describe, json_schema, parse
 class Order:
     order_id: str
     amount: float | None = None
+
+
+class Invoice(BaseModel):
+    vendor: str
+    total_eur: float
+    note: str | None = None
+
+
+class Address(BaseModel):
+    city: str
+
+
+class CustomerModel(BaseModel):
+    name: str
+    address: Address = Field(description="The customer's address")
+
+
+class Node(BaseModel):
+    name: str
+    children: list["Node"] = Field(default_factory=list)
+
+
+class Cat(BaseModel):
+    kind: Literal["cat"]
+    lives: int
+
+
+class Dog(BaseModel):
+    kind: Literal["dog"]
+    bark: bool
+
+
+class PetOwner(BaseModel):
+    pet: Annotated[Cat | Dog, Field(discriminator="kind")]
+
+
+class FlexibleAliases(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    value: int = Field(validation_alias=AliasChoices("first", AliasPath("payload", "value")))
+
+
+class NumberRoot(RootModel[int]):
+    pass
+
+
+class NamesRoot(RootModel[list[str]]):
+    pass
+
+
+class CompatibleModel:
+    def __init__(self, value):
+        self.value = value
+
+    def __eq__(self, other):
+        return isinstance(other, CompatibleModel) and self.value == other.value
+
+    @classmethod
+    def model_json_schema(cls):
+        return {"type": "object", "properties": {"value": {"type": "integer"}}, "required": ["value"]}
+
+    @classmethod
+    def model_validate(cls, value):
+        if not isinstance(value, dict) or not isinstance(value.get("value"), int):
+            raise ValueError("value must be an integer")
+        return cls(value["value"])
 
 
 @pytest.mark.parametrize(
@@ -32,11 +101,145 @@ class Order:
         ("null", int | None, None),
         ('{"order_id": "A-1", "amount": 49}', Order, Order("A-1", 49.0)),
         ('{"order_id": "A-1"}', Order, Order("A-1")),
+        ('{"vendor": "Acme", "total_eur": 49}', Invoice, Invoice(vendor="Acme", total_eur=49)),
+        (
+            '{"name": "Ana", "address": {"city": "Bratislava"}}',
+            CustomerModel,
+            CustomerModel(name="Ana", address=Address(city="Bratislava")),
+        ),
+        ('{"home": {"city": "Bratislava"}}', dict[str, Address], {"home": Address(city="Bratislava")}),
+        ("4", NumberRoot, NumberRoot(4)),
+        ('["a", "b"]', NamesRoot, NamesRoot(["a", "b"])),
         ("  hello  ", str, "hello"),
     ],
 )
 def test_accepts(text, tp, expected):
     assert parse(text, tp) == expected
+
+
+@pytest.mark.parametrize(
+    "tp, expected",
+    [
+        (
+            Invoice,
+            'a JSON object with these fields: {"vendor": a JSON string, "total_eur": a JSON number, '
+            '"note": a JSON string or null (optional)}',
+        ),
+        (
+            CustomerModel,
+            'a JSON object with these fields: {"name": a JSON string, "address": '
+            'a JSON object with these fields: {"city": a JSON string}}',
+        ),
+        (NumberRoot, "a JSON integer"),
+        (NamesRoot, "a JSON array whose items are each a JSON string"),
+    ],
+)
+def test_describes_pydantic_models(tp, expected):
+    assert describe(tp) == expected
+
+
+def test_pydantic_validation_errors_are_short():
+    with pytest.raises(ValueError) as caught:
+        parse('{"vendor": "Acme", "total_eur": "bad"}', Invoice)
+    assert "Invoice" in str(caught.value) and "total_eur" in str(caught.value)
+    assert len(str(caught.value)) <= 203
+
+
+def test_pydantic_schema_is_self_contained_when_embedded():
+    @dataclass
+    class Result:
+        customers: list[CustomerModel] | None
+
+    tool_schema = {"type": "object", "properties": {"value": json_schema(Result)}, "required": ["value"]}
+    shown = repr(tool_schema)
+    address = tool_schema["properties"]["value"]["properties"]["customers"]["anyOf"][0]["items"]["properties"][
+        "address"
+    ]
+
+    assert "$defs" not in shown and "$ref" not in shown
+    assert address["description"] == "The customer's address"
+    assert address["allOf"][0]["properties"]["city"]["type"] == "string"
+    assert json_schema(dict[str, Address])["additionalProperties"]["properties"]["city"]["type"] == "string"
+
+
+def test_inlining_copies_schemas_and_avoids_definition_collisions():
+    original = {
+        "$defs": {"Value": {"type": "integer"}},
+        "type": "object",
+        "properties": {"value": {"$ref": "#/$defs/Value"}},
+    }
+
+    class ReusedSchema:
+        @classmethod
+        def model_json_schema(cls):
+            return original
+
+        @classmethod
+        def model_validate(cls, value):
+            return value
+
+    before = copy.deepcopy(original)
+    assert json_schema(ReusedSchema)["properties"]["value"] == {"type": "integer"}
+    assert original == before
+
+    left = create_model("Detail", left=(int, ...))
+    right = create_model("Detail", right=(str, ...))
+    schema = json_schema(create_model("First", detail=(left, ...)) | create_model("Second", detail=(right, ...)))
+    assert set(schema["anyOf"][0]["properties"]["detail"]["properties"]) == {"left"}
+    assert set(schema["anyOf"][1]["properties"]["detail"]["properties"]) == {"right"}
+
+
+def test_recursive_and_discriminated_pydantic_models():
+    recursive = json_schema(Node)
+    assert recursive["properties"]["children"]["items"] == {"type": "object"}
+    assert "$ref" not in repr(recursive)
+
+    discriminated = json_schema(PetOwner)
+    shown = repr(discriminated)
+    choices = discriminated["properties"]["pet"]["oneOf"]
+    assert "$ref" not in shown and "discriminator" not in shown
+    assert [choice["properties"]["kind"]["const"] for choice in choices] == ["cat", "dog"]
+    assert "exactly this JSON value" in describe(PetOwner)
+
+
+@pytest.mark.parametrize("field", ["value", "first", "payload"])
+def test_pydantic_field_names_and_aliases_are_not_unwrapped(field):
+    with pytest.raises(ValueError):
+        parse(json.dumps({field: {"first": 3}}), FlexibleAliases)
+    assert parse('{"result": {"first": 3}}', FlexibleAliases) == FlexibleAliases(first=3)
+
+
+def test_duck_typed_models_and_existing_types_keep_their_behavior():
+    assert parse('{"value": 3}', CompatibleModel) == CompatibleModel(3)
+    assert describe(CompatibleModel) == 'a JSON object with these fields: {"value": a JSON integer}'
+
+    @dataclass
+    class CompatibleDataclass:
+        value: int
+
+        @classmethod
+        def model_json_schema(cls):
+            return {"type": "string"}
+
+        @classmethod
+        def model_validate(cls, value):
+            return "wrong path"
+
+    class CompatibleEnum(str, Enum):
+        VALUE = "value"
+
+        @classmethod
+        def model_json_schema(cls):
+            return {"type": "object"}
+
+        @classmethod
+        def model_validate(cls, value):
+            return "wrong path"
+
+    assert parse('{"value": 3}', CompatibleDataclass) == CompatibleDataclass(3)
+    assert json_schema(CompatibleDataclass)["properties"]["value"] == {"type": "integer"}
+    assert parse('"value"', CompatibleEnum) is CompatibleEnum.VALUE
+    assert json_schema(CompatibleEnum) == {"enum": ["value"]}
 
 
 @dataclass
