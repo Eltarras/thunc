@@ -381,7 +381,7 @@ empty bodies; turn that off with `disable_error_code = ["empty-body"]`.
 
 ## thunc write
 
-> **Experimental, new in 0.3, and staying so through 1.0.** Its behavior, options and the code it writes may change, or it may be removed, in a later
+> **Experimental, and staying so through 1.0.** Its behavior, options and the code it writes may change, or it may be removed, in a later
 > release without a deprecation period. thunc write edits your source files, while you develop, as a diff to review.
 
 Functions that write themselves. With `write=True`, a function writes its own body on its first call:
@@ -422,7 +422,8 @@ The checks are only as good as the model's answers, so review the rule it wrote.
 
 ## Agents
 
-> **New in 0.2.** Agents are new; their API may change in a later release as feedback comes in.
+> **Stable since 0.6.** The agent API is frozen: it changes only through a deprecation, so a
+> program written for 0.6 keeps working.
 
 ![An agent allowed to write src/** and run pytest is asked to run the tests and fix any problems. pytest shows 1 failure; it reads src/pricing.py, fixes one line, reruns pytest (3 passed) and returns True.](https://raw.githubusercontent.com/Eltarras/thunc/main/.github/demo-agent.gif)
 
@@ -599,8 +600,8 @@ benchmark in `live_tests/bench_tooluse.py` and its report.
 
 ## Durable agents with Temporal
 
-> **New in 0.2.1.** Install with `pip install "thunc[temporal]"`. Durable agents are new; their
-> API may change in a later release as feedback comes in.
+> Install with `pip install "thunc[temporal]"`. `thunc.temporal` is outside the frozen API and may
+> change in a later release; task fingerprints stay the same across upgrades.
 
 The optional `thunc.temporal` runtime records each agent model turn and tool result
 in a Temporal workflow. Workers can restart and continue recorded progress. Existing

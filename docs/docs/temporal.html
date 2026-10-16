@@ -58,11 +58,11 @@
 </aside>
 <main>
 <header>
-  <div class="eyebrow">Optional · new in 0.2.1</div>
+  <div class="eyebrow">Optional</div>
   <h1>Durable agents with Temporal</h1>
   <p class="lede">Keep your task definitions, and run them on a separate runtime when execution needs to survive worker restarts. Each model turn and tool result is recorded in a Temporal workflow, so a restarted worker continues where it left off.</p>
 </header>
-<div class="callout"><p><strong>New in thunc 0.2.1.</strong> Durable agents are new; their API may change in a later release. Local thunc calls and <code>agent.run()</code> stay dependency-free and need no Temporal installation.</p></div>
+<div class="callout"><p><strong>Since thunc 0.2.1.</strong> <code>thunc.temporal</code> is outside the <a href="api.html#stability">frozen API</a> and may change in a later release; task <a href="api.html#fingerprints">fingerprints</a> stay the same across upgrades. Local thunc calls and <code>agent.run()</code> stay dependency-free and need no Temporal installation.</p></div>
 
 <h2 id="setup">Start the service and worker</h2>
 <p>Install thunc with the Temporal extra and the <a href="https://docs.temporal.io/cli">official Temporal CLI</a>. The service below is for local development and binds to loopback; production needs a properly operated Temporal service.</p>
