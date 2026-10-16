@@ -187,7 +187,7 @@ labels = await thunc.amap(category, tickets, workers=8)         # thunc.map, awa
 <p><code>thunc.acall</code> takes the same arguments as <code>thunc.call</code>. <code>thunc.amap</code> runs up to <code>workers</code> calls at once and keeps the input order; it takes <code>async def</code> functions and plain ones. The first call that raises cancels the ones that haven't started, and its error is raised. Each call runs in a worker thread, so the event loop keeps running while the model answers.</p>
 
 <h2 id="write">Functions that write themselves: write=True</h2>
-<div class="callout"><p><strong>Experimental, new in 0.3.</strong> It may change, or be removed, in a later release without a deprecation period.</p></div>
+<div class="callout"><p><strong>Experimental through 1.0.</strong> It may change, or be removed, in a later release without a deprecation period.</p></div>
 <p>When a function's docstring describes a rule rather than a judgment, <code>write=True</code> lets the model write the rule once. On its first call, thunc drafts a body from the docstring, checks it against the model's own answers, puts it into your file in place of <code>...</code> and removes the decorator. From then on the function is plain Python, with no model calls. If the task needs judgment, or no draft passes, the call returns the model's answer and the file is left alone.</p>
 <div class="codeblock"><pre><code class="py">@thunc.function(write=True)
 def minutes(duration: str) -&gt; int:

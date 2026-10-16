@@ -103,7 +103,7 @@
       <div class="eyebrow accent">Real objects back</div>
       <h2 style="margin-top:8px">Dataclasses in, dataclasses out.</h2>
       <p class="muted" style="margin-top:12px;font-size:17px">Return types nest, so messy text becomes a <code>list[Item]</code> you can use straight away. This is a real run.</p>
-      <div class="chips" style="margin-top:20px"><span>str</span><span>bool</span><span>int</span><span>float</span><span>Literal[...]</span><span>list[T]</span><span>dict[str, T]</span><span>T | None</span><span>dataclasses</span></div>
+      <div class="chips" style="margin-top:20px"><span>str</span><span>bool</span><span>int</span><span>float</span><span>Literal[...]</span><span>Enum</span><span>list[T]</span><span>dict[str, T]</span><span>T | None</span><span>dataclasses</span></div>
     </div>
     <img class="gif" src="demo-function.gif" width="1200" height="675" alt="A thunc function returning list[Item] is called with &quot;2 oat lattes and a croissant pls. oh, one more latte!&quot; and returns two Item dataclasses: oat latte ×3 and croissant ×1." loading="lazy">
   </div>
@@ -130,7 +130,7 @@
   <div class="wrap grid2">
     <img class="gif" src="demo-agent.gif" width="1200" height="675" alt="An agent allowed to write src/** and run pytest is asked to run the tests and fix any problems. pytest shows 1 failure; it reads src/pricing.py, fixes one line, reruns pytest (3 passed) and returns True." loading="lazy">
     <div>
-      <div class="eyebrow accent">Agents · new in 0.2</div>
+      <div class="eyebrow accent">Agents · API frozen since 0.6</div>
       <h2 style="margin-top:8px">Agents that hand back a typed answer.</h2>
       <p class="muted" style="margin-top:12px;font-size:17px">Give an agent a folder and permissions. It lists, searches, reads, edits and runs commands, then finishes with a checked value of your return type.</p>
       <div class="codeblock"><pre><code class="py">fixer = thunc.Agent(
@@ -152,7 +152,7 @@ def fix_failing_tests() -> bool:
 <section class="band">
   <div class="wrap">
     <div class="head">
-      <div class="eyebrow accent">Watching · new in 0.3</div>
+      <div class="eyebrow accent">Watching</div>
       <h2 style="margin-top:8px">See every call as it happens.</h2>
       <p><code>thunc watch</code> runs your program with a live dashboard in the terminal: the calls waiting on a model, retries and why each reply was rejected, each agent's steps, and a report when it ends. Your program needs nothing added.</p>
     </div>
@@ -199,10 +199,10 @@ def fix_failing_tests() -> bool:
 <section class="band">
   <div class="wrap grid2" style="align-items:start">
     <div>
-      <div class="eyebrow accent">thunc write · experimental · new in 0.3</div>
+      <div class="eyebrow accent">thunc write · experimental</div>
       <h2 style="margin-top:8px">Functions that write themselves.</h2>
       <p class="muted" style="margin-top:12px;font-size:17px">With <code>write=True</code>, a function writes its own body on its first call. The model drafts Python from the docstring, thunc checks it against the model's own answers and puts it into your file, and from then on it's plain Python with no model calls. Every change is a diff for you to review.</p>
-      <p class="muted" style="font-size:15px">Experimental: it may change, or be removed, in a later release.</p>
+      <p class="muted" style="font-size:15px">Experimental through 1.0: it may change, or be removed, in a later release.</p>
       <a class="btn" href="docs/write.html">Read the thunc write guide</a>
     </div>
     <div>
@@ -228,7 +228,7 @@ def minutes(duration: str) -&gt; int:
 <section class="band">
   <div class="wrap grid2" style="align-items:start">
     <div>
-      <div class="eyebrow accent">Testing · new in 0.4 and 0.5</div>
+      <div class="eyebrow accent">Testing</div>
       <h2 style="margin-top:8px">Tests that need no model.</h2>
       <p class="muted" style="margin-top:12px;font-size:17px">Record your test suite's answers once and replay them in CI, with no model, backend or API key: a call that wasn't recorded fails instead of spending money. Or script the answers yourself with a fake model, and check what each call sent.</p>
       <a class="btn" href="docs/caching.html#fake">Read the testing guide</a>
@@ -283,7 +283,7 @@ labels = await thunc.amap(category, tickets)</code></pre></div>
   <div class="wrap">
     <div class="card" style="display:flex;flex-wrap:wrap;gap:18px 32px;align-items:center;justify-content:space-between;padding:26px 28px">
       <div style="max-width:620px">
-        <div class="eyebrow accent">Optional · new in 0.2.1</div>
+        <div class="eyebrow accent">Optional</div>
         <h3 style="font:600 22px/1.3 var(--display);margin:6px 0 6px">Durable agents with Temporal</h3>
         <p class="muted" style="margin:0">Recorded model turns, recoverable tool effects, reconnectable runs and explicit resolution of uncertain commands. Upgrading thunc leaves runs in flight alone: a task's fingerprint doesn't change. Local calls keep their dependency-free runtime.</p>
       </div>
