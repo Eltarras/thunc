@@ -3,7 +3,12 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
-## Unreleased
+## 0.7.0 (beta)
+
+**Recordings survive a thunc upgrade.** A recording is now named by what your code says about a
+call, not by the text thunc sends the model, so a later release that rewords thunc's prompts keeps
+your recordings, and CI, working. Recordings made with 0.4 to 0.6 still replay. A program written
+for 0.6 runs unchanged.
 
 ### Fixed
 
