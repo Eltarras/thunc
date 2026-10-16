@@ -467,7 +467,21 @@ class Agent:
     ) -> Run[Any]:
         request = _request(instructions, inputs, returns)
         record = recordings.mode()
-        recording = recordings.run_key(self.name, task, self.system, request, self.tools()) if record else None
+        recording = (
+            recordings.run_key(
+                self.name,
+                task,
+                self.system,
+                instructions,
+                inputs,
+                returns,
+                self.tools(),
+                list(tools.TOOLS),
+                request=request,
+            )
+            if record
+            else None
+        )
         replay = recordings.run(recording) if recording is not None and record != "all" else None
         if replay is None and record == "replay":
             raise recordings.missing(f"{name}()")

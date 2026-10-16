@@ -7,40 +7,52 @@ and no model is asked. An answer that isn't there raises ThuncError, so CI fails
 spending money or waiting on a login. THUNC_RECORD=1 asks the model and saves every answer there;
 THUNC_RECORD=missing replays what's there and asks for, and saves, only the rest.
 
-A call is matched on what it sends: its function's name, the system prompt and the request (the
-instructions, inputs and return type). The backend and model are saved with the answer but not
-matched, so replaying needs no backend or API key. A recorded answer is checked against the return
-type and ensure= again before it's used, and a failed call is never recorded.
+A call is matched on what the program wrote: its function's name, instructions, inputs, return
+type and system=. thunc's own wording around them (its system prompt, how it describes a type) isn't
+part of the match, so a thunc release that rewords a prompt doesn't make recordings stale. The
+backend and model are saved with the answer but not matched, so replaying needs no backend or API
+key. A recorded answer is checked against the return type and ensure= again before it's used, and a
+failed call is never recorded.
 
-An agent run is matched on its agent, task, request, tools and system=, and the model's replies are
-replayed in order. Its tools run for real: files are written and commands run, as when it was
-recorded. The replies don't depend on what the tools return, so a run whose tools go differently
-can run out of replies, which fails the run.
+An agent run is matched on its agent, task, instructions, inputs, return type, tools and system=,
+and the model's replies are replayed in order. Its tools run for real: files are written and
+commands run, as when it was recorded. The replies don't depend on what the tools return, so a run
+whose tools go differently can run out of replies, which fails the run.
 
 Entries use the answer cache's format (cache.py), one JSON file per call or run, so
 `thunc cache list --cache-dir tests/recordings` lists them and `thunc cache clear` removes them.
+
+Recordings made with thunc 0.4 to 0.6 are named by the text thunc sent (key format 1). They're still
+found, and recording an answer again saves it under its new name and removes the old file.
+tests/test_recordings.py pins both formats' keys, so a change that would lose recordings fails there.
 """
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
+import enum
 import hashlib
 import json
 import os
 import warnings
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from . import config
 from .cache import read, write
 from .config import recordings_dir
 from .errors import ThuncError
-from .schema import shorten
+from .schema import json_schema, shorten
 
 if TYPE_CHECKING:
     from .native import Call, Conversation, Reply
 
-FORMAT = 1  # part of every key: raise it when what a key covers changes
+FORMAT = 2  # part of every key: raise it when what a key covers changes, and keep matching the old one
+LEGACY = 1  # 0.4 to 0.6: named by the text sent to the model, so a reworded prompt lost the recordings
+# The built-in tools a run's key names: those of 0.6. One added later isn't named, so adding a tool
+# leaves every recording where it was.
+KEYED_TOOLS = frozenset({"list", "read", "search", "write", "edit", "run"})
 # THUNC_RECORD's values. Unset (or 0) replays.
 _RECORD: dict[str, str | None] = {"": None, "0": None, "false": None, "no": None, "off": None}
 _RECORD.update({value: "all" for value in ("1", "true", "yes", "on", "all")})
@@ -82,33 +94,88 @@ def check_live(what: str) -> None:
         )
 
 
-def call_key(system: str, request: str, function: str | None) -> str:
-    return _key({"kind": "call", "system": system, "function": function, "request": request})
+@dataclasses.dataclass(frozen=True)
+class Key:
+    """Where a call or run is recorded: `name` from what the program wrote, and `legacy` from the
+    text thunc 0.4 to 0.6 sent, where their recordings are."""
+
+    name: str
+    legacy: str
 
 
-def run_key(agent: str, task: str, system: str | None, request: str, tools: Sequence[str]) -> str:
-    return _key({"kind": "run", "agent": agent, "task": task, "system": system, "request": request, "tools": tools})
+def call_key(
+    function: str | None,
+    instructions: str,
+    inputs: Mapping[str, Any],
+    returns: Any,
+    system: str | None,
+    *,
+    sent: tuple[str, str],
+) -> Key:
+    """A call's key. `system` is the program's own (system= or configure's), `sent` the system
+    prompt and request the model gets, for the legacy name."""
+    sent_system, request = sent
+    return Key(
+        _key(
+            FORMAT,
+            {"kind": "call", "function": function, "system": _system(system), **_task(instructions, inputs, returns)},
+        ),
+        _key(LEGACY, {"kind": "call", "system": sent_system, "function": function, "request": request}),
+    )
 
 
-def answer(key: str) -> dict[str, Any] | None:
+def run_key(
+    agent: str,
+    task: str,
+    system: str | None,
+    instructions: str,
+    inputs: Mapping[str, Any],
+    returns: Any,
+    tools: Sequence[str],
+    builtin: Sequence[str],
+    *,
+    request: str,
+) -> Key:
+    """An agent run's key. `tools` are the names it's offered, of which `builtin` are thunc's own;
+    `request` is its first message, for the legacy name."""
+    keyed = [tool for tool in tools if tool not in builtin or tool in KEYED_TOOLS]
+    return Key(
+        _key(
+            FORMAT,
+            {
+                "kind": "run",
+                "agent": agent,
+                "task": task,
+                "system": _system(system),
+                **_task(instructions, inputs, returns),
+                "tools": keyed,
+            },
+        ),
+        _key(
+            LEGACY, {"kind": "run", "agent": agent, "task": task, "system": system, "request": request, "tools": tools}
+        ),
+    )
+
+
+def answer(key: Key) -> dict[str, Any] | None:
     """The recorded call, with its answer as a string, or None."""
-    entry = read(_folder(), key)
+    entry = _entry(key)
     if entry is None or not isinstance(entry.get("answer"), str):
         return None
     return entry
 
 
 def save_answer(
-    key: str, function: str | None, module: str | None, backend: str, model: str | None, request: str, text: str
+    key: Key, function: str | None, module: str | None, backend: str, model: str | None, request: str, text: str
 ) -> None:
-    entry = {"key": key, "function": function, "module": module, "backend": backend, "model": model}
+    entry = {"key": key.name, "function": function, "module": module, "backend": backend, "model": model}
     # stacklevel: _save <- save_answer <- recorded <- _call <- thunc.call or the @thunc.function wrapper <- the user
     _save(key, {**entry, "request": request, "answer": text}, stacklevel=6)
 
 
-def run(key: str) -> Replay | None:
+def run(key: Key) -> Replay | None:
     """The recorded run, ready to replay, or None if there's none or it can't be read."""
-    entry = read(_folder(), key)
+    entry = _entry(key)
     if entry is None:
         return None
     try:
@@ -124,8 +191,8 @@ def run(key: str) -> Replay | None:
     )
 
 
-def save_run(key: str, function: str, backend: str, model: str | None, request: str, replies: Sequence[Reply]) -> None:
-    entry = {"key": key, "function": function, "module": None, "backend": backend, "model": model}
+def save_run(key: Key, function: str, backend: str, model: str | None, request: str, replies: Sequence[Reply]) -> None:
+    entry = {"key": key.name, "function": function, "module": None, "backend": backend, "model": model}
     # stacklevel: _save <- save_run <- Agent._run <- the task's record <- run <- the task's wrapper <- the user
     _save(key, {**entry, "request": request, "replies": [dataclasses.asdict(reply) for reply in replies]}, stacklevel=7)
 
@@ -192,9 +259,46 @@ class Recorder:
             close()
 
 
-def _key(what: dict[str, Any]) -> str:
-    blob = json.dumps({"format": FORMAT, **what}, ensure_ascii=False, sort_keys=True)
+def _key(format: int, what: dict[str, Any]) -> str:
+    blob = json.dumps({"format": format, **what}, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _task(instructions: str, inputs: Mapping[str, Any], returns: Any) -> dict[str, Any]:
+    return {
+        "instructions": instructions.strip(),
+        "inputs": {name: _canonical(value) for name, value in inputs.items()},
+        "returns": json_schema(returns),
+    }
+
+
+def _system(system: str | None) -> str | None:
+    """The program's system prompt, None for thunc's default (as a blank one is)."""
+    return system.strip() if system is not None and system.strip() else None
+
+
+def _canonical(value: Any) -> Any:
+    """An input as JSON values, for a key. Fixed, apart from how inputs are shown to the model, so
+    that showing them differently later leaves keys alone; a set is sorted, as its order varies."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {f.name: _canonical(getattr(value, f.name)) for f in dataclasses.fields(value)}
+    if isinstance(value, enum.Enum):
+        return _canonical(value.value)
+    if isinstance(value, Mapping):
+        return {str(k): _canonical(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonical(v) for v in value]
+    if isinstance(value, (set, frozenset)):
+        return sorted((_canonical(v) for v in value), key=lambda v: json.dumps(v, sort_keys=True, default=str))
+    if value is None or isinstance(value, (str, int, float)):
+        return value
+    return str(value)
+
+
+def _entry(key: Key) -> dict[str, Any] | None:
+    folder = _folder()
+    entry = read(folder, key.name)
+    return entry if entry is not None else read(folder, key.legacy)
 
 
 def _folder() -> str:
@@ -204,13 +308,17 @@ def _folder() -> str:
     return folder
 
 
-def _save(key: str, entry: dict[str, Any], stacklevel: int) -> None:
-    """Save an entry. One that can't be written warns, not fails: the answer is valid and paid for."""
+def _save(key: Key, entry: dict[str, Any], stacklevel: int) -> None:
+    """Save an entry, and remove its legacy file: it's been recorded again. One that can't be
+    written warns, not fails: the answer is valid and paid for."""
     folder = _folder()
     try:
-        write(folder, key, entry)
+        write(folder, key.name, entry)
     except OSError as exc:
         warnings.warn(f"thunc could not save a recording in {folder!r}: {exc}", RuntimeWarning, stacklevel=stacklevel)
+        return
+    with contextlib.suppress(OSError):
+        os.remove(os.path.join(folder, f"{key.legacy}.json"))
 
 
 def _reply(data: Any) -> Reply:

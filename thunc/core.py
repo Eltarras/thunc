@@ -267,7 +267,9 @@ def _call(
     token = current_call.set(CallInfo(name, instructions, inputs, returns))
     try:
         record = recordings.mode()
-        recording = recordings.call_key(system, request, name) if record else None
+        recording = (
+            recordings.call_key(name, instructions, inputs, returns, custom, sent=(system, request)) if record else None
+        )
         if recording is not None and record != "all":
             what = f"{name}()" if name else f"the call {shorten(instructions.strip(), 60)!r}"
             replay = _replayed(recording, returns, ensure, strict=record == "replay", what=what)
@@ -444,7 +446,7 @@ def _check(answer: str, returns: Any, ensure: Callable[[Any], bool] | None) -> A
 
 
 def _replayed(
-    key: str, returns: Any, ensure: Callable[[Any], bool] | None, *, strict: bool, what: str
+    key: recordings.Key, returns: Any, ensure: Callable[[Any], bool] | None, *, strict: bool, what: str
 ) -> tuple[tuple[str | None, str | None], Any] | None:
     """The recorded answer's (backend, model) and value, or None if there's none to use. Replaying
     (strict), a missing or no longer valid answer raises: no model may be asked instead."""
