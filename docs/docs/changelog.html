@@ -54,7 +54,7 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html" class="active" aria-current="page">Changelog</a>
   </nav>
-  <div class="version">thunc 0.6.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.7.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -65,6 +65,7 @@
 <div class="tablewrap"><table>
 <thead><tr><th>Version</th><th>Released</th><th>Headline</th></tr></thead>
 <tbody>
+<tr><td><a href="#v0-7-0"><code>0.7.0</code></a></td><td class="nowrap">16 Oct 2026</td><td class="wrap">Recordings survive a thunc upgrade</td></tr>
 <tr><td><a href="#v0-6-0"><code>0.6.0</code></a></td><td class="nowrap">13 Oct 2026</td><td class="wrap">The agent API is frozen; the run record, the events and durable fingerprints get a compatibility promise; <code>agent.acall</code></td></tr>
 <tr><td><a href="#v0-5-0"><code>0.5.0</code></a></td><td class="nowrap">12 Oct 2026</td><td class="wrap"><code>thunc.testing</code>: a fake model and pytest fixtures; <code>thunc.register_backend</code>; Ollama</td></tr>
 <tr><td><a href="#v0-4-0"><code>0.4.0</code></a></td><td class="nowrap">11 Oct 2026</td><td class="wrap">Record and replay for tests and CI; <code>Enum</code> return types; <code>thunc.acall</code> and <code>thunc.amap</code>; precise types for <code>returns=</code>; deprecations</td></tr>
@@ -80,6 +81,15 @@
 <tr><td><a href="#v0-1-1"><code>0.1.1</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">The OpenAI backend and local models</td></tr>
 <tr><td><a href="#v0-1-0"><code>0.1.0</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">First release</td></tr>
 </tbody></table></div>
+<div class="release">
+<h2 id="v0-7-0">0.7.0 <span class="pill">beta</span></h2>
+<p class="release-meta">16 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.7.0">Release notes</a> · <a href="https://pypi.org/project/thunc/0.7.0/">PyPI</a></p>
+<p><strong>Recordings survive a thunc upgrade.</strong> A recording is now named by what your code says about a call, not by the text thunc sends the model, so a later release that rewords thunc's prompts keeps your recordings, and CI, working. Recordings made with 0.4 to 0.6 still replay. A program written for 0.6 runs unchanged.</p>
+<h3>Fixed</h3>
+<ul>
+<li><strong><a href="api.html#recordings">Recordings survive a thunc upgrade.</a></strong> A recording was named by the text thunc sent the model, including thunc's own system prompt and how it describes the return type, so a release that reworded either would have left every recording unmatched. A call is now <a href="caching.html#matching">matched</a> on its function, instructions, inputs, return type and <code>system=</code>; an agent run on those and its agent, task and tools, where a built-in tool added in a later release doesn't count. Recordings made with 0.4 to 0.6 are still found under their old names, and recording an answer again moves it to its new name. A test pins the names in both formats.</li>
+</ul>
+</div>
 <div class="release">
 <h2 id="v0-6-0">0.6.0 <span class="pill">beta</span></h2>
 <p class="release-meta">13 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.6.0">Release notes</a> · <a href="https://pypi.org/project/thunc/0.6.0/">PyPI</a></p>
