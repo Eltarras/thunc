@@ -147,7 +147,7 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 </dl>
 
 <h2 id="formats">Formats other programs read</h2>
-<p>Three files are meant to be read by other programs: an agent run's record, the <code>THUNC_EVENTS</code> stream that <a href="watch.html"><code>thunc watch</code></a> reads, and a durable task's fingerprint. Each has a format number. Within one number, events and fields are only added, never removed or given another meaning, so a reader should ignore what it doesn't know. A change that an old reader would misread gets a new number, and the <a href="changelog.html">changelog</a> says so.</p>
+<p>Three files are meant to be read by other programs: an agent run's record, the <code>THUNC_EVENTS</code> stream that <a href="watch.html"><code>thunc watch</code></a> reads, and a durable task's fingerprint. <a href="#recordings">Recordings</a>, at the end, are read by later releases of thunc itself. Each has a format number. Within one number, events and fields are only added, never removed or given another meaning, so a reader should ignore what it doesn't know. A change that an old reader would misread gets a new number, and the <a href="changelog.html">changelog</a> says so.</p>
 
 <h3 id="run-record">An agent run's record</h3>
 <p>One JSON line per event in <code>.thunc_agents/&lt;agent&gt;/sessions/</code>, each with <code>time</code> and <code>event</code>. The first line, <code>start</code>, has <code>"format": 1</code>.</p>
@@ -183,6 +183,14 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 <li><strong>Upgrading thunc doesn't change a fingerprint.</strong> A task registered the same way gets the same fingerprint on every 0.x release from 0.6 on, and the same holds through 1.x. A new option only joins the fingerprint when it's set, so tasks that don't use it keep theirs.</li>
 <li><strong>If a release must change fingerprints</strong>, for example to fix one that missed something a run depends on, the changelog says so under <strong>Behavior changes</strong>, a release ahead where possible: let runs on the old fingerprints finish before upgrading the workers.</li>
 <li><code>tests/temporal/test_fingerprints.py</code> pins the fingerprints of a set of task definitions, so a change to one fails the tests.</li>
+</ul>
+
+<h3 id="recordings">Recordings</h3>
+<p>A <a href="caching.html#testing">recording</a> is named by a hash of what your code says about a call or agent run, not of the text thunc sends the model, so a release that rewords thunc's prompts leaves your recordings where they are.</p>
+<ul>
+<li><strong>Upgrading thunc keeps your recordings.</strong> A call or run written the same way gets the same name on every release from 0.7 on, through 1.x. A built-in tool added in a later release doesn't join an agent run's name.</li>
+<li><strong>Recordings made with 0.4 to 0.6</strong> are named by the text thunc sent then. They're still found, and recording an answer again with <code>THUNC_RECORD=1</code> saves it under its new name and removes the old file.</li>
+<li><code>tests/test_recordings.py</code> pins the names of a set of calls and runs, in both formats, so a change to one fails the tests.</li>
 </ul>
 
 <h2 id="stability">What's stable</h2>

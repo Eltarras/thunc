@@ -240,14 +240,16 @@ so CI never spends money or waits on a login. `THUNC_RECORD=1` asks the model an
 replaces) every answer; `THUNC_RECORD=missing` keeps the answers the folder has and asks only for the
 rest. `THUNC_RECORD` without a folder is an error, not a silent no-op.
 
-- **What's matched:** a call's function name, system prompt and request (instructions, inputs and
-  return type), so changing any of those needs a new recording. The backend and model are saved with
-  each answer but not matched: CI needs no backend, and a recording made on one model replays under
-  another. Re-record after changing models.
+- **What's matched:** what your code says about a call: its function name, instructions, inputs,
+  return type and `system=`, so changing any of those needs a new recording. thunc's own wording
+  around them isn't matched, so upgrading thunc keeps your recordings. The backend and model are
+  saved with each answer but not matched: CI needs no backend, and a recording made on one model
+  replays under another. Re-record after changing models.
 - **Checked again:** a recorded answer is parsed into the return type and run through `ensure=` before
   it's used. One that no longer fits fails with a message saying to record it again. Failed calls
   are never recorded, only the answer that passed.
-- **Agents:** a run is matched on its agent, task, request, tools and `system=`, and the model's
+- **Agents:** a run is matched on its agent, task, instructions, inputs, return type, tools and
+  `system=`, and the model's
   replies are replayed in order. The tools run for real, so files are written and commands run as
   when it was recorded: give the test a fresh copy of its workspace. A run whose tools go differently
   can run out of replies, which fails it with a message saying to record it again. Memory and

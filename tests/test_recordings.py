@@ -2,6 +2,8 @@
 and with only the folder set every call and agent run is answered from it, with no model asked."""
 
 import asyncio
+import enum
+import importlib
 import json
 import warnings
 from dataclasses import dataclass
@@ -10,8 +12,10 @@ from typing import Literal
 import pytest
 
 import thunc
-from thunc import config, core, events
+from thunc import config, core, events, recordings
 from thunc.cache import _info
+
+agent_module = importlib.import_module("thunc.agent")  # thunc.agent is also the @thunc.agent decorator
 
 
 def act(tool, **args):
@@ -85,7 +89,7 @@ def test_an_answer_that_was_not_recorded_fails_loudly_and_asks_no_model(fake, fo
     assert fake.prompts == []
 
 
-def test_a_call_is_matched_on_its_prompt_so_changing_it_needs_a_new_recording(fake, recording):
+def test_a_call_is_matched_on_what_the_program_wrote_so_changing_it_needs_a_new_recording(fake, recording):
     recording("1")
     fake.replies = ["4"]
     assert urgency("Down for everyone") == 4
@@ -550,3 +554,206 @@ def test_a_native_run_on_the_claude_api_records_and_replays(recording, repo, mon
         warnings.simplefilter("error")
         assert timeout() == 30
     assert len(requests) == 2
+
+
+# --- keys across thunc releases ------------------------------------------------------------
+
+
+class Priority(enum.Enum):
+    LOW = 1
+    HIGH = 3
+
+
+@dataclass
+class Finding:
+    path: str
+    line: int
+
+
+# function, instructions, inputs, returns, system=
+CALLS = {
+    "plain": (
+        "triage.urgency",
+        "Rate how urgent this ticket is, from 1 to 5.",
+        {"ticket": "Down for everyone"},
+        int,
+        None,
+    ),
+    "dataclasses": (
+        "review.findings",
+        "List the problems in this diff.\n",
+        {"diff": "- a\n+ b", "seen": [Finding("a.py", 3)]},
+        list[Finding],
+        "You review code.",
+    ),
+    "literal": (
+        None,
+        "Is this urgent?",
+        {"priority": Priority.HIGH, "tags": ("db", "prod")},
+        Literal["yes", "no"],
+        None,
+    ),
+    "enum": (
+        "triage.priority",
+        "How urgent is this?",
+        {"ticket": "Slow page", "meta": {"b": 2, "a": 1.5}},
+        Priority,
+        None,
+    ),
+}
+# agent, task, system=, instructions, inputs, returns, tools offered
+RUNS = {
+    "plain": (
+        "fixer",
+        "tasks.raise_timeout",
+        None,
+        "Set TIMEOUT in config.py to the given seconds, and return the old value.",
+        {"seconds": 60},
+        int,
+        ["list", "read", "search", "write", "edit", "run", "remember", "finish"],
+    ),
+    "custom": (
+        "reviewer",
+        "tasks.review",
+        "You are careful.",
+        "Review the change.",
+        {"diff": "- a"},
+        list[Finding],
+        ["list", "read", "search", "open_issue", "finish"],
+    ),
+}
+BUILTIN = ["list", "read", "search", "write", "edit", "run"]
+# name (format 2), legacy (format 1, as thunc 0.4 to 0.6 named them)
+PINNED = {
+    ("call", "plain"): (
+        "4ee8c70c2f2803500a3f7c67936fcf7b890c41fac9080f0af07f7105c5e2b8bd",
+        "3097b6fb93d84220663fa4fa663da6dae924811541c783160e1f1dd56f751527",
+    ),
+    ("call", "dataclasses"): (
+        "1530640f3a89762ef0cb1f4f2a4f800956b01a28400034c61a0ab29f8d339c93",
+        "3e48d0de8080aea32fdac4d3a0c492b916ba711c64940608220f36170f618d34",
+    ),
+    ("call", "literal"): (
+        "7c66c1736f4761ef06a55c50f567529ad8a178677878f3730b20774f54dc9c82",
+        "7d4ab83fa6b3ccb42c730916b59591a0550fcb14316a8e06ffb642077f9bc5e0",
+    ),
+    ("call", "enum"): (
+        "67342ee082701c837fb935235dac61d460aeada5543f2ada620c41b5abafcafa",
+        "408c02b28095b293c5eb4734d3eccf082a5b08f6b885832b3d8666914feb2298",
+    ),
+    ("run", "plain"): (
+        "582506d055e8bcd4db8ba77fde6c8ddef086a1c8f62089c89f0cbe87e8dfd94f",
+        "7d90b159b5ef32da9ec1fbd5e0e0c1f3243d04791daf9285829d40a84a0cc694",
+    ),
+    ("run", "custom"): (
+        "78f4f0cbb249976b1ff16dbd80892d273e84d85fd80b2e6ef14b5d63c31db14c",
+        "0affcf99af44653626d37e7360f89c16aedbd8d7234facbbf8a4c40c60a20302",
+    ),
+}
+
+
+def call_key(function, instructions, inputs, returns, system):
+    sent = (core.system_prompt(system), core._build_prompt(instructions, inputs, returns))
+    return recordings.call_key(function, instructions, inputs, returns, system, sent=sent)
+
+
+def run_key(agent, task, system, instructions, inputs, returns, tools, builtin=BUILTIN):
+    request = agent_module._request(instructions, inputs, returns)
+    return recordings.run_key(agent, task, system, instructions, inputs, returns, tools, builtin, request=request)
+
+
+def keys():
+    for name, shape in CALLS.items():
+        yield ("call", name), call_key(*shape)
+    for name, shape in RUNS.items():
+        yield ("run", name), run_key(*shape)
+
+
+def test_recording_keys_dont_change_with_thunc():
+    """A key that changes loses every recording made under it, and CI fails with "No recorded answer".
+    If this fails, the change renames recordings: put back what the key covers, or raise
+    recordings.FORMAT and keep matching the keys pinned here. The legacy keys are the names of
+    recordings made with 0.4 to 0.6, from the text thunc sent then: changing that text (the system
+    prompt, how a type is described) changes them, so keep a copy of the old text for them."""
+    assert {kind: (key.name, key.legacy) for kind, key in keys()} == PINNED
+
+
+def test_rewording_thuncs_prompts_keeps_the_recordings(fake, recording, monkeypatch):
+    recording("1")
+    fake.replies = ["4"]
+    assert urgency("Down for everyone") == 4
+    recording(None)
+    no_backend(monkeypatch)
+    monkeypatch.setattr(core, "SYSTEM", "You are a function that has been reworded.")
+    monkeypatch.setattr(core, "describe", lambda returns, nested=False: "a whole number, described anew")
+    assert urgency("Down for everyone") == 4
+    assert len(fake.prompts) == 1
+
+
+def test_a_builtin_tool_added_later_leaves_run_keys_alone():
+    agent, task, system, instructions, inputs, returns, tools = RUNS["plain"]
+    before = run_key(agent, task, system, instructions, inputs, returns, tools)
+    later = run_key(agent, task, system, instructions, inputs, returns, ["glob", *tools], ["glob", *BUILTIN])
+    assert later.name == before.name
+    custom = run_key(agent, task, system, instructions, inputs, returns, ["glob", *tools])  # glob of the program's own
+    assert custom.name != before.name
+
+
+def test_keys_dont_depend_on_the_order_of_a_set_or_a_blank_system_prompt():
+    first = call_key("f", "Tag these.", {"tags": {"db", "prod", "api", "web"}}, list[str], None)
+    again = call_key("f", "Tag these.", {"tags": {"web", "api", "prod", "db"}}, list[str], "  ")
+    assert first.name == again.name
+
+
+def keys_used(monkeypatch):
+    """The keys thunc looks recordings up by, as they're made."""
+    used = []
+    for kind in ("call_key", "run_key"):
+        make = getattr(recordings, kind)
+        monkeypatch.setattr(recordings, kind, lambda *a, _make=make, **k: used.append(_make(*a, **k)) or used[-1])
+    return used
+
+
+def as_if_recorded_by_0_6(folder, key):
+    """Rename a recording to the name thunc 0.4 to 0.6 gave it."""
+    entry = json.loads((folder / f"{key.name}.json").read_text())
+    (folder / f"{key.legacy}.json").write_text(json.dumps({**entry, "key": key.legacy}))
+    (folder / f"{key.name}.json").unlink()
+
+
+def test_a_call_recorded_before_0_7_replays_and_moves_when_recorded_again(fake, recording, folder, monkeypatch):
+    used = keys_used(monkeypatch)
+    recording("1")
+    fake.replies = ["4"]
+    assert urgency("Down for everyone") == 4
+    key = used[-1]
+    as_if_recorded_by_0_6(folder, key)
+
+    recording(None)
+    assert urgency("Down for everyone") == 4
+    recording("missing")
+    assert urgency("Down for everyone") == 4
+    assert len(fake.prompts) == 1  # found under its old name: not asked again
+    assert [p.name for p in folder.iterdir()] == [f"{key.legacy}.json"]
+
+    recording("1")
+    fake.replies = ["5"]
+    assert urgency("Down for everyone") == 5
+    assert [p.name for p in folder.iterdir()] == [f"{key.name}.json"]  # the old file is gone
+    recording(None)
+    assert urgency("Down for everyone") == 5
+
+
+def test_an_agent_run_recorded_before_0_7_replays(fake, recording, repo, folder, monkeypatch):
+    used = keys_used(monkeypatch)
+    agent, raise_timeout = fixer(repo)
+    recording("1")
+    fake.replies = [act("finish", value=30)]
+    assert raise_timeout(60) == 30
+    key = used[-1]
+    as_if_recorded_by_0_6(folder, key)
+
+    recording(None)
+    no_backend(monkeypatch)
+    assert raise_timeout(60) == 30
+    assert len(fake.prompts) == 1

@@ -3,6 +3,19 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
+## Unreleased
+
+### Fixed
+
+- **Recordings survive a thunc upgrade.** A recording was named by the text thunc sent the model,
+  including thunc's own system prompt and how it describes the return type, so a release that
+  reworded either would have left every recording unmatched, and CI would fail with "No recorded
+  answer". A call is now matched on what your code says: its function, instructions, inputs, return
+  type and `system=`. An agent run is matched on those and its agent, task and tools, where a
+  built-in tool added in a later release doesn't count. Recordings made with 0.4 to 0.6 are still
+  found under their old names, and recording an answer again moves it to its new name. A test pins
+  the names in both formats.
+
 ## 0.6.0 (beta)
 
 **Agents settle.** The agent API is frozen: it changes only through deprecations from here on, and
