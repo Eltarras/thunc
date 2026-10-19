@@ -79,11 +79,8 @@
 }
 
 html,body{height:100%}
-.notice{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--muted);padding:0 4px}
-.notice a{color:var(--fg)}
-.notice b{color:var(--brand);font-weight:500}
-body{margin:0;display:flex;flex-direction:column;gap:10px;background:var(--ground);color:var(--fg);font:14px/1.45 var(--ui);box-sizing:border-box;
-  padding-block:12px;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+body{margin:0;display:flex;flex-direction:column;background:var(--bg);color:var(--fg);font:14px/1.45 var(--ui);box-sizing:border-box;
+  padding:env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px)}
 *{box-sizing:border-box}
 button,input,textarea,select{font:inherit;color:inherit}
 button{cursor:pointer}
@@ -95,7 +92,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .brandmark{width:28px;height:28px;flex:none}
 .brandmark path{fill:none;stroke:var(--brand);stroke-width:6;stroke-linecap:round}
 
-.app{flex:1;min-height:560px;display:flex;background:var(--bg);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.app{flex:1;min-height:0;display:flex;background:var(--bg);overflow:hidden}
 .rail{flex:0 0 64px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:14px 0 12px;background:var(--side);border-right:1px solid var(--line)}
 .rail .brandmark{margin-bottom:14px}
 .rail-btn{display:flex;flex-direction:column;align-items:center;gap:3px;width:52px;padding:7px 0 5px;border:0;border-radius:10px;background:transparent;color:var(--muted);font-size:10.5px}
@@ -388,7 +385,6 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 </style>
 </head>
 <body>
-<p class="notice" style="margin:0"><b>Concept mockup.</b><span>thunc code doesn't exist yet. Nothing here runs, the data is made up, and <code class="mono">thunc.flow</code> is not a real API.</span><span style="flex:1"></span><a href="https://github.com/Eltarras/thunc/discussions/84">Tell us what you think</a><a href="/thunc/">thunc home</a></p>
 
 <div class="app">
   <nav class="rail" aria-label="Modes">
