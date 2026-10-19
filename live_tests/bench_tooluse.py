@@ -292,9 +292,17 @@ def subdir_files() -> dict[str, str]:
 # 8. routes: a nested structured answer gathered from several files, with decoys.
 def routes_files() -> dict[str, str]:
     return {
-        "web/router.py": "class Router:\n    def get(self, p):\n        return lambda f: f\n"
-        "    def post(self, p):\n        return lambda f: f\n    def add(self, m, p, f):\n        pass\n\n"
+        # The router really records routes, and web/app.py imports the modules that add them, so
+        # "registered at runtime" has one answer. (A stub that recorded nothing made [] defensible.)
+        "web/router.py": "class Router:\n    def __init__(self):\n        self.routes = []\n\n"
+        "    def add(self, m, p, f):\n        self.routes.append((m, p, f))\n\n"
+        "    def get(self, p):\n        def register(f):\n            self.add('GET', p, f)\n            return f\n\n"
+        "        return register\n\n"
+        "    def post(self, p):\n        def register(f):\n            self.add('POST', p, f)\n            return f\n\n"
+        "        return register\n\n\n"
         "router = Router()\n",
+        "web/app.py": "from web import auth, orders, users  # noqa: F401  (importing them adds their routes)\n"
+        "from web.router import router\n\napp = router\n",
         "web/users.py": "from web.router import router\n\n\n@router.get('/users')\ndef list_users():\n    pass\n\n\n"
         "@router.get('/users/<id>')\ndef show_user(id):\n    pass\n\n\n"
         "# @router.get('/users/<id>/delete')  (removed in 2.0)\n# def delete_user(id): ...\n",
