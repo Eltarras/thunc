@@ -37,6 +37,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from .backends import claude_env
 from .errors import ThuncError
 from .native import NUDGE, Call, Reply, Tool, _calls_text
 from .recordings import check_live
@@ -196,6 +197,7 @@ class ClaudeCodeConversation:
         return subprocess.Popen(
             args,
             cwd=self.workdir,
+            env=claude_env(),  # its own login, not an API key that happens to be set
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
