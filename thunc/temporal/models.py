@@ -19,6 +19,9 @@ STATE_LIMIT = 16 * 1024 * 1024
 def plain(value: Any) -> Any:
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return plain(dataclasses.asdict(value))
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return plain(model_dump(mode="json"))
     if isinstance(value, dict):
         if not all(isinstance(k, str) for k in value):
             raise ValueError("Durable JSON objects require string keys")

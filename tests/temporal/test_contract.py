@@ -1,8 +1,10 @@
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 import thunc
 from thunc.temporal import Registry
@@ -145,6 +147,10 @@ def test_transient_provider_errors_keep_classification_without_secret_text():
 
 
 def test_wire_values_and_ownership_conflicts(tmp_path):
+    class Invoice(BaseModel):
+        issued: date
+
+    assert plain(Invoice(issued=date(2026, 10, 20))) == {"issued": "2026-10-20"}
     with pytest.raises(ValueError):
         plain(float("nan"))
     with pytest.raises(ValueError):

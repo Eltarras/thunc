@@ -12,6 +12,7 @@ import threading
 import time
 
 import pytest
+from pydantic import BaseModel
 
 import thunc
 from thunc import backends, writing
@@ -39,6 +40,14 @@ def minutes(duration: str) -> int:
 def truth(duration):
     parts = re.findall(r"(\d+(?:\.\d+)?)\s*([a-z]+)", duration.lower())
     return round(sum(float(n) * UNITS[u] for n, u in parts))
+
+
+def test_pydantic_draft_result_is_checked():
+    class Invoice(BaseModel):
+        total: int
+
+    result = Invoice(total=3)
+    assert writing._as_type(result, Invoice) == result
 
 
 def draft(body=GOOD, imports=("import re",), can_write=True, reason=""):

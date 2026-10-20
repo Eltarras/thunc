@@ -1,11 +1,12 @@
 """Return types: describe one to the model, and turn the model's text back into a checked value.
 
 Supported: str, bool, int, float, None, Any, Literal[...], Enum classes, list[T], dict[str, T],
-unions (T | None) and dataclasses.
+unions (T | None), dataclasses and Pydantic v2-compatible models (without requiring Pydantic).
 """
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import enum
 import functools
@@ -42,6 +43,8 @@ def describe(tp: Any, nested: bool = False) -> str:
             for name, hint, required in _init_fields(tp)
         ]
         return "a JSON object with these fields: {" + ", ".join(fields) + "}"
+    if _is_pydantic_model(tp):
+        return _describe_schema(_pydantic_schema(tp))
     origin, args = typing.get_origin(tp), typing.get_args(tp)
     if origin is Literal:
         return "exactly one of these JSON values: " + ", ".join(json.dumps(a) for a in args)
@@ -125,6 +128,8 @@ def _may_unwrap(value: dict[str, Any], tp: Any) -> bool:
     for option in options:
         if _is_dataclass(option):
             fields |= {name for name, _, _ in _init_fields(option)}
+        elif _is_pydantic_model(option):
+            fields |= _pydantic_fields(option)
     return key not in fields
 
 
@@ -250,12 +255,32 @@ def validate(value: Any, tp: Any) -> Any:
             return tp(**kwargs)
         except Exception as exc:  # a check in __post_init__, for example
             raise ValueError(f"{tp.__name__}(...) failed: {type(exc).__name__}: {shorten(str(exc))}") from exc
-
     if is_enum(tp):
         values = [m.value for m in _members(tp)]
         match = [m for m in _members(tp) if _kind(m.value) == _kind(value) and m.value == value]
         _expect(bool(match), value, f"one of {values}")
         return match[0]
+    if _is_pydantic_model(tp):
+        schema = _pydantic_schema(tp)
+        properties = schema.get("properties")
+        fields = _pydantic_fields(tp, schema)
+        if (
+            isinstance(value, dict)
+            and value
+            and isinstance(properties, dict)
+            and properties
+            and fields.isdisjoint(value)
+        ):
+            raise ValueError(f"expected an object with the fields {sorted(fields)}, got {short_repr(value)}")
+        validate_json = getattr(tp, "model_validate_json", None)
+        try:
+            if callable(validate_json):
+                return validate_json(json.dumps(value), strict=True)
+            return tp.model_validate(value)
+        except Exception as exc:
+            method = "model_validate_json" if callable(validate_json) else "model_validate"
+            message = f"{tp.__name__}.{method}(...) failed: {type(exc).__name__}: {exc}"
+            raise ValueError(shorten(message)) from exc
     origin, args = typing.get_origin(tp), typing.get_args(tp)
     if origin is Literal:
         # Compared by kind too, or true would match Literal[1] (True == 1 in Python).
@@ -338,6 +363,137 @@ def _is_dataclass(tp: Any) -> bool:
     return isinstance(tp, type) and dataclasses.is_dataclass(tp)
 
 
+def _is_pydantic_model(tp: Any) -> bool:
+    """A Pydantic-compatible model class, without importing Pydantic."""
+    return (
+        isinstance(tp, type)
+        and callable(getattr(tp, "model_json_schema", None))
+        and callable(getattr(tp, "model_validate", None))
+    )
+
+
+def _pydantic_schema(tp: Any) -> dict[str, Any]:
+    schema = tp.model_json_schema()
+    if not isinstance(schema, dict):
+        raise ThuncError(f"Unsupported return type: {tp!r} has an invalid model_json_schema()")
+    return _inline_local_refs(schema)
+
+
+def _pydantic_fields(tp: Any, schema: dict[str, Any] | None = None) -> set[str]:
+    """Field names and aliases that must not be mistaken for response wrappers."""
+    fields: set[str] = set()
+    properties = (schema if schema is not None else _pydantic_schema(tp)).get("properties")
+    if isinstance(properties, dict):
+        fields.update(properties)
+
+    def add_alias(alias: Any) -> None:
+        if isinstance(alias, str):
+            fields.add(alias)
+        choices = getattr(alias, "choices", None)
+        if isinstance(choices, (list, tuple)):
+            for choice in choices:
+                add_alias(choice)
+        path = getattr(alias, "path", None)
+        if isinstance(path, (list, tuple)) and path and isinstance(path[0], str):
+            fields.add(path[0])
+
+    model_fields = getattr(tp, "model_fields", None)
+    if isinstance(model_fields, dict):
+        for name, field in model_fields.items():
+            fields.add(name)
+            add_alias(getattr(field, "alias", None))
+            add_alias(getattr(field, "validation_alias", None))
+    return fields
+
+
+def _inline_local_refs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Copy a schema and inline its local references, so it stays valid when embedded elsewhere."""
+    root = copy.deepcopy(schema)
+
+    def lookup(ref: str) -> Any:
+        if ref == "#":
+            return root
+        if not ref.startswith("#/"):
+            return None
+        target: Any = root
+        for part in ref[2:].split("/"):
+            part = part.replace("~1", "/").replace("~0", "~")
+            if not isinstance(target, dict) or part not in target:
+                raise ThuncError(f"Invalid local JSON Schema reference: {ref!r}")
+            target = target[part]
+        return target
+
+    def shape(target: Any) -> dict[str, Any]:
+        if isinstance(target, dict) and target.get("type") in {"array", "object"}:
+            return {"type": target["type"]}
+        return {}
+
+    def inline(value: Any, resolving: frozenset[str] = frozenset()) -> Any:
+        if isinstance(value, list):
+            return [inline(item, resolving) for item in value]
+        if not isinstance(value, dict):
+            return value
+        ref = value.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#"):
+            target = lookup(ref)
+            resolved = shape(target) if ref in resolving else inline(target, resolving | {ref})
+            siblings = inline({key: item for key, item in value.items() if key != "$ref"}, resolving | {ref})
+            return {"allOf": [resolved], **siblings} if siblings else resolved
+        # Pydantic's discriminator mapping contains reference strings that can't point at inlined
+        # branches. oneOf and each branch's const still carry the same validation semantics.
+        return {key: inline(item, resolving) for key, item in value.items() if key not in {"$defs", "discriminator"}}
+
+    result = inline(root)
+    if not isinstance(result, dict):
+        raise ThuncError("A model's JSON Schema must be an object")
+    return result
+
+
+def _describe_schema(schema: dict[str, Any]) -> str:
+    """Describe the basic JSON Schema shapes emitted for Pydantic model fields."""
+    if "const" in schema:
+        return "exactly this JSON value: " + json.dumps(schema["const"], ensure_ascii=False)
+    if "enum" in schema:
+        return "exactly one of these JSON values: " + ", ".join(
+            json.dumps(value, ensure_ascii=False) for value in schema["enum"]
+        )
+    for alternatives in ("anyOf", "oneOf"):
+        options = schema.get(alternatives)
+        if isinstance(options, list):
+            return " or ".join(_describe_schema(option) for option in options)
+    all_of = schema.get("allOf")
+    if isinstance(all_of, list) and len(all_of) == 1:
+        return _describe_schema(all_of[0])
+    kind = schema.get("type")
+    simple = {
+        "string": "a JSON string",
+        "boolean": "a JSON boolean (true or false)",
+        "integer": "a JSON integer",
+        "number": "a JSON number",
+        "null": "null",
+    }
+    if kind in simple:
+        return simple[kind]
+    if kind == "array":
+        items = schema.get("items")
+        return "a JSON array" + (f" whose items are each {_describe_schema(items)}" if isinstance(items, dict) else "")
+    if kind == "object":
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            required = schema.get("required", [])
+            fields = [
+                f'"{name}": {_describe_schema(field)}{"" if name in required else " (optional)"}'
+                for name, field in properties.items()
+                if isinstance(field, dict)
+            ]
+            return "a JSON object with these fields: {" + ", ".join(fields) + "}"
+        values = schema.get("additionalProperties")
+        return "a JSON object" + (
+            f" whose values are each {_describe_schema(values)}" if isinstance(values, dict) else ""
+        )
+    return "any JSON value"
+
+
 @functools.lru_cache(maxsize=256)
 def _init_fields(tp: type) -> tuple[tuple[str, Any, bool], ...]:
     """(name, type, required) for each __init__ argument of a dataclass: its fields, and InitVars
@@ -415,6 +571,8 @@ def json_schema(tp: Any, _seen: frozenset[type] = frozenset()) -> dict[str, Any]
         }
     if is_enum(tp):
         return {"enum": [m.value for m in _members(tp)]}
+    if _is_pydantic_model(tp):
+        return _pydantic_schema(tp)
     origin, args = typing.get_origin(tp), typing.get_args(tp)
     if origin is Literal:
         return {"enum": [a.value if isinstance(a, enum.Enum) else a for a in args]}

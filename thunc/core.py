@@ -553,7 +553,10 @@ def _render(value: Any) -> str:
 
 
 def _plain(value: Any) -> Any:
-    return dataclasses.asdict(value) if dataclasses.is_dataclass(value) and not isinstance(value, type) else value
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return dataclasses.asdict(value)
+    model_dump = getattr(value, "model_dump", None)
+    return model_dump(mode="json") if callable(model_dump) else value
 
 
 def _traceable(value: Any) -> Any:
