@@ -116,8 +116,9 @@ Anything from users, files or the web goes in the inputs:
 **Return types:** `str`, `bool`, `int`, `float`, `Literal[...]`, `Enum` classes (their members come
 back), `list[T]`, `dict[str, T]`, `T | None`, dataclasses, and Pydantic v2 models (both built into real
 instances). Pydantic is optional: thunc detects compatible models through `model_json_schema()` and
-`model_validate()` without importing it. An enum is asked for by its values, with names shown where
-a value doesn't say what it means (`3 (HIGH)`).
+`model_validate()` without importing it. When available, `model_validate_json(..., strict=True)`
+applies Pydantic's strict JSON validation rules. An enum is asked for by its values, with names shown
+where a value doesn't say what it means (`3 (HIGH)`).
 
 **Typing:** `returns=` is typed as a type form, so `thunc.call(..., returns=Literal["a", "b"])` is a
 `Literal["a", "b"]` to current mypy and Pyright ([TypeForm](https://peps.python.org/pep-0747/)), not `Any`; the same for unions, `list[Item]` and

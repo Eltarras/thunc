@@ -8,7 +8,7 @@ from enum import Enum, IntEnum
 from typing import Annotated, Any, ClassVar, Literal
 
 import pytest
-from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field, RootModel, create_model
+from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field, RootModel, create_model, field_validator
 
 import thunc
 from thunc.schema import describe, json_schema, parse
@@ -58,6 +58,24 @@ class FlexibleAliases(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     value: int = Field(validation_alias=AliasChoices("first", AliasPath("payload", "value")))
+
+
+class PydanticFilters(BaseModel):
+    tag: str | None = None
+
+
+class StrictValues(BaseModel):
+    count: int
+    enabled: bool
+
+
+class BrokenValidation(BaseModel):
+    value: int
+
+    @field_validator("value")
+    @classmethod
+    def fail(cls, value):
+        raise TypeError("broken validator")
 
 
 class NumberRoot(RootModel[int]):
@@ -143,6 +161,21 @@ def test_pydantic_validation_errors_are_short():
         parse('{"vendor": "Acme", "total_eur": "bad"}', Invoice)
     assert "Invoice" in str(caught.value) and "total_eur" in str(caught.value)
     assert len(str(caught.value)) <= 203
+
+
+def test_pydantic_validation_is_strict_and_validator_errors_are_retried():
+    with pytest.raises(ValueError):
+        parse('{"count": "3", "enabled": true}', StrictValues)
+    with pytest.raises(ValueError):
+        parse('{"count": 3, "enabled": "yes"}', StrictValues)
+    with pytest.raises(ValueError, match="TypeError.*broken validator"):
+        parse('{"value": 1}', BrokenValidation)
+
+
+def test_wrapped_pydantic_model_with_no_required_fields_is_not_lost():
+    assert parse('{"filters": {"tag": "x"}}', PydanticFilters) == PydanticFilters(tag="x")
+    with pytest.raises(ValueError, match="fields"):
+        parse('{"unknown": 1, "also_unknown": 2}', PydanticFilters)
 
 
 def test_pydantic_schema_is_self_contained_when_embedded():

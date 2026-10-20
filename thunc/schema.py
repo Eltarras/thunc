@@ -261,10 +261,25 @@ def validate(value: Any, tp: Any) -> Any:
         _expect(bool(match), value, f"one of {values}")
         return match[0]
     if _is_pydantic_model(tp):
+        schema = _pydantic_schema(tp)
+        properties = schema.get("properties")
+        fields = _pydantic_fields(tp, schema)
+        if (
+            isinstance(value, dict)
+            and value
+            and isinstance(properties, dict)
+            and properties
+            and fields.isdisjoint(value)
+        ):
+            raise ValueError(f"expected an object with the fields {sorted(fields)}, got {short_repr(value)}")
+        validate_json = getattr(tp, "model_validate_json", None)
         try:
+            if callable(validate_json):
+                return validate_json(json.dumps(value), strict=True)
             return tp.model_validate(value)
-        except ValueError as exc:
-            message = f"{tp.__name__}.model_validate(...) failed: {exc}"
+        except Exception as exc:
+            method = "model_validate_json" if callable(validate_json) else "model_validate"
+            message = f"{tp.__name__}.{method}(...) failed: {type(exc).__name__}: {exc}"
             raise ValueError(shorten(message)) from exc
     origin, args = typing.get_origin(tp), typing.get_args(tp)
     if origin is Literal:
@@ -364,10 +379,10 @@ def _pydantic_schema(tp: Any) -> dict[str, Any]:
     return _inline_local_refs(schema)
 
 
-def _pydantic_fields(tp: Any) -> set[str]:
+def _pydantic_fields(tp: Any, schema: dict[str, Any] | None = None) -> set[str]:
     """Field names and aliases that must not be mistaken for response wrappers."""
     fields: set[str] = set()
-    properties = _pydantic_schema(tp).get("properties")
+    properties = (schema if schema is not None else _pydantic_schema(tp)).get("properties")
     if isinstance(properties, dict):
         fields.update(properties)
 
