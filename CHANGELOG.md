@@ -3,6 +3,18 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
+## Unreleased
+
+### Fixed
+
+- **claude-code uses your Claude Code login, even with `ANTHROPIC_API_KEY` set.** The `claude` CLI
+  bills an API key in its environment instead of the login it's signed in with, so with a key set
+  for the `anthropic` backend, every `claude-code` call and agent run spent API credit, or failed
+  with "claude error: Credit balance is too low". When the CLI is signed in on its own (`claude auth
+  status`, asked once per process), thunc now starts it without `ANTHROPIC_API_KEY` and
+  `ANTHROPIC_AUTH_TOKEN`. A CLI with no login of its own still gets them, so a setup that runs on the
+  key alone works as before. Your process keeps the key for the `anthropic` backend.
+
 ## 0.7.0 (beta)
 
 **Recordings survive a thunc upgrade.** A recording is now named by what your code says about a

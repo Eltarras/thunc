@@ -34,9 +34,11 @@ def clean_settings(monkeypatch, tmp_path):
         "THUNC_RECORDINGS",
         "THUNC_RECORD",
         "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
         "OPENAI_API_KEY",
     ):
         monkeypatch.delenv(var, raising=False)
+    backends._claude_logins.clear()  # what `claude auth status` said in one test doesn't leak into the next
     thunc.configure(agents_dir=str(tmp_path / ".thunc_agents"))  # agents never write into the repo
 
 

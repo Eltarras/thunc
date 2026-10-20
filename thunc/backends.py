@@ -164,9 +164,55 @@ def openai_api(
     return response.output_text
 
 
-def _run_cli(args: list[str], text: str, timeout: float) -> subprocess.CompletedProcess[str]:
-    """Run a CLI with `text` on stdin. Output bytes that aren't UTF-8 come back as lone surrogates
-    (surrogateescape) rather than failing here: see _not_utf8."""
+# The claude CLI bills an API key in its environment instead of the login it's signed in with. claude-code
+# is documented as your Claude Code login, so a key set for the anthropic backend (or anything else) would
+# spend API credit, or fail with "Credit balance is too low", in its place.
+CLAUDE_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+_claude_logins: dict[
+    tuple[str | None, tuple[str, ...]], bool
+] = {}  # (claude's path, keys set) -> signed in without them
+_claude_logins_lock = threading.Lock()
+
+
+def claude_env() -> dict[str, str] | None:
+    """The environment to start the claude CLI with: this process's, without CLAUDE_KEYS when the CLI is
+    signed in on its own, so it uses that login. A CLI with no login of its own keeps the keys, as before,
+    since it can't run without them. None (inherit the environment as it is) when no key is set, or the
+    CLI can't say whether it's signed in. `claude auth status` is asked once per process."""
+    keys = tuple(k for k in CLAUDE_KEYS if os.environ.get(k))
+    if not keys:
+        return None
+    env = {k: v for k, v in os.environ.items() if k not in CLAUDE_KEYS}
+    cached = (shutil.which("claude"), keys)  # the key names, never their values
+    with _claude_logins_lock:
+        if cached not in _claude_logins:
+            _claude_logins[cached] = _claude_signed_in(env)
+        signed_in = _claude_logins[cached]
+    return env if signed_in else None
+
+
+def _claude_signed_in(env: dict[str, str]) -> bool:
+    try:
+        done = subprocess.run(
+            ["claude", "auth", "status"],
+            env=env,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            cwd=tempfile.gettempdir(),
+        )
+        status = json.loads(done.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):  # no such command in an older CLI, or no JSON
+        return False
+    return isinstance(status, dict) and status.get("loggedIn") is True
+
+
+def _run_cli(
+    args: list[str], text: str, timeout: float, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run a CLI with `text` on stdin, in `env` (None: this process's environment). Output bytes that
+    aren't UTF-8 come back as lone surrogates (surrogateescape) rather than failing here: see _not_utf8."""
     exe = args[0]
     if shutil.which(exe) is None:
         raise ThuncError(f"`{exe}` was not found on PATH.")
@@ -180,6 +226,7 @@ def _run_cli(args: list[str], text: str, timeout: float) -> subprocess.Completed
             errors="surrogateescape",
             timeout=timeout,
             cwd=tempfile.gettempdir(),
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise TransientError(f"`{exe}` timed out after {timeout:.0f}s.") from exc
@@ -216,7 +263,12 @@ Events = list[tuple[dict[str, Any], str]]  # (event, the line it was printed as)
 
 
 def _cli_events(
-    args: list[str], text: str, timeout: float, last: str, stop: Callable[[dict[str, Any]], bool] | None = None
+    args: list[str],
+    text: str,
+    timeout: float,
+    last: str,
+    stop: Callable[[dict[str, Any]], bool] | None = None,
+    env: dict[str, str] | None = None,
 ) -> tuple[Events, int | None, str]:
     """Run a CLI that prints one JSON event per line, with `text` on stdin, and return its events
     (each with the line it came from) up to the first of type `last`, as soon as that one arrives.
@@ -238,6 +290,7 @@ def _cli_events(
             encoding="utf-8",
             errors="surrogateescape",
             cwd=tempfile.gettempdir(),
+            env=env,
         )
     except OSError as exc:
         stderr.close()
@@ -324,7 +377,7 @@ def claude_code(
             args += ["--effort", effort]
         if until is not None:  # the prompt file is read while the reply streams, so this is inside
             return _claude_streamed(args, text, timeout, until)
-        proc = _run_cli(args, text, timeout)
+        proc = _run_cli(args, text, timeout, claude_env())
     if _not_utf8(proc.stdout):
         raise ThuncError(f"claude printed output that isn't UTF-8: {_printable(proc.stdout)[-500:]}")
     try:
@@ -354,7 +407,7 @@ def _claude_streamed(args: list[str], text: str, timeout: float, until: Callable
         # Only a closing brace, bracket or tag can complete an action, so the reply is checked then.
         return any(c in delta["text"] for c in "}]>") and until("".join(reply))
 
-    events, code, stderr = _cli_events(args, text, timeout, "result", stop=done)
+    events, code, stderr = _cli_events(args, text, timeout, "result", stop=done, env=claude_env())
     bad = next((line for _, line in events if _not_utf8(line)), None)
     if bad is not None:
         raise ThuncError(f"claude printed output that isn't UTF-8: {_printable(bad)[-500:]}")

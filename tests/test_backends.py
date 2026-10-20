@@ -614,3 +614,71 @@ def test_effort_on_the_anthropic_backend(monkeypatch):
     _send("ping", "rules", "anthropic", None, effort="xhigh")  # Opus 5.5: the fallback's beta endpoint
     _send("ping", "rules", "anthropic", None)
     assert [c.get("output_config") for c in calls] == [{"effort": "medium"}, {"effort": "xhigh"}, None]
+
+
+def stub_claude_login(monkeypatch, status, calls):
+    """A claude CLI whose `auth status` prints `status` (a dict, raw text, or an OSError to raise) and whose
+    `-p` answers "ok"; every call is logged with the API key it was started with."""
+
+    def run(args, **kwargs):
+        env = kwargs.get("env")
+        calls.append((args[1:3], (env if env is not None else os.environ).get("ANTHROPIC_API_KEY")))
+        if args[1:3] == ["auth", "status"]:
+            if isinstance(status, OSError):
+                raise status
+            return subprocess.CompletedProcess(
+                args, 0, stdout=status if isinstance(status, str) else json.dumps(status)
+            )
+        return subprocess.CompletedProcess(args, 0, stdout=json.dumps({"result": "ok", "is_error": False}), stderr="")
+
+    monkeypatch.setattr(backends.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    monkeypatch.setattr(backends.subprocess, "run", run)
+
+
+def test_claude_code_uses_its_own_login_over_an_api_key(monkeypatch):
+    # With ANTHROPIC_API_KEY set, the claude CLI bills the key instead of its login: "Credit balance is too low".
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "token")
+    calls = []
+    stub_claude_login(monkeypatch, {"loggedIn": True, "authMethod": "claude.ai"}, calls)
+    thunc.configure(backend="claude-code")
+    assert thunc.call("hi") == "ok"
+    assert thunc.call("again") == "ok"
+    assert calls == [(["auth", "status"], None), (["-p", "--output-format"], None), (["-p", "--output-format"], None)]
+    env = backends.claude_env()
+    assert env is not None and "ANTHROPIC_AUTH_TOKEN" not in env and env["PATH"] == os.environ["PATH"]
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-test"  # this process keeps it, for the anthropic backend
+
+
+@pytest.mark.parametrize(
+    "status", [{"loggedIn": False}, "not json", OSError("no such command")], ids=["signed-out", "no-json", "fails"]
+)
+def test_claude_code_keeps_the_api_key_when_the_cli_has_no_login_of_its_own(monkeypatch, status):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    calls = []
+    stub_claude_login(monkeypatch, status, calls)
+    thunc.configure(backend="claude-code")
+    assert thunc.call("hi") == "ok"
+    assert calls[-1] == (["-p", "--output-format"], "sk-ant-test")  # as before this change: the key is the login
+
+
+def test_no_api_key_no_login_check(monkeypatch):
+    calls = []
+    stub_claude_login(monkeypatch, {"loggedIn": True}, calls)
+    thunc.configure(backend="claude-code")
+    assert thunc.call("hi") == "ok"
+    assert calls == [(["-p", "--output-format"], None)]
+    assert backends.claude_env() is None
+
+
+def test_a_claude_code_agent_starts_the_cli_without_the_api_key(monkeypatch):
+    from thunc import claude_code
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    stub_claude_login(monkeypatch, {"loggedIn": True}, [])
+    started = {}
+    monkeypatch.setattr(claude_code.subprocess, "Popen", lambda args, **kw: started.update(kw) or SimpleNamespace())
+    monkeypatch.setattr(claude_code.shutil, "which", lambda exe: "/usr/bin/" + exe)
+    conversation = claude_code.ClaudeCodeConversation("rules", "task", [], None, os.getcwd(), 30)
+    conversation._popen(["claude", "-p"])
+    assert started["env"] is not None and "ANTHROPIC_API_KEY" not in started["env"]
