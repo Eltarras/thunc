@@ -576,6 +576,21 @@ or calling a backend. Use `@thunc.function` or `thunc.call` for Jev questions.
   run.notes, run.followed, run.steps, run.seconds, run.session
   ```
 
+- **Several tasks in one conversation** (experimental: it may change or be removed). With
+  `agent.conversation(returns=...)`, each `send()` is a run of its own, but the next task is a new
+  message after the last one's result, so the model keeps what it read and did instead of exploring
+  again. On `claude-code` the same `claude` process takes the next task, so nothing starts up again;
+  on `codex` it's the next turn of the same session:
+
+  ```python
+  with repo.conversation(returns=str) as chat:
+      chat.send("Find where the retry delay is set, and explain it.")
+      run = chat.send("Double it, and update its test.")  # a thunc.Run, as agent.run() gives
+  ```
+
+  Every task returns the same type. The system prompt, memory and followed files are the first
+  task's. A task that fails ends the conversation (the next `send()` starts a new one), and it
+  doesn't work with recordings or Temporal yet.
 - **Failures are loud.** A run that hits `max_steps`, never gives a valid value, or loses its
   backend raises `thunc.AgentError` (a `ThuncError`), whose `.run` is the record up to that point.
   A step that fails for a reason asking again may fix (a timeout, a lost connection, a rate limit,

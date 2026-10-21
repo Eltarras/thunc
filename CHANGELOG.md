@@ -5,6 +5,14 @@ All notable changes to thunc. The full notes for each release are on the
 
 ## Unreleased
 
+### Added
+
+- **Several tasks in one conversation (experimental): `agent.conversation()`.** Each `send()` is a
+  run of its own, with its own `Run`, record and events, but the next task is a new message after the
+  last one's result, so the model keeps what it read and did instead of exploring again. On
+  `claude-code` the same `claude` process takes the next task, so it doesn't start up again; on
+  `codex` it's the next turn of the same session. Experimental: it may change or be removed.
+
 ### Fixed
 
 - **claude-code uses your Claude Code login, even with `ANTHROPIC_API_KEY` set.** The `claude` CLI

@@ -175,5 +175,11 @@ class WithFallback:
     def nudge(self, reply: Reply) -> None:
         self.current.nudge(reply)
 
+    def finished(self, results: Sequence[tuple[Any, str, bool]]) -> None:
+        self.current.finished(results)  # type: ignore[attr-defined]  # checked with native.continues()
+
+    def follow_up(self, request: str) -> None:
+        self.current.follow_up(request)  # type: ignore[attr-defined]
+
     def close(self) -> None:
         self.native.close()

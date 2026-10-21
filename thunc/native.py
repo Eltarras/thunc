@@ -32,6 +32,13 @@ from .errors import ThuncError, TransientError, transient_claude_error, transien
 from .schema import parse, shorten
 
 NUDGE = "Reply by calling one of your tools. When you're done, call finish with your result."
+# What finish is answered with when the conversation may go on (agent.conversation()), and how the
+# next task opens. The earlier tasks stay in the conversation; the files may have changed since.
+FINISHED = "Your result was recorded. Your turn ends here: don't call a tool or reply. There may be another task later."
+NEXT_TASK = (
+    "A new task, in the same working directory. What you did and learned in this conversation still applies, but "
+    "files may have changed since: read again what you need. Your result for this task is a new call to finish."
+)
 EFFORTS = ("low", "medium", "high", "xhigh", "max")  # Agent(effort=...): how hard the model thinks
 CLI_BACKENDS = frozenset({"claude-code", "codex"})
 CLI_STEP_TIMEOUT = 120.0  # seconds one text-protocol step on a CLI may take before it's retried
@@ -66,6 +73,20 @@ class Conversation(Protocol):
     def next(self) -> Reply: ...
     def results(self, results: Sequence[tuple[Call, str, bool]]) -> None: ...  # (call, output, failed)
     def nudge(self, reply: Reply) -> None: ...
+
+
+# A conversation that can go on after finish, for agent.conversation() (see agent.py), also has:
+#
+#   finished(results)  the run ended with finish: `results` answer the calls of that last reply,
+#                      finish included. A CLI gets them at once, so it can end its turn meanwhile.
+#   follow_up(request) the next task, a new user message in the same conversation; the answers to
+#                      the last reply go first, where they haven't been sent.
+FOLLOWS = ("finished", "follow_up")
+
+
+def continues(conversation: Any) -> bool:
+    """Whether a conversation can carry on with another task after finish."""
+    return all(callable(getattr(conversation, name, None)) for name in FOLLOWS)
 
 
 def snapshot(conversation: Conversation) -> dict[str, Any]:
@@ -110,6 +131,7 @@ class TextConversation:
         self.backend, self.model, self.effort = backend, model, effort
         self.steps: list[str] = []
         self.note: str | None = None  # for the model with the results of a reply read leniently
+        self.answered: list[tuple[Call, str, bool]] = []  # the last task's finish, told with the next task
 
     def next(self) -> Reply:
         timeout = setting("timeout")
@@ -136,6 +158,14 @@ class TextConversation:
         self.steps.append(
             _step(len(self.steps) + 1, _sendable(shorten(reply.raw.strip(), 1000)), f"error: {reply.problem}")
         )
+
+    def finished(self, results: Sequence[tuple[Call, str, bool]]) -> None:
+        self.answered = list(results)
+
+    def follow_up(self, request: str) -> None:
+        self.results(self.answered)
+        self.answered = []
+        self.steps.append(f"{NEXT_TASK}\n\n{request}")
 
     def _transcript(self) -> str:
         ask = "Reply with your {} action as one JSON object, or several independent ones as a JSON array."
@@ -368,6 +398,7 @@ class AnthropicConversation:
         self.messages: list[Any] = [{"role": "user", "content": request}]
         self.cut_off: list[str] | None = None  # the calls of a reply cut off at max_tokens, until answered
         self.cut_offs = 0  # replies cut off in a row
+        self.answered: list[tuple[Call, str, bool]] = []  # the last task's finish, sent with the next task
 
     def next(self) -> Reply:
         for _ in range(CONTINUATIONS + 1):
@@ -436,6 +467,19 @@ class AnthropicConversation:
             for call, output, failed in results
         ]
         self.messages.append({"role": "user", "content": content})
+
+    def finished(self, results: Sequence[tuple[Call, str, bool]]) -> None:
+        self.answered = list(results)
+
+    def follow_up(self, request: str) -> None:
+        # The last reply's tool uses need their results in the next message: the new task goes with them.
+        content: list[Any] = [
+            {"type": "tool_result", "tool_use_id": call.id, "content": output, **({"is_error": True} if failed else {})}
+            for call, output, failed in self.answered
+        ]
+        content.append({"type": "text", "text": f"{NEXT_TASK}\n\n{request}"})
+        self.messages.append({"role": "user", "content": content})
+        self.answered, self.cut_off, self.cut_offs = [], None, 0
 
     def nudge(self, reply: Reply) -> None:
         if self.cut_off is None:
@@ -507,6 +551,7 @@ class OpenAIConversation:
         ]
         self.input: list[Any] = [{"role": "user", "content": request}]
         self.reasoning: Any = {"effort": effort} if effort else openai.omit
+        self.answered: list[tuple[Call, str, bool]] = []  # the last task's finish, sent with the next task
 
     def next(self) -> Reply:
         openai = self._openai
@@ -555,6 +600,14 @@ class OpenAIConversation:
 
     def nudge(self, reply: Reply) -> None:
         self.input.append({"role": "user", "content": NUDGE})
+
+    def finished(self, results: Sequence[tuple[Call, str, bool]]) -> None:
+        self.answered = list(results)
+
+    def follow_up(self, request: str) -> None:
+        self.results(self.answered)
+        self.answered = []
+        self.input.append({"role": "user", "content": f"{NEXT_TASK}\n\n{request}"})
 
 
 def _as_input(item: Any) -> dict[str, Any]:

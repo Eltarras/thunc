@@ -37,7 +37,7 @@ from typing import Any
 
 from .backends import _CODEX_LOCKDOWN, _CODEX_QUIET, _codex_problem
 from .errors import ThuncError
-from .native import NUDGE, Call, Reply, Tool, _calls_text
+from .native import NEXT_TASK, NUDGE, Call, Reply, Tool, _calls_text
 from .recordings import check_live
 from .relay import Relay, StartupError
 
@@ -136,6 +136,35 @@ class CodexConversation:
 
     def nudge(self, reply: Reply) -> None:
         self._turn(NUDGE)
+
+    def finished(self, results: Sequence[tuple[Call, str, bool]]) -> None:
+        """Answer the last reply now, finish included: Codex ends the turn while the program goes on."""
+        self.results(results)
+
+    def follow_up(self, request: str) -> None:
+        """The next task, as the next turn of the same Codex session (codex exec resume), so the model
+        keeps what it read. The turn that finish ended is waited out first, for at most TOOL_MARGIN
+        seconds; a tool it calls meanwhile is refused."""
+        deadline = time.monotonic() + TOOL_MARGIN
+        while self.process is not None and time.monotonic() < deadline:
+            try:
+                kind, event = self.events.get(timeout=max(deadline - time.monotonic(), 0.001))
+            except queue.Empty:
+                break
+            if kind == "call":
+                assert self.relay is not None
+                for ident, _, _ in self.relay.calls(event, self.events):
+                    self.relay.send(ident, "error: that task is done; end your turn", True)
+                continue
+            if kind in ("relay",):
+                continue
+            turn, payload = event
+            if turn != self.turn:
+                continue
+            if kind == "exit" or (kind == "event" and self._event(payload) in ("completed", "failed")):
+                break
+        self.turn_errors = 0
+        self._turn(f"{NEXT_TASK}\n\n{request}")
 
     def close(self) -> None:
         """Stop Codex (and the relay it started), delete its session and remove the run's files."""
