@@ -1,6 +1,7 @@
 """agent.conversation(): several tasks in one conversation with the model (experimental)."""
 
 import json
+import sys
 import threading
 import time
 
@@ -81,6 +82,7 @@ def test_an_unsupported_return_type_fails_at_once(tmp_path):
         thunc.Agent("helper", workdir=tmp_path).conversation(returns=object)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake claude is a script with a shebang")
 def test_on_claude_code_the_same_cli_process_takes_the_next_task(cli, repo):  # noqa: F811
     cli(
         calls(("read", {"path": "config.py"})),
