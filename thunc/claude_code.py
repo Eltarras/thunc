@@ -39,7 +39,7 @@ from typing import Any
 
 from .backends import claude_env
 from .errors import ThuncError
-from .native import NUDGE, Call, Reply, Tool, _calls_text
+from .native import NEXT_TASK, NUDGE, Call, Reply, Tool, _calls_text
 from .recordings import check_live
 from .relay import Relay, StartupError
 
@@ -140,6 +140,31 @@ class ClaudeCodeConversation:
 
     def nudge(self, reply: Reply) -> None:
         self._say(NUDGE)
+
+    def finished(self, results: Sequence[tuple[Call, str, bool]]) -> None:
+        """Answer the last reply now, finish included: the CLI ends its turn while the program goes on."""
+        self.results(results)
+
+    def follow_up(self, request: str) -> None:
+        """The next task, as a new turn of the same CLI process: no new process, and the model keeps
+        what it read. The turn that finish ended is waited out first; a tool it calls meanwhile is
+        refused."""
+        deadline = time.monotonic() + self.timeout
+        while True:
+            try:
+                kind, event = self.events.get(timeout=max(deadline - time.monotonic(), 0.001))
+            except queue.Empty:
+                raise ThuncError(f"claude didn't end its turn within {self.timeout:g}s after finish") from None
+            if kind == "result":
+                break
+            if kind == "call":
+                assert self.relay is not None
+                for ident, _, _ in self.relay.calls(event, self.events):
+                    self.relay.send(ident, "error: that task is done; end your turn", True)
+            elif kind == "exit":
+                raise ThuncError(f"claude exited {event} after finish")
+        self.turn_errors, self.last_message, self.tool_uses = 0, None, []
+        self._say(f"{NEXT_TASK}\n\n{request}")
 
     def close(self) -> None:
         """Stop the CLI (and the relay it started) and remove the run's files."""

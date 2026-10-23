@@ -3,6 +3,7 @@ def thunc.acall(instructions: str, inputs: Mapping[str, Any] | None = None, *, r
 class thunc.Agent(name: str, *, workdir: str | os.PathLike[str], system: str | None = None, permissions: Iterable[str] = (), env: Mapping[str, str] | None = None, command_timeout: float = 120.0, follow: bool | Sequence[str] = False, protocol: Literal["native", "text"] | None = None, tools: Sequence[Callable[..., Any]] = (), timeout: float | None = None, max_steps: int = 40, retries: int = 2, backend: str | None = None, model: str | None = None, effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None) -> None
     def acall(self, instructions: str, inputs: Mapping[str, Any] | None = None, *, returns: Any = str, ensure: Callable[[Any], bool] | None = None) -> Any
     def call(self, instructions: str, inputs: Mapping[str, Any] | None = None, *, returns: Any = str, ensure: Callable[[Any], bool] | None = None) -> Any
+    def conversation(self, *, returns: Any = str, ensure: Callable[[Any], bool] | None = None) -> Any
     property folder
     property memory
     def run(self, task: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Run[Any]
@@ -10,6 +11,10 @@ class thunc.Agent(name: str, *, workdir: str | os.PathLike[str], system: str | N
     def task(self, func: Callable[..., Any] | None = None, /, *, instructions: str | None = None, ensure: Callable[[Any], bool] | None = None) -> Any
     def tools(self) -> list[str]
 def thunc.agent(name: str, /, *, workdir: str | os.PathLike[str], instructions: str | None = None, ensure: Callable[[Any], bool] | None = None, **options: Any) -> Callable[[Callable[P, R]], Callable[P, R]]
+class thunc.AgentConversation(agent: Agent, returns: Any, ensure: Callable[[Any], bool] | None) -> None
+    def close(self) -> None
+    property going_on
+    def send(self, instructions: str, inputs: Mapping[str, Any] | None = None) -> Run[T]
 class thunc.AgentError(message: str, run: Run[None]) -> None
 def thunc.amap(func: Callable[[A], Any], items: Iterable[A], *, workers: int = 8) -> list[Any]
 def thunc.cache_info() -> list[CacheGroup]

@@ -14,7 +14,7 @@ thunc.call(f"Translate into {language}.", {"text": note})
 """
 
 from . import prompts
-from .agent import Agent, agent
+from .agent import Agent, AgentConversation, agent
 from .backends import TextBackend, TypedBackend, register_backend, unregister_backend
 from .cache import CacheGroup, cache_info, clear_cache
 from .config import configure
@@ -26,6 +26,7 @@ from .runs import AgentError, Run
 
 __all__ = [
     "Agent",
+    "AgentConversation",
     "AgentError",
     "acall",
     "amap",

@@ -33,6 +33,7 @@ import hashlib
 import inspect
 import json
 import os
+import threading
 import time
 import typing
 import warnings
@@ -325,6 +326,24 @@ class Agent:
         """agent.call, to await. The run goes on in a worker thread, so the event loop stays free."""
         return await asyncio.to_thread(self.call, instructions, inputs, returns=returns, ensure=ensure)
 
+    @overload
+    def conversation(self, *, ensure: Callable[[str], bool] | None = None) -> AgentConversation[str]: ...
+    @overload
+    def conversation(self, *, returns: type[T], ensure: Callable[[T], bool] | None = None) -> AgentConversation[T]: ...
+    @overload
+    def conversation(self, *, returns: Any, ensure: Callable[[Any], bool] | None = None) -> AgentConversation[Any]: ...
+    def conversation(self, *, returns: Any = str, ensure: Callable[[Any], bool] | None = None) -> Any:
+        """Several tasks in one conversation with the model (experimental: it may change or be removed):
+
+            with repo.conversation(returns=Summary) as chat:
+                found = chat.send("Find where the retry delay is set.")
+                changed = chat.send("Double it, and update its test.")
+
+        Each send() is a run, as agent.run() gives, and the next task is a new message after the last,
+        so the model keeps what it read and did. See AgentConversation."""
+        describe(returns)  # an unsupported type fails here, before the first task
+        return AgentConversation(self, returns, ensure)
+
     def system_prompt(self, memory: str | None = None) -> str:
         """The system prompt a run sends now: the fixed part (with any followed files), then the memory.
         The fixed part only changes when the agent's code or its followed files do, so it can be cached."""
@@ -464,6 +483,7 @@ class Agent:
         inputs: dict[str, Any],
         returns: Any,
         ensure: Callable[[Any], bool] | None,
+        kept: _Kept | None = None,
     ) -> Run[Any]:
         request = _request(instructions, inputs, returns)
         record = recordings.mode()
@@ -501,14 +521,30 @@ class Agent:
             ):
                 raise ThuncError("This workspace or agent memory is owned by Temporal; submit through its Runtime")
             changed_from = store.save_settings(self._settings())
-            memory = store.memory()  # once: a note saved during this run reaches the next one
-            followed = self._read_followed()  # once too, like memory
+            going_on = kept is not None and kept.conversation is not None
+            restarted = None  # why a conversation that should have gone on couldn't
+            if going_on:  # agent.conversation(): the next task, as a new message of the same conversation
+                assert kept is not None and kept.conversation is not None
+                try:
+                    kept.conversation.follow_up(request)
+                except ThuncError as exc:  # the CLI went away, say: this task starts a new conversation
+                    restarted = f"the conversation couldn't go on: {exc}"
+                    kept.close()
+                    going_on = False
+            if going_on:  # the prompt, memory and followed files of the conversation's first task
+                assert kept is not None
+                memory, followed, system = kept.memory, kept.followed, kept.system
+            else:
+                memory = store.memory()  # once: a note saved during this run reaches the next one
+                followed = self._read_followed()  # once too, like memory
             native_calls = replay is None and self._native()
             mcp = replay is None and not native_calls and self._mcp()
             fixed, memory_text = self._fixed_prompt(followed, native_calls or mcp), _memory_section(memory)
-            system = fixed + memory_text
+            if not going_on:
+                system = fixed + memory_text
             session = store.session(task)
             conversation: native.Conversation | None = None
+            succeeded = False
             try:
                 session.write(
                     "start",
@@ -521,6 +557,8 @@ class Agent:
                     followed={path: hashlib.sha256(text.encode()).hexdigest()[:16] for path, text in followed},
                     protocol="replay" if replay else "native" if native_calls else "mcp" if mcp else "text",
                     **({"settings_changed_from": changed_from} if changed_from else {}),
+                    **({"continues": kept.sessions[-1]} if going_on and kept is not None and kept.sessions else {}),
+                    **({"restarted": restarted} if restarted else {}),
                 )
 
                 def text_protocol() -> native.Conversation:
@@ -538,7 +576,10 @@ class Agent:
                         4,
                     )
 
-                if replay is not None:
+                if going_on:
+                    assert kept is not None
+                    conversation = kept.conversation
+                elif replay is not None:
                     conversation = replay
                 elif mcp and self.protocol is None and backend in relay.unavailable:
                     session.write("fallback", protocol="text", reason=relay.unavailable[backend])
@@ -572,16 +613,33 @@ class Agent:
                     conversation = recorder = recordings.Recorder(conversation)
                 names = [path for path, _ in followed]
                 run = self._loop(
-                    name, task, store, session, conversation, system, names, instructions, inputs, returns, ensure
+                    name,
+                    task,
+                    store,
+                    session,
+                    conversation,
+                    system,
+                    names,
+                    instructions,
+                    inputs,
+                    returns,
+                    ensure,
+                    kept is not None and native.continues(conversation),
                 )
+                succeeded = True
                 if recording is not None and recorder is not None:  # only a run that succeeded is recorded
                     model = self.model or setting("model")
                     recordings.save_run(recording, name, backend, model, request, recorder.replies)
                 return run
             finally:
-                close = getattr(conversation, "close", None)
-                if close is not None:
-                    close()
+                if kept is not None and succeeded and conversation is not None and native.continues(conversation):
+                    kept.keep(conversation, system, memory, followed, session.path)
+                else:
+                    if kept is not None:
+                        kept.conversation = None  # a failed task ends the conversation; the next starts one
+                    close = getattr(conversation, "close", None)
+                    if close is not None:
+                        close()
                 session.close()
 
     def _loop(
@@ -597,6 +655,7 @@ class Agent:
         inputs: dict[str, Any],
         returns: Any,
         ensure: Callable[[Any], bool] | None,
+        going_on: bool = False,
     ) -> Run[Any]:
         started = time.monotonic()
         deadline = None if self.timeout is None else started + self.timeout
@@ -676,6 +735,8 @@ class Agent:
                     acted = time.monotonic()
                     outcome = state.check(call, returns, ensure, self.retries, name, known)
                     if outcome.finished:
+                        if going_on:  # agent.conversation(): the last reply is answered, so it can go on
+                            conversation.finished([*state.results, (call, native.FINISHED, False)])  # type: ignore[attr-defined]
                         result["value"] = outcome.value
                         session.write("finish", n=step, value=outcome.value, files_changed=workdir.changed)
                         if run_id:
@@ -966,6 +1027,105 @@ def _shortened(args: Any) -> Any:
     if isinstance(args, list):
         return [_shortened(v) for v in args]
     return args
+
+
+class _Kept:
+    """The conversation an AgentConversation goes on with, and what its first task was given."""
+
+    def __init__(self) -> None:
+        self.conversation: Any = None  # a native.Conversation that native.continues()
+        self.system = ""
+        self.memory = ""
+        self.followed: list[tuple[str, str]] = []
+        self.sessions: list[str] = []  # the run records, one per task
+
+    def keep(
+        self, conversation: native.Conversation, system: str, memory: str, followed: list[tuple[str, str]], session: str
+    ) -> None:
+        self.conversation, self.system, self.memory, self.followed = conversation, system, memory, followed
+        self.sessions.append(session)
+
+    def close(self) -> None:
+        conversation, self.conversation = self.conversation, None
+        close = getattr(conversation, "close", None)
+        if close is not None:
+            close()
+
+
+class AgentConversation(typing.Generic[T]):
+    """Several tasks of one agent in one conversation with the model: agent.conversation(returns=...).
+    Experimental: it may change or be removed in a later release.
+
+        with repo.conversation(returns=Summary) as chat:
+            found = chat.send("Find where the retry delay is set.")
+            changed = chat.send("Double it, and update its test.", {"test_file": "tests/test_retry.py"})
+
+    Each send() is a run of its own, like agent.run(): a Run with its own steps, record and events,
+    under the agent's permissions, max_steps and timeout. What carries over is the conversation: the
+    next task is a new message after the last task's result, so the model keeps what it read and did
+    instead of exploring again. On claude-code the same `claude` process takes the next task, so
+    nothing starts up again either; on codex it's the next turn of the same Codex session.
+
+    - Every task returns `returns`, checked with `ensure`, as the conversation's finish tool is one.
+    - The system prompt, with the agent's memory and followed files, is the first task's; notes saved
+      along the way reach the agent's next conversation, not this one.
+    - A task that fails ends the conversation: its AgentError is raised, and the next send() starts a
+      new conversation. So does a CLI that stopped between tasks.
+    - One task at a time. Close it (or use `with`) to stop the CLI and remove its files.
+    - Not with recordings (THUNC_RECORDINGS, THUNC_RECORD) or Temporal yet.
+    """
+
+    def __init__(self, agent: Agent, returns: Any, ensure: Callable[[Any], bool] | None) -> None:
+        self.agent, self.returns, self.ensure = agent, returns, ensure
+        self.runs: list[Run[T]] = []  # every task's run, in order, failed ones included
+        self._kept = _Kept()
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def __repr__(self) -> str:
+        return f"<AgentConversation of {self.agent.name!r}, {len(self.runs)} task(s)>"
+
+    def send(self, instructions: str, inputs: Mapping[str, Any] | None = None) -> Run[T]:
+        """The next task: instructions and inputs, as for agent.call(). Returns its Run; a failed task
+        raises AgentError, whose .run holds the record, and the conversation starts over at the next."""
+        if not isinstance(instructions, str) or not instructions.strip():
+            raise ValueError("send() needs instructions: a string saying what to do")
+        if recordings.mode():
+            raise ThuncError("agent.conversation() doesn't work with recordings (THUNC_RECORDINGS) yet")
+        if not self._lock.acquire(blocking=False):
+            raise ThuncError("This conversation is still on its last task: send one task at a time")
+        try:
+            if self._closed:
+                raise ThuncError("This conversation is closed")
+            name = f"{self.agent.name}.conversation"
+            try:
+                run: Run[T] = self.agent._run(
+                    name, "conversation", instructions, dict(inputs or {}), self.returns, self.ensure, self._kept
+                )
+            except AgentError as exc:
+                self.runs.append(exc.run)  # type: ignore[arg-type]
+                raise
+            self.runs.append(run)
+            return run
+        finally:
+            self._lock.release()
+
+    @property
+    def going_on(self) -> bool:
+        """Whether the next task continues this conversation (False before the first, and after a failure)."""
+        return self._kept.conversation is not None
+
+    def close(self) -> None:
+        """Stop the conversation: its CLI, if any, and its files. send() raises after this."""
+        with self._lock:
+            self._closed = True
+            self._kept.close()
+
+    def __enter__(self) -> AgentConversation[T]:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
 
 def _request(instructions: str, inputs: dict[str, Any], returns: Any) -> str:

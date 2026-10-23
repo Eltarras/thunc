@@ -206,3 +206,19 @@ def test_protocol_text_keeps_the_json_text_protocol(monkeypatch, cli, repo):
     )
     agent = thunc.Agent("guide", workdir=repo, protocol="text")
     assert agent.run(timeout_task(agent)).value == 30 and len(sent) == 1
+
+
+def test_a_conversation_goes_on_in_the_same_codex_session(cli, repo):
+    cli(
+        [calls(("read", {"path": "config.py"})), calls(("finish", {"value": 30})), {"text": "Done."}],
+        [calls(("finish", {"value": 60})), {"text": "Done."}],
+    )
+    agent = thunc.Agent("guide", workdir=repo)
+    with agent.conversation(returns=int) as chat:
+        assert chat.send("Find the timeout, in seconds.").value == 30
+        assert chat.send("Double it.").value == 60
+    first, second = cli.runs()
+    assert first["resume"] is None and second["resume"] == "019a-fake-thread"  # the same session goes on
+    assert second["prompt"].startswith(thunc.native.NEXT_TASK) and "Double it." in second["prompt"]
+    assert thunc.native.FINISHED in [r["text"] for r in cli.results()]
+    assert cli.deleted() == [["--force", "019a-fake-thread"]]  # once, when the conversation closed

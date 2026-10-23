@@ -90,7 +90,8 @@ frozen from 0.6), `thunc.testing`, and the dataclasses an agent run returns. `te
 fails when the API differs from it. An addition is fine: regenerate the file with
 `THUNC_UPDATE_API=1 .venv/bin/pytest tests/test_api.py` and commit it with the change. A removal, a
 renamed or retyped parameter, or a changed default goes through a deprecation first (below). thunc
-write (`write=True`) stays experimental through 1.0, outside this promise.
+write (`write=True`) stays experimental through 1.0, outside this promise, and so does
+`agent.conversation()` (`thunc.AgentConversation`) until it's had real use.
 
 ## Deprecations
 
