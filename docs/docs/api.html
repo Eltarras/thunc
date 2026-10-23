@@ -54,13 +54,13 @@
     <a href="api.html" class="active" aria-current="page">API reference</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.7.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.8.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
   <div class="eyebrow">Reference</div>
   <h1>API reference</h1>
-  <p class="lede">Every public function, option, environment variable and error in thunc 0.7, on one page. The guide pages explain each in context.</p>
+  <p class="lede">Every public function, option, environment variable and error in thunc 0.8, on one page. The guide pages explain each in context.</p>
 </header>
 <h2 id="functions">Functions</h2>
 <div class="tablewrap"><table>
@@ -80,6 +80,7 @@
 <tr><td><a href="agents.html#declare"><code>@agent.task</code>, <code>@thunc.agent</code></a></td><td>Declare a task on an agent, or an agent with a single task.</td></tr>
 <tr><td><a href="agents.html#declare"><code>agent.call</code></a></td><td>A task built in code, like <code>thunc.call</code>.</td></tr>
 <tr><td><a href="agents.html#runs"><code>agent.run</code></a></td><td>Runs a task and returns a <code>thunc.Run</code> with what happened.</td></tr>
+<tr><td><a href="agents.html#conversation"><code>agent.conversation</code></a></td><td>Experimental. Several tasks in one conversation: a <code>thunc.AgentConversation</code> whose <code>send()</code> runs each task and returns its <code>thunc.Run</code>.</td></tr>
 <tr><td><a href="agents.html#presets"><code>thunc.prompts</code></a></td><td>System prompt presets for agents: <code>CODING</code>, <code>CODE_REVIEW</code>, <code>ANALYSIS</code>.</td></tr>
 <tr><td><a href="temporal.html"><code>thunc.temporal</code></a></td><td>Optional durable runtime: <code>Registry</code>, <code>Worker</code>, <code>Runtime</code>. Needs <code>thunc[temporal]</code>.</td></tr>
 </tbody></table></div>
@@ -194,9 +195,10 @@ thunc.Agent(name, *, workdir, system=None, permissions=(), env=None, command_tim
 </ul>
 
 <h2 id="stability">What's stable</h2>
-<p>From 0.6, the agent API is frozen: <code>thunc.Agent</code> and its methods, <code>@thunc.agent</code>, <code>thunc.Run</code>, <code>thunc.AgentError</code>, and the run record. Together with the rest of <code>thunc.__all__</code> and <code>thunc.testing</code>, it's listed signature by signature in <code>tests/api.txt</code>, and a test fails on any change to it. Additions are made freely; a removal or a change goes through a deprecation (below). Two things stay outside that promise:</p>
+<p>From 0.6, the agent API is frozen: <code>thunc.Agent</code> and its methods, <code>@thunc.agent</code>, <code>thunc.Run</code>, <code>thunc.AgentError</code>, and the run record. Together with the rest of <code>thunc.__all__</code> and <code>thunc.testing</code>, it's listed signature by signature in <code>tests/api.txt</code>, and a test fails on any change to it. Additions are made freely; a removal or a change goes through a deprecation (below). These stay outside that promise:</p>
 <ul>
 <li><strong><a href="write.html">thunc write</a></strong> (<code>write=True</code> and the <code>thunc write</code> command) stays experimental through 1.0: it may change, or be removed, without a deprecation period.</li>
+<li><strong><a href="agents.html#conversation"><code>agent.conversation()</code></a></strong> (<code>thunc.AgentConversation</code>) is experimental until it's had real use, on the same terms.</li>
 <li><strong>The <a href="watch.html">thunc watch</a> dashboard's screens and keys</strong> may change as feedback comes in; the <a href="#events">events</a> it reads are a versioned format.</li>
 <li><strong><a href="temporal.html"><code>thunc.temporal</code></a></strong>, the optional durable runtime, may change in a later release; its <a href="#fingerprints">task fingerprints</a> keep their own promise.</li>
 </ul>

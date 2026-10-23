@@ -3,10 +3,20 @@
 All notable changes to thunc. The full notes for each release are on the
 [releases page](https://github.com/Eltarras/thunc/releases).
 
-## Unreleased
+## 0.8.0 (beta)
+
+**Pydantic models as return types.** A Pydantic v2 model works wherever a dataclass does, and comes
+back as a real instance, validated by Pydantic. thunc still has no dependencies: it uses the model's
+own methods and never imports Pydantic. Also new, as an experiment: `agent.conversation()`, several
+tasks in one conversation. A program written for 0.7 runs unchanged.
 
 ### Added
 
+- **Pydantic v2 models as return types**, alone or nested (`list[Invoice]`, `Invoice | None`), built
+  into real instances. thunc recognizes a model by its `model_json_schema()` and `model_validate()`,
+  so Pydantic stays optional, and validates with `model_validate_json(..., strict=True)` where the
+  model has it. Field aliases are honored, and a reply wrapped in a one-key object isn't unwrapped
+  when that key is one of the model's fields. Thanks to @simonamichalikova (#83).
 - **Several tasks in one conversation (experimental): `agent.conversation()`.** Each `send()` is a
   run of its own, with its own `Run`, record and events, but the next task is a new message after the
   last one's result, so the model keeps what it read and did instead of exploring again. On

@@ -54,7 +54,7 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.7.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.8.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -113,7 +113,7 @@ def grade(essay: str) -&gt; int:
 <div class="callout warn"><p>In a live test, a hostile email pasted into the instructions with an f-string tricked the model 3 out of 3 times. Passed as an input, it failed 3 out of 3 times.</p></div>
 
 <h2 id="types">Return types</h2>
-<div class="chips"><span>str</span><span>bool</span><span>int</span><span>float</span><span>Literal[...]</span><span>Enum</span><span>list[T]</span><span>dict[str, T]</span><span>T | None</span><span>dataclasses</span></div>
+<div class="chips"><span>str</span><span>bool</span><span>int</span><span>float</span><span>Literal[...]</span><span>Enum</span><span>list[T]</span><span>dict[str, T]</span><span>T | None</span><span>dataclasses</span><span>Pydantic models</span></div>
 <p style="margin-top:14px">They nest, and dataclasses come back as real instances:</p>
 <div class="codeblock"><pre><code class="py">from dataclasses import dataclass
 
@@ -132,6 +132,7 @@ def order(message: str) -&gt; list[Item]:
 
 order("2 oat lattes and a croissant pls. oh, one more latte!")
 # [Item(name='oat latte', qty=3), Item(name='croissant', qty=1)]</code></pre></div>
+<p>A Pydantic v2 model works wherever a dataclass does, and comes back as a real instance, validated by Pydantic. Pydantic is optional: thunc recognizes a model by its <code>model_json_schema()</code> and <code>model_validate()</code> and never imports it, and validates with <code>model_validate_json(..., strict=True)</code> where the model has it. Field aliases are honored.</p>
 <p>An unsupported return type fails when the function is declared, not at the first call. A function with no return annotation returns <code>str</code>.</p>
 <p><strong>Enums</strong> come back as their members. The model is asked for a member's value, and sees its name too where the value doesn't say what it means:</p>
 <div class="codeblock"><pre><code class="py">class Priority(Enum):

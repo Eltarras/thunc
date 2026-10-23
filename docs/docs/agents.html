@@ -54,7 +54,7 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html">Changelog</a>
   </nav>
-  <div class="version">thunc 0.7.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.8.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -144,6 +144,14 @@ triage = thunc.Agent("triage", workdir=".", tools=[open_issue])</code></pre></di
 
 <h3 id="folder">The agent's folder</h3>
 <p><code>.thunc_agents/&lt;name&gt;/</code>, changed with <code>configure(agents_dir=...)</code> or <code>THUNC_AGENTS_DIR</code>. Besides <code>memory.md</code> it holds <code>agent.json</code> (the agent's settings) and <code>sessions/</code>, one JSONL file per run with every step (denied ones marked), the result, and the files it changed. Runs of one agent take turns; different agents run side by side. Two names that make the same folder (<code>"Repo guide"</code> and <code>"repo-guide"</code>) can't both be used.</p>
+
+<h2 id="conversation">Several tasks in one conversation</h2>
+<p><code>agent.conversation(returns=...)</code> keeps one conversation going across tasks. Each <code>send()</code> is a run of its own, with its own <code>thunc.Run</code>, record, events, limits and permissions, but the next task is a new message after the last one's result, so the model keeps what it read and did instead of exploring again. On <code>claude-code</code> the same <code>claude</code> process takes the next task, so nothing starts up again; on <code>codex</code> it's the next turn of the same session.</p>
+<div class="codeblock"><pre><code class="py">with repo.conversation(returns=str) as chat:
+    chat.send("Find where the retry delay is set, and explain it.")
+    run = chat.send("Double it, and update its test.")  # a thunc.Run, as agent.run() gives</code></pre></div>
+<p>Every task returns the same type. The system prompt, memory and followed files are the first task's. A task that fails raises <code>thunc.AgentError</code> and ends the conversation; the next <code>send()</code> starts a new one. It doesn't work with recordings or Temporal yet.</p>
+<div class="callout"><p><strong>Experimental.</strong> <code>agent.conversation()</code> is outside the <a href="api.html#stability">stability promise</a> until it's had real use: it may change, or be removed, without a deprecation period.</p></div>
 
 <h2 id="instructions">Instructions and system prompts</h2>
 <h3 id="follow">Instruction files</h3>

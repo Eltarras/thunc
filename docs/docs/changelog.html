@@ -54,7 +54,7 @@
     <a href="api.html">API reference</a>
     <a href="changelog.html" class="active" aria-current="page">Changelog</a>
   </nav>
-  <div class="version">thunc 0.7.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
+  <div class="version">thunc 0.8.0 · Python 3.10+<br><a href="changelog.html">Changelog</a></div>
 </aside>
 <main>
 <header>
@@ -65,6 +65,7 @@
 <div class="tablewrap"><table>
 <thead><tr><th>Version</th><th>Released</th><th>Headline</th></tr></thead>
 <tbody>
+<tr><td><a href="#v0-8-0"><code>0.8.0</code></a></td><td class="nowrap">23 Oct 2026</td><td class="wrap">Pydantic models as return types; <code>agent.conversation()</code> (experimental); <code>claude-code</code> uses the CLI's login over an API key</td></tr>
 <tr><td><a href="#v0-7-0"><code>0.7.0</code></a></td><td class="nowrap">16 Oct 2026</td><td class="wrap">Recordings survive a thunc upgrade</td></tr>
 <tr><td><a href="#v0-6-0"><code>0.6.0</code></a></td><td class="nowrap">13 Oct 2026</td><td class="wrap">The agent API is frozen; the run record, the events and durable fingerprints get a compatibility promise; <code>agent.acall</code></td></tr>
 <tr><td><a href="#v0-5-0"><code>0.5.0</code></a></td><td class="nowrap">12 Oct 2026</td><td class="wrap"><code>thunc.testing</code>: a fake model and pytest fixtures; <code>thunc.register_backend</code>; Ollama</td></tr>
@@ -81,6 +82,20 @@
 <tr><td><a href="#v0-1-1"><code>0.1.1</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">The OpenAI backend and local models</td></tr>
 <tr><td><a href="#v0-1-0"><code>0.1.0</code></a></td><td class="nowrap">3 Oct 2026</td><td class="wrap">First release</td></tr>
 </tbody></table></div>
+<div class="release">
+<h2 id="v0-8-0">0.8.0 <span class="pill">beta</span></h2>
+<p class="release-meta">23 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.8.0">Release notes</a> · <a href="https://pypi.org/project/thunc/0.8.0/">PyPI</a></p>
+<p><strong>Pydantic models as return types.</strong> A Pydantic v2 model works wherever a dataclass does, and comes back as a real instance, validated by Pydantic. thunc still has no dependencies: it uses the model's own methods and never imports Pydantic. Also new, as an experiment: <code>agent.conversation()</code>, several tasks in one conversation. A program written for 0.7 runs unchanged.</p>
+<h3>Added</h3>
+<ul>
+<li><strong><a href="functions.html#types">Pydantic v2 models as return types</a></strong>, alone or nested (<code>list[Invoice]</code>, <code>Invoice | None</code>), built into real instances. thunc recognizes a model by its <code>model_json_schema()</code> and <code>model_validate()</code>, so Pydantic stays optional, and validates with <code>model_validate_json(..., strict=True)</code> where the model has it. Field aliases are honored. Thanks to <a href="https://github.com/simonamichalikova">@simonamichalikova</a>.</li>
+<li><strong><a href="agents.html#conversation">Several tasks in one conversation</a></strong> (experimental): <code>agent.conversation()</code>. Each <code>send()</code> is a run of its own, but the next task is a new message after the last one's result, so the model keeps what it read and did. On <code>claude-code</code> the same <code>claude</code> process takes the next task; on <code>codex</code> it's the next turn of the same session. It may change or be removed.</li>
+</ul>
+<h3>Fixed</h3>
+<ul>
+<li><strong><code>claude-code</code> uses your Claude Code login, even with <code>ANTHROPIC_API_KEY</code> set.</strong> With a key set for the <code>anthropic</code> backend, every <code>claude-code</code> call and agent run spent API credit, or failed with "Credit balance is too low". When the CLI is signed in on its own, thunc now starts it without <code>ANTHROPIC_API_KEY</code> and <code>ANTHROPIC_AUTH_TOKEN</code>; a CLI with no login of its own still gets them.</li>
+</ul>
+</div>
 <div class="release">
 <h2 id="v0-7-0">0.7.0 <span class="pill">beta</span></h2>
 <p class="release-meta">16 October 2026 · <a href="https://github.com/Eltarras/thunc/releases/tag/v0.7.0">Release notes</a> · <a href="https://pypi.org/project/thunc/0.7.0/">PyPI</a></p>
